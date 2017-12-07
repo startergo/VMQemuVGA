@@ -1,6 +1,6 @@
 # VMQemuVGA
 
-A framebuffer driver for the qemu default vga, should be compatible with any card supporting the VBE standard.
+A IOFramebuffer driver for the qemu default vga, should be compatible with any card supporting the VBE standard. Allows to set different screen resolutions in VirtualBox.
 
 Copyright 2012 rafirafi. All rights reserved.
 
