@@ -14,4 +14,4 @@ Copyright 2009-2011 Zenith432. All rights reserved.
 
 Portions Copyright 2009 VMware, Inc.  All rights reserved.
 
-Licensed under the [MIT](LICENSE) License.
+Licensed under the [MIT](LICENSE.txt) License.
