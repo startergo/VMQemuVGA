@@ -1,6 +1,6 @@
 # VMQemuVGA
 
-A IOFramebuffer driver for the qemu default vga. Allows to set different screen resolutions in VirtualBox.
+An IOFramebuffer driver for the QEMU Virtual Video Controller (QEMU default vga) and VirtualBox Graphics Adapter. It allows to set different screen resolutions in QEMU and VirtualBox from System Preferences
 
 # Download
 
