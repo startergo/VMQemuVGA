@@ -29,7 +29,7 @@
 			<key>IOMatchCategory</key>
 			<string>IOFramebuffer</string>
 			<key>IOPCIPrimaryMatch</key>
-			<string>0x11111234 0xbeef80ee</string>
+			<string>0x11111234 0xbeef80ee 0x10501af4</string>
 			<key>IOProbeScore</key>
 			<integer>30100</integer>
 			<key>IOProviderClass</key>
