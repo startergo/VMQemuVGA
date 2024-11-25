@@ -4,7 +4,7 @@ An IOFramebuffer driver for the QEMU Virtual Video Controller (QEMU default vga)
 
 # Download
 
-To download release binaries, [see the releases page](https://github.com/ivanagui2/VMQemuVGA/releases).
+To download release binaries, [see the releases page](https://github.com/startergo/VMQemuVGA/releases).
 
 # License
 
