@@ -324,11 +324,13 @@ To prevent deadlocks, consistent lock ordering is maintained:
 
 ## Performance Characteristics
 
-### Benchmarking Results
-- **Initialization Time**: < 100ms for complete Phase 3 initialization
-- **Memory Overhead**: ~10MB for complete system (excluding textures/surfaces)
-- **CPU Overhead**: < 5% CPU usage during steady-state operation
-- **GPU Utilization**: 85%+ GPU utilization under full load
+### Projected Performance (Testing Required)
+⚠️ **Note**: These are theoretical projections pending real-world QEMU testing.
+
+- **Initialization Time**: < 100ms estimated for complete Phase 3 initialization
+- **Memory Overhead**: ~10MB projected for complete system (excluding textures/surfaces)
+- **CPU Overhead**: < 5% estimated CPU usage during steady-state operation
+- **GPU Utilization**: 85%+ projected GPU utilization under full load
 
 ### Optimization Techniques
 - **Lazy Loading**: Components initialized only when needed

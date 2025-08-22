@@ -146,14 +146,19 @@ sudo ./vm3dtest
 </details>
 
 <details>
-<summary><strong>📈 Benchmark Results</strong></summary>
+<summary><strong>⚠️ Testing Status</strong></summary>
 
-- **Initialization Time**: < 100ms for complete Phase 3 system initialization
-- **Memory Overhead**: ~10MB base system (excluding textures/surfaces)
-- **CPU Usage**: < 5% CPU during steady-state 3D operations
-- **GPU Utilization**: 85%+ GPU utilization under full Metal acceleration
-- **Frame Consistency**: Stable 60fps with Core Animation hardware acceleration
-- **Command Throughput**: 40,000+ GPU commands/second with batching optimization
+**Current Status**: Phase 3 implementation is complete but **not yet tested** in a running QEMU environment.
+
+**Theoretical Performance Projections** (pending real-world validation):
+- **Initialization Time**: < 100ms estimated for complete Phase 3 system initialization
+- **Memory Overhead**: ~10MB projected base system (excluding textures/surfaces)
+- **CPU Usage**: < 5% estimated CPU during steady-state 3D operations
+- **GPU Utilization**: 85%+ projected GPU utilization under full Metal acceleration
+- **Frame Consistency**: Target 60fps with Core Animation hardware acceleration
+- **Command Throughput**: 40,000+ estimated GPU commands/second with batching optimization
+
+**Testing Needed**: The Phase 3 system requires testing in a QEMU environment with VirtIO GPU to validate these projections. Currently, only the build system has been verified.
 
 </details>
 

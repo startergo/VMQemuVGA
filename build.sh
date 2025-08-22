@@ -167,7 +167,8 @@ build_test() {
             return 1
         fi
     else
-        log_warning "Test application source not found, skipping test build"
+        log_warning "Test application source not found - test directory was cleaned up during repository maintenance"
+        log_info "To create test applications, implement test/VM3DTest.cpp and test/VMPhase3Test.cpp"
         return 0
     fi
 }
