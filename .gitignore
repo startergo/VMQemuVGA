@@ -1,0 +1,109 @@
+# Xcode Build Output
+build/
+*.build/
+DerivedData/
+
+# Xcode User-specific files
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+*.xcscheme
+xcuserdata/
+*.xccheckout
+*.moved-aside
+
+# Xcode Workspaces
+project.xcworkspace/
+!project.xcworkspace/contents.xcworkspacedata
+
+# Debug Symbol files
+*.dSYM/
+*.dSYM.zip
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+*.out
+
+# Backup files
+*.orig
+*.backup
+*.bak
+
+# Cache directories
+.cache/
+*.cache
+
+# OS generated files
+Icon?
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.kext/
+*.dSYM/
+
+# Code signing
+*.entitlements.plist
+codesign_output.txt
+
+# Package files
+*.dmg
+*.pkg
+*.app
+*.ipa
+
+# Archives
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+
+# Local configuration
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Dependency directories (if using package managers)
+node_modules/
+Pods/
+Carthage/Build/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# Generated files
+*_info.c
+*_vers.c

@@ -7,6 +7,10 @@
 
 #include "QemuVGADevice.h"
 #include "common_fb.h"
+#include "VMVirtIOGPU.h"
+
+// Forward declarations
+class VMQemuVGAAccelerator;
 
 
 class VMQemuVGA : public IOFramebuffer
@@ -17,6 +21,11 @@ private:
 	//variables
 	QemuVGADevice svga;					//the svga device
 	IODeviceMemory* m_vram;				//VRAM Framebuffer (BAR0)
+	
+	// 3D acceleration support
+	VMVirtIOGPU* m_gpu_device;			//VirtIO GPU device for 3D acceleration
+	VMQemuVGAAccelerator* m_accelerator; //3D accelerator service
+	bool m_3d_acceleration_enabled;		//Whether 3D acceleration is available
 
 	uint32_t m_num_active_modes;		//number of custom mode
 	IODisplayModeID m_display_mode;
@@ -41,6 +50,8 @@ private:
 
 	//functions
 	void Cleanup();
+	bool init3DAcceleration();
+	void cleanup3DAcceleration();
 	DisplayModeEntry const* GetDisplayMode(IODisplayModeID displayMode);
 	static void IOSelectToString(IOSelect io_select, char* output);
 
@@ -55,42 +66,45 @@ private:
 
 
 public:
-	bool 		start(IOService* provider);
-	void 		stop(IOService* provider);
+	bool 		start(IOService* provider) override;
+	void 		stop(IOService* provider) override;
 
 	//IOFrame buffer stuff
-	UInt64   	getPixelFormatsForDisplayMode(IODisplayModeID displayMode, IOIndex depth);	
-	IOReturn 	setInterruptState(void* interruptRef, UInt32 state);
-	IOReturn 	unregisterInterrupt(void* interruptRef);		
-	IOItemCount getConnectionCount();
+	UInt64   	getPixelFormatsForDisplayMode(IODisplayModeID displayMode, IOIndex depth) override;	
+	IOReturn 	setInterruptState(void* interruptRef, UInt32 state) override;
+	IOReturn 	unregisterInterrupt(void* interruptRef) override;		
+	IOItemCount getConnectionCount() override;
 	IOReturn 	getCurrentDisplayMode(IODisplayModeID* displayMode, 
-										IOIndex* depth);	
-	IOReturn 	getDisplayModes(IODisplayModeID* allDisplayModes);	
-	IOItemCount getDisplayModeCount();
-	const char* getPixelFormats();
-	IODeviceMemory* getVRAMRange();
-	IODeviceMemory* getApertureRange(IOPixelAperture aperture);
-	bool 		isConsoleDevice();
-	IOReturn 	getAttribute(IOSelect attribute, uintptr_t* value);		
-	IOReturn 	getAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t* value);
-	IOReturn 	setAttribute(IOSelect attribute, uintptr_t value);
-	IOReturn 	setAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t value);
-	IOReturn 	registerForInterruptType(IOSelect interruptType, IOFBInterruptProc proc, OSObject* target, void* ref, void** interruptRef);
+										IOIndex* depth) override;	
+	IOReturn 	getDisplayModes(IODisplayModeID* allDisplayModes) override;	
+	IOItemCount getDisplayModeCount() override;
+	const char* getPixelFormats() override;
+	IODeviceMemory* getVRAMRange() override;
+	IODeviceMemory* getApertureRange(IOPixelAperture aperture) override;
+	bool 		isConsoleDevice() override;
+	IOReturn 	getAttribute(IOSelect attribute, uintptr_t* value) override;		
+	IOReturn 	getAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t* value) override;
+	IOReturn 	setAttribute(IOSelect attribute, uintptr_t value) override;
+	IOReturn 	setAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t value) override;
+	IOReturn 	registerForInterruptType(IOSelect interruptType, IOFBInterruptProc proc, OSObject* target, void* ref, void** interruptRef) override;
 	IOReturn 	getInformationForDisplayMode(IODisplayModeID displayMode,
-										IODisplayModeInformation* info);
+										IODisplayModeInformation* info) override;
 	IOReturn 	getPixelInformation(IODisplayModeID displayMode, IOIndex depth,
-						 IOPixelAperture aperture, IOPixelInformation* pixelInfo);										
+						 IOPixelAperture aperture, IOPixelInformation* pixelInfo) override;										
 										
 
 
 	IOReturn	CustomMode(CustomModeData const* inData, CustomModeData* outData, 
 										size_t inSize, size_t* outSize);
-	IOReturn 	setDisplayMode(IODisplayModeID displayMode, IOIndex depth);
+	IOReturn 	setDisplayMode(IODisplayModeID displayMode, IOIndex depth) override;
 	
 	/*
 	 * Accelerator Support
 	 */
 	QemuVGADevice* getDevice() { return &svga; }
+	VMVirtIOGPU* getGPUDevice() { return m_gpu_device; }
+	VMQemuVGAAccelerator* getAccelerator() { return m_accelerator; }
+	bool is3DAccelerationEnabled() const { return m_3d_acceleration_enabled; }
 	void lockDevice();
 	void unlockDevice();
 	void useAccelUpdates(bool state);
