@@ -102,7 +102,7 @@ The Phase 3 system consists of 8 interconnected components that work together to
 ### Build Requirements
 - Xcode 16.4+ with macOS 15.5 SDK
 - MacKernelSDK for kernel extension development
-- Target: macOS 10.13+ (configurable deployment target)
+- Target: macOS 10.6+ (maximum compatibility deployment target)
 - Architecture: x86_64 (with potential for universal binary)
 
 ### Build Commands

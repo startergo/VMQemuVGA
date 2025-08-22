@@ -92,7 +92,7 @@ A comprehensive macOS IOKit framebuffer driver providing advanced 3D acceleratio
 - **Binary Size**: 206,256 bytes (201 KB)
 - **Architecture**: x86_64 Mach-O kernel extension
 - **Build Configuration**: Release optimized
-- **Target**: macOS 10.14+ (Intel/Apple Silicon compatible)
+- **Target**: macOS 10.6+ (Intel x86_64 compatible)
 - **Components**: All 8 Phase 3 components fully implemented
 
 ## 🧪 Testing & Validation
@@ -164,13 +164,13 @@ sudo ./vm3dtest
 
 ```bash
 # Build using xcodebuild (Release optimized)
-xcodebuild -project VMQemuVGA.xcodeproj -configuration ReleaseLeo
+xcodebuild -project VMQemuVGA.xcodeproj -configuration Release
 
 # Alternatively, open in Xcode
 open VMQemuVGA.xcodeproj
 
 # Built binary location
-ls -la build/ReleaseLeo/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
+ls -la build/Release/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
 # 206,256 bytes (201 KB) - x86_64 Mach-O kernel extension
 ```
 
@@ -181,7 +181,7 @@ ls -la build/ReleaseLeo/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
 
 ```bash
 # Copy to system extensions
-sudo cp -r build/ReleaseLeo/VMQemuVGA.kext /Library/Extensions/
+sudo cp -r build/Release/VMQemuVGA.kext /Library/Extensions/
 sudo chown -R root:wheel /Library/Extensions/VMQemuVGA.kext
 
 # Load the kernel extension
@@ -423,7 +423,7 @@ Licensed under the [MIT](LICENSE.txt) License.
 ### Latest Build Information
 - **Version**: Phase 3.0.0 (Complete Implementation)
 - **Binary Size**: 206,256 bytes (201 KB) - Optimized kernel extension
-- **Architecture**: x86_64 Mach-O (Intel/Apple Silicon compatible)
+- **Architecture**: x86_64 Mach-O kernel extension (Intel compatible)
 - **Components**: All 8 Phase 3 components fully implemented and operational
 - **Build Date**: August 22, 2025
 - **Performance Tier**: High (Metal), Medium (OpenGL), Low (Software fallback)

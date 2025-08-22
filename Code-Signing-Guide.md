@@ -20,7 +20,7 @@ VMQemuVGA Phase 3 provides enterprise-grade 3D acceleration with:
 2. **Xcode** installed with Command Line Tools
 3. **Valid Developer ID Application certificate**
 4. **VMQemuVGA Phase 3** successfully built (206KB binary)
-5. **macOS 10.14+** for Phase 3 advanced features
+5. **macOS 10.6+** deployment target (Intel x86_64 compatible)
 
 ## Step 1: Obtain Developer Certificates
 
@@ -65,8 +65,8 @@ You should see something like:
 Verify VMQemuVGA Phase 3 build:
 ```bash
 # Check if Phase 3 binary exists and get info
-ls -la build/ReleaseLeo/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
-file build/ReleaseLeo/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
+ls -la build/Release/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
+file build/Release/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
 
 # Expected output: 206,256 bytes, x86_64 Mach-O kernel extension
 ```
@@ -102,11 +102,11 @@ codesign --force --sign "Developer ID Application: Your Name (TEAMID)" \
          --entitlements VMQemuVGA.entitlements \
          --deep --strict --timestamp --options runtime \
          --identifier "com.vmqemuvga.driver" \
-         build/ReleaseLeo/VMQemuVGA.kext
+         build/Release/VMQemuVGA.kext
 
 # Verify Phase 3 signature
-codesign -vvv --deep --strict build/ReleaseLeo/VMQemuVGA.kext
-spctl -a -t exec -vv build/ReleaseLeo/VMQemuVGA.kext
+codesign -vvv --deep --strict build/Release/VMQemuVGA.kext
+spctl -a -t exec -vv build/Release/VMQemuVGA.kext
 ```
 
 ### Xcode Project Signing (Alternative)
@@ -119,7 +119,7 @@ Edit the VMQemuVGA Xcode project for automatic signing:
    - Check **Automatically manage signing**
    - Select your **Team**
    - **Bundle Identifier**: `com.vmqemuvga.driver.phase3`
-4. Build with ReleaseLeo configuration - Phase 3 will be signed automatically
+4. Build with Release configuration - Phase 3 will be signed automatically
 
 ## Step 4: VMQemuVGA Phase 3 Entitlements
 
@@ -170,7 +170,7 @@ For professional distribution of VMQemuVGA Phase 3:
 
 ```bash
 # Create a ZIP for notarization
-zip -r VMQemuVGA-Phase3-signed.zip build/ReleaseLeo/VMQemuVGA.kext
+zip -r VMQemuVGA-Phase3-signed.zip build/Release/VMQemuVGA.kext
 
 # Submit VMQemuVGA Phase 3 for notarization
 xcrun notarytool submit VMQemuVGA-Phase3-signed.zip \
@@ -180,7 +180,7 @@ xcrun notarytool submit VMQemuVGA-Phase3-signed.zip \
                        --wait
 
 # Staple the notarization to Phase 3 binary
-xcrun stapler staple build/ReleaseLeo/VMQemuVGA.kext
+xcrun stapler staple build/Release/VMQemuVGA.kext
 ```
 
 ### App-Specific Password Setup:
@@ -211,7 +211,7 @@ With a properly signed Phase 3 kernel extension:
 ### Phase 3 Installation Commands:
 ```bash
 # Install signed VMQemuVGA Phase 3
-sudo cp -r build/ReleaseLeo/VMQemuVGA.kext /Library/Extensions/
+sudo cp -r build/Release/VMQemuVGA.kext /Library/Extensions/
 sudo chown -R root:wheel /Library/Extensions/VMQemuVGA.kext
 sudo kextload /Library/Extensions/VMQemuVGA.kext
 
@@ -233,17 +233,17 @@ After signing VMQemuVGA Phase 3, verify the signature and capabilities:
 
 ```bash
 # Check Phase 3 signature validity
-codesign -vvv --deep --strict build/ReleaseLeo/VMQemuVGA.kext
+codesign -vvv --deep --strict build/Release/VMQemuVGA.kext
 
 # Check system acceptance of signed binary
-spctl -a -t exec -vv build/ReleaseLeo/VMQemuVGA.kext
+spctl -a -t exec -vv build/Release/VMQemuVGA.kext
 
 # Verify Phase 3 kernel extension will load
-kextutil -n -t build/ReleaseLeo/VMQemuVGA.kext
+kextutil -n -t build/Release/VMQemuVGA.kext
 
 # Check Phase 3 binary information
-file build/ReleaseLeo/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
-ls -la build/ReleaseLeo/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
+file build/Release/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
+ls -la build/Release/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA
 
 # Expected: 206,256 bytes, x86_64 Mach-O kext bundle
 ```
