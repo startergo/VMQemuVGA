@@ -80,6 +80,7 @@ certificates/
 installer_certificate*
 installer_private_key*
 codesign-cert*
+installer_csr.conf
 
 # Package files
 *.dmg
