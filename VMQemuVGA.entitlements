@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Core kernel extension entitlements -->
+    <key>com.apple.developer.driverkit.allow-any-userclient-access</key>
+    <true/>
+    <key>com.apple.developer.kernel.increased-memory-limit</key>
+    <true/>
+    
+    <!-- VMQemuVGA Phase 3 Advanced 3D Acceleration entitlements -->
+    <key>com.apple.developer.kernel.extended-virtual-addressing</key>
+    <true/>
+    <key>com.apple.developer.metal.framework-access</key>
+    <true/>
+    <key>com.apple.developer.opengl.framework-access</key>
+    <true/>
+    <key>com.apple.developer.coreanimation.hardware-acceleration</key>
+    <true/>
+    <key>com.apple.developer.iosurface.advanced-management</key>
+    <true/>
+    <key>com.apple.developer.gpu.command-queue-access</key>
+    <true/>
+    <key>com.apple.developer.virtio.gpu-paravirtualization</key>
+    <true/>
+    <key>com.apple.developer.graphics.shader-compilation</key>
+    <true/>
+    
+    <!-- Phase 3 Component-specific entitlements -->
+    <key>com.vmqemuvga.phase3.metal-bridge</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.opengl-bridge</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.iosurface-manager</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.coreanimation-accelerator</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.shader-manager</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.texture-manager</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.command-buffer</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.manager</key>
+    <true/>
+</dict>
+</plist>

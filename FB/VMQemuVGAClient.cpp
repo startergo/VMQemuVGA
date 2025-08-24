@@ -42,7 +42,7 @@ OSDefineMetaClassAndStructors(VMQemuVGAClient, IOUserClient);
 
 static IOExternalMethod const iofbFuncsCache[1] =
 {
-	{0, reinterpret_cast<IOMethod>(&VMQemuVGA::CustomMode), kIOUCStructIStructO, sizeof(CustomModeData), sizeof(CustomModeData)}
+	{nullptr, reinterpret_cast<IOMethod>(&VMQemuVGA::CustomMode), kIOUCStructIStructO, sizeof(CustomModeData), sizeof(CustomModeData)}
 };
 
 IOExternalMethod* VMQemuVGAClient::getTargetAndMethodForIndex(IOService** targetP, UInt32 index)

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<installer-gui-script minSpecVersion="2">
+    <title>VMQemuVGA Enhanced Graphics Driver v4.1.0</title>
+    <organization>com.vmware.kext</organization>
+    <domains enable_anywhere="true" enable_currentUserHome="false" enable_localSystem="true"/>
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <!-- Welcome Screen -->
+    <welcome file="Welcome.txt" mime-type="text/plain"/>
+    <!-- License Agreement -->
+    <license file="License.txt" mime-type="text/plain"/>
+    <!-- README Information -->
+    <readme file="README.txt" mime-type="text/plain"/>
+    <!-- Choices Outline -->
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.vmware.kext.VMQemuVGA"/>
+        </line>
+    </choices-outline>
+    <!-- Choice Definitions -->
+    <choice id="default"/>
+    <choice id="com.vmware.kext.VMQemuVGA" visible="false">
+        <pkg-ref id="com.vmware.kext.VMQemuVGA"/>
+    </choice>
+    <!-- Package References -->
+    <pkg-ref id="com.vmware.kext.VMQemuVGA" version="4.1.0" onConclusion="none" installKBytes="233" updateKBytes="0">#VMQemuVGA-Component.pkg</pkg-ref>
+    <!-- Installation Requirements -->
+    <installation-check script="pm_install_check();"/>
+    <script><![CDATA[
+        function pm_install_check() {
+            // Get macOS version
+            var osVersion = system.version.ProductVersion;
+            
+            // Simple compatibility check - supports macOS 10.6.8+
+            my.result.title = 'VMQemuVGA Ready to Install';
+            my.result.message = 'VMQemuVGA works great on macOS ' + osVersion + '. After installation, simply approve the kernel extension to enable graphics acceleration.';
+            my.result.type = 'Info';
+            
+            return true;
+        }
+    ]]></script>
+    <pkg-ref id="com.vmware.kext.VMQemuVGA">
+        <bundle-version>
+            <bundle CFBundleVersion="1.2.5d3" id="puredarwin.driver.VMQemuVGA" path="Library/Extensions/VMQemuVGA.kext"/>
+        </bundle-version>
+    </pkg-ref>
+</installer-gui-script>

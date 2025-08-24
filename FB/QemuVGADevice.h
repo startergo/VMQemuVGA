@@ -61,6 +61,7 @@ public:
 	IODeviceMemory*	get_m_vram() const { return m_vram; }
 	
 	uint32_t getVRAMSize() const { return static_cast<uint32_t>(m_vram_size); }
+	IOPCIDevice* getProvider() const { return m_provider; } // Getter for PCI device
 	
 
 };
