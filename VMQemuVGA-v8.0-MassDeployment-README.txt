@@ -1,0 +1,60 @@
+VMQemuVGA v8.0 Mass Deployment Version - Self-Signed for Public Distribution
+
+IMPORTANT: This is the SAFE mass deployment version suitable for public distribution.
+
+🔒 CERTIFICATE INFORMATION:
+• Signed with: VMQemuVGA Code Signing Certificate (Self-signed)
+• Safe for public distribution - contains NO private information
+• No Apple Developer ID or personal information exposed
+
+📦 PACKAGE CONTENTS:
+• VMQemuVGA.kext - Kernel extension signed with self-signed certificate
+• Compatible with macOS 10.6 Snow Leopard and later
+• Intel x86_64 architecture
+
+🚀 FEATURES:
+• VirtIO GPU acceleration for virtual machines
+• Metal framework integration for modern graphics
+• OpenGL bridge for legacy application support  
+• CoreAnimation hardware acceleration
+• Advanced command buffer management
+• Pipeline hazard detection and optimization
+• Memory barrier synchronization
+• Resource dependency tracking
+
+⚠️ INSTALLATION REQUIREMENTS:
+• SIP (System Integrity Protection) may need to be disabled
+• Requires administrator privileges for installation
+• Target systems must allow unsigned kernel extensions OR
+• Systems with disabled SIP for development use
+
+💡 INSTALLATION INSTRUCTIONS:
+1. Extract the archive: tar -xzf VMQemuVGA-v8.0-MassDeployment-SelfSigned.tar.gz
+2. Copy to extensions: sudo cp -R VMQemuVGA.kext /System/Library/Extensions/
+3. Set permissions: sudo chown -R root:wheel /System/Library/Extensions/VMQemuVGA.kext
+4. Update cache: sudo kextcache -system-caches
+5. Restart system
+
+🔍 VERIFICATION:
+• Verify signature: codesign -dvvv VMQemuVGA.kext
+• Check loading: sudo kextstat | grep VMQemuVGA
+• Expected identifier: puredarwin.driver.VMQemuVGA
+
+📈 BUILD INFORMATION:
+• Build Date: August 24, 2025
+• Version: 8.0 Advanced Command Buffer Resource Dependency Management
+• Architecture: x86_64
+• Certificate: Self-signed VMQemuVGA Code Signing Certificate
+• Distribution: Public mass deployment safe
+
+🌐 DISTRIBUTION NOTES:
+This version is specifically prepared for mass distribution and contains:
+• NO private Apple Developer information
+• NO personal certificates or identities  
+• Safe self-signed certificate for public sharing
+• Suitable for open-source distribution
+• No Gatekeeper trust (requires SIP disabled or user approval)
+
+For internal/private distribution with Apple Developer ID trust, use the private installer package instead.
+
+GitHub Repository: https://github.com/ivanagui2/VMQemuVGA

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+    <title>VMQemuVGA v8.0 Advanced Command Buffer System</title>
+    <organization>com.vmqemuvga</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" require-scripts="false" rootVolumeOnly="true" hostArchitectures="x86_64"/>
+    
+    <!-- Define our choice/volume check -->
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="10.6"/>
+        </allowed-os-versions>
+    </volume-check>
+    
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.vmqemuvga.phase3.kext"/>
+        </line>
+    </choices-outline>
+    
+    <choice id="default"/>
+    <choice id="com.vmqemuvga.phase3.kext" visible="false">
+        <pkg-ref id="com.vmqemuvga.phase3.kext"/>
+    </choice>
+    
+    <pkg-ref id="com.vmqemuvga.phase3.kext">
+        <bundle-version/>
+    </pkg-ref>
+    
+    <product id="com.vmqemuvga.phase3" version="8.0"/>
+</installer-gui-script>
