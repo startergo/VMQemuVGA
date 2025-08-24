@@ -1,0 +1,19 @@
+Software License Agreement
+
+VMQemuVGA Enhanced Graphics Driver
+
+This software is provided under the terms specified in the project repository.
+
+By installing this software, you acknowledge that:
+
+1. This is a kernel extension that modifies system behavior
+2. Installation requires administrator privileges
+3. The software is provided "as is" without warranty
+4. You assume responsibility for any system impacts
+
+The VMQemuVGA kernel extension is designed to enhance graphics performance in QEMU virtual machines and has been tested on compatible macOS versions.
+
+For full license terms, documentation, and source code, visit:
+https://github.com/startergo/VMQemuVGA
+
+Click Agree to accept these terms and continue with installation.

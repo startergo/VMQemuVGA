@@ -1,0 +1,14 @@
+VMQemuVGA Enhanced Graphics Driver
+
+This installer will install the VMQemuVGA kernel extension, which provides enhanced 3D graphics acceleration for QEMU virtual machines.
+
+The installer will automatically:
+• Detect your macOS version
+• Install to the appropriate system location
+• Set proper permissions and ownership
+• Attempt to load the kernel extension
+• Rebuild system caches as needed
+
+Compatible with macOS 10.6.8+.
+
+Click Continue to proceed with the installation.

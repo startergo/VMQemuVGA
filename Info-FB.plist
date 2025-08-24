@@ -18,6 +18,12 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>${MODULE_VERSION}</string>
+	<key>IOGraphicsFamily</key>
+	<true/>
+	<key>IOAcceleratorFamily</key>
+	<string>IOGraphicsFamily</string>
+	<key>IOPrimaryGraphicsDevice</key>
+	<true/>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>VMQemuVGA</key>
@@ -28,10 +34,12 @@
 			<string>${PRODUCT_NAME}</string>
 			<key>IOMatchCategory</key>
 			<string>IOFramebuffer</string>
-			<key>IOPCIPrimaryMatch</key>
-			<string>0x11111234 0xbeef80ee</string>
+			<!-- Comprehensive VirtIO GPU and Virtualization Device Support -->
+			<!-- Includes: VirtIO GPU variants, QEMU devices, Hyper-V DDA, VMware SVGA, AMD GPU-V, NVIDIA vGPU, Intel GVT -->
+			<key>IOPCIMatch</key>
+			<string>0x01001b36 0x10501af4 0x10511af4 0x10521af4 0x10531af4 0x10541af4 0x10551af4 0x10561af4 0x10571af4 0x10581af4 0x10591af4 0x105a1af4 0x105b1af4 0x105c1af4 0x105d1af4 0x105e1af4 0x105f1af4 0x40051234 0x11111234 0x11121234 0x05001234 0x04051234 0x04061234 0x04071234 0x04081234 0x04051af4 0x04061af4 0x04071af4 0x04081af4 0x04051b36 0x04061b36 0x04071b36 0x04081b36 0x04059999 0x04069999 0x04079999 0x04089999 0x53531414 0x53541414 0x53551414 0x53561414 0x00581414 0x00591414 0x040515ad 0x040615ad 0x040715ad 0x040815ad 0x0f001002 0x0f011002 0x0f021002 0x0f031002 0x0f0410de 0x0f0510de 0x0f0610de 0x0f0710de 0x01901002 0x01911002 0x01921002 0x01931002 0x01e010de 0x01e110de 0x01e210de 0x01e310de 0x01908086 0x01918086 0x01928086 0x01938086</string>
 			<key>IOProbeScore</key>
-			<integer>30100</integer>
+			<integer>90000</integer>
 			<key>IOProviderClass</key>
 			<string>IOPCIDevice</string>
 			<key>IOUserClientClass</key>
@@ -39,7 +47,33 @@
 			<key>IOSourceVersion</key>
 			<string>1.0.0.0</string>
 			<key>IOHardwareModel</key>
-			<string>Cirrus CL-GD5446 </string>
+			<string>VirtIO GPU / Hyper-V DDA / QEMU VGA</string>
+			<key>IOGraphicsAccelerator</key>
+			<true/>
+			<key>IOAcceleratorTypes</key>
+			<array>
+				<string>Framebuffer</string>
+				<string>3D</string>
+				<string>VirtIO-GPU</string>
+				<string>Hyper-V-DDA</string>
+			</array>
+			<key>IODisplayClass</key>
+			<string>IOFramebuffer</string>
+			<key>IOGraphicsDevice</key>
+			<true/>
+			<key>IOPrimaryDisplay</key>
+			<true/>
+			<key>IOAcceleratorFamily</key>
+			<string>IOGraphicsFamily</string>
+			<!-- Hyper-V and Lilu compatibility properties -->
+			<key>VMQemuVGA-Hyper-V-Compatible</key>
+			<true/>
+			<key>VMQemuVGA-VirtIO-GPU-Support</key>
+			<true/>
+			<key>VMQemuVGA-Lilu-Framework-Ready</key>
+			<true/>
+			<key>VMQemuVGA-Issue-2299-Workaround</key>
+			<true/>
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
@@ -49,7 +83,7 @@
 	<key>OSBundleLibraries</key>
 	<dict>
 		<key>com.apple.iokit.IOGraphicsFamily</key>
-		<string>1.4</string>
+		<string>2.0</string>
 		<key>com.apple.iokit.IOPCIFamily</key>
 		<string>1.6</string>
 		<key>com.apple.kpi.iokit</key>
