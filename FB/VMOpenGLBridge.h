@@ -481,6 +481,28 @@ private:
     IOReturn testOpenGL42AdvancedFeatures(uint32_t context_id);
     IOReturn testComputeShaderSupport(uint32_t context_id);
     IOReturn testBufferStorageSupport(uint32_t context_id);
+    
+    // Dynamic OpenGL version discovery methods
+    IOReturn queryActualOpenGLVersion(uint32_t context_id, uint32_t* major, uint32_t* minor);
+    IOReturn detectOpenGLVersionFromCapabilities(uint32_t context_id, uint32_t* major, uint32_t* minor);
+    bool parseOpenGLVersionString(const char* version_string, uint32_t* major, uint32_t* minor);
+    IOReturn queryVersionThroughMetal(uint32_t* major, uint32_t* minor);
+    
+    // OpenGL feature detection methods
+    bool hasOpenGL30Features(const char* extensions);
+    bool hasOpenGL31Features(const char* extensions);
+    bool hasOpenGL32Features(const char* extensions);
+    bool hasOpenGL40Features(const char* extensions);
+    
+    // Text rendering optimization (fixes flashing yellow squares)
+    IOReturn optimizeTextRendering(uint32_t context_id);
+    
+    // Helper methods for text rendering optimization
+    IOReturn enableBlending(uint32_t context_id, bool enable);
+    IOReturn setBlendFunc(uint32_t context_id, uint32_t src, uint32_t dst);
+    IOReturn enableDepthTest(uint32_t context_id, bool enable);
+    IOReturn setTextureFiltering(uint32_t context_id, uint32_t min_filter, uint32_t mag_filter);
+    IOReturn flushTextureCache(uint32_t context_id);
 
 };
 
