@@ -55,6 +55,10 @@ enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_CMD_GET_CAPSET,
     VIRTIO_GPU_CMD_GET_EDID,
 
+    /* Cursor commands */
+    VIRTIO_GPU_CMD_UPDATE_CURSOR = 0x0300,
+    VIRTIO_GPU_CMD_MOVE_CURSOR,
+
     /* 3D commands */
     VIRTIO_GPU_CMD_CTX_CREATE = 0x0200,
     VIRTIO_GPU_CMD_CTX_DESTROY,
@@ -259,6 +263,23 @@ struct virtio_gpu_get_capset {
 struct virtio_gpu_resp_capset {
     struct virtio_gpu_ctrl_hdr hdr;
     uint8_t capset_data[];
+};
+
+/* Cursor command structures */
+struct virtio_gpu_cursor_pos {
+    uint32_t scanout_id;
+    uint32_t x;
+    uint32_t y;
+    uint32_t padding;
+};
+
+struct virtio_gpu_update_cursor {
+    struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_gpu_cursor_pos pos;
+    uint32_t resource_id;
+    uint32_t hot_x;
+    uint32_t hot_y;
+    uint32_t padding;
 };
 
 #endif /* __VIRTIO_GPU_H__ */

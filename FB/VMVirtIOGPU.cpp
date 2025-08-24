@@ -1934,3 +1934,62 @@ IOReturn CLASS::enableFeature(uint32_t feature_flags)
     IOLog("VMVirtIOGPU::enableFeature: feature_flags=0x%x\n", feature_flags);
     return kIOReturnSuccess;
 }
+
+IOReturn CLASS::updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y, 
+                            uint32_t scanout_id, uint32_t x, uint32_t y)
+{
+    if (!m_cursor_queue) {
+        IOLog("VMVirtIOGPU::updateCursor: cursor queue not initialized\n");
+        return kIOReturnNotReady;
+    }
+    
+    // Create update cursor command
+    struct virtio_gpu_update_cursor cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    cmd.pos.scanout_id = scanout_id;
+    cmd.pos.x = x;
+    cmd.pos.y = y;
+    cmd.resource_id = resource_id;
+    cmd.hot_x = hot_x;
+    cmd.hot_y = hot_y;
+    
+    struct virtio_gpu_ctrl_hdr resp = {};
+    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+    
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::updateCursor: command failed with error %d\n", ret);
+    }
+    
+    return ret;
+}
+
+IOReturn CLASS::moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y)
+{
+    if (!m_cursor_queue) {
+        IOLog("VMVirtIOGPU::moveCursor: cursor queue not initialized\n");
+        return kIOReturnNotReady;
+    }
+    
+    // Create move cursor command (update cursor with resource_id = 0)
+    struct virtio_gpu_update_cursor cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_MOVE_CURSOR;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    cmd.pos.scanout_id = scanout_id;
+    cmd.pos.x = x;
+    cmd.pos.y = y;
+    cmd.resource_id = 0;  // 0 means just move, don't update cursor image
+    cmd.hot_x = 0;
+    cmd.hot_y = 0;
+    
+    struct virtio_gpu_ctrl_hdr resp = {};
+    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+    
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::moveCursor: command failed with error %d\n", ret);
+    }
+    
+    return ret;
+}

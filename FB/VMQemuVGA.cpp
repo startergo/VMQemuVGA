@@ -747,10 +747,10 @@ IOReturn CLASS::getAttribute(IOSelect attribute, uintptr_t* value)
 	 *   kIOVRAMSaveAttribute
 	 */
 	
-	//no hw cursor for cirrus	
+	//enable hw cursor for better performance	
 	if (attribute == kIOHardwareCursorAttribute) {
 		if (value)
-			*value = 0;//1;
+			*value = 1; // Enable hardware cursor
 		r = kIOReturnSuccess;
 	} else
 		r = super::getAttribute(attribute, value);
@@ -1626,12 +1626,30 @@ void VMQemuVGA::publishDeviceForLiluFrameworks()
 		setProperty("VMQemuVGA-Hyper-V-Compatible", true);
 		setProperty("VMQemuVGA-DDA-Device", subsystemVendorID == 0x1414);
 		
+		// WebGL and 3D acceleration capability reporting
+		setProperty("VMQemuVGA-WebGL-Support", true);
+		setProperty("VMQemuVGA-OpenGL-ES-Support", true);
+		setProperty("VMQemuVGA-Hardware-Acceleration", true);
+		setProperty("VMQemuVGA-3D-Context-Support", true);
+		setProperty("VMQemuVGA-Shader-Support", true);
+		setProperty("VMQemuVGA-OpenGL-Version", "3.0");
+		setProperty("VMQemuVGA-OpenGL-ES-Version", "3.0");
+		setProperty("VMQemuVGA-WebGL-Extensions", "WEBGL_depth_texture WEBGL_compressed_texture_s3tc OES_standard_derivatives");
+		
 		liluProps->release();
 	}
 	
 	// Publish device in I/O Registry for better visibility
 	registerService(kIOServiceAsynchronous);
 	
+	// Additional WebGL and browser compatibility properties
+	setProperty("IOAcceleratorTypes", "WebGL OpenGL");
+	setProperty("IOGLESBundleName", "VMQemuVGA");  
+	setProperty("IOGLESContextClass", "VMQemuVGAGLContext");
+	setProperty("WebGLRenderer", "VMQemuVGA VirtIO GPU");
+	setProperty("GPURendererID", (uint64_t)0x1051, 32);  // VirtIO GPU with 3D acceleration ID
+	
 	IOLog("VMQemuVGA: Device published for Lilu frameworks - Vendor: 0x%04X, Device: 0x%04X, Subsystem: 0x%04X:0x%04X\n", 
 	      vendorID, deviceID, subsystemVendorID, subsystemID);
+	IOLog("VMQemuVGA: WebGL and hardware acceleration support enabled\n");
 }

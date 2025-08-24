@@ -148,6 +148,11 @@ public:
     // Memory management
     IOReturn allocateGPUMemory(size_t size, IOMemoryDescriptor** memory);
     IOReturn mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_addr);
+    
+    // Hardware cursor support
+    IOReturn updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y, 
+                         uint32_t scanout_id, uint32_t x, uint32_t y);
+    IOReturn moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y);
 };
 
 #endif /* __VMVirtIOGPU_H__ */
