@@ -403,7 +403,7 @@ sudo sysctl debug.vmqemuvga.v8=1
 
 </details>
 
-To download the latest v8.0 releases with advanced command buffer resource dependency management, visit the [releases page](https://github.com/ivanagui2/VMQemuVGA/releases).
+To download the latest v8.0 releases with advanced command buffer resource dependency management, visit the [releases page](https://github.com/startergo/VMQemuVGA/releases).
 
 ---
 
