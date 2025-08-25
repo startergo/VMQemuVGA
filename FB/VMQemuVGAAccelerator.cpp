@@ -3629,3 +3629,24 @@ IOReturn CLASS::updateFrameStatistics(uint32_t frame_number, uint32_t pixels_upd
     
     return kIOReturnSuccess;
 }
+
+IOReturn VMQemuVGAAccelerator::bindTexture(uint32_t context_id, uint32_t binding_point, uint32_t texture_id) {
+    IOLog("VMQemuVGAAccelerator::bindTexture: context_id=%u, binding_point=%u, texture_id=%u (stub)\n", context_id, binding_point, texture_id);
+    return kIOReturnSuccess;
+}
+
+IOReturn VMQemuVGAAccelerator::updateTexture(uint32_t context_id, uint32_t texture_id, uint32_t mip_level, const void* region, const void* data) {
+    IOLog("VMQemuVGAAccelerator::updateTexture: context_id=%u, texture_id=%u, mip_level=%u (stub)\n", context_id, texture_id, mip_level);
+    return kIOReturnSuccess;
+}
+
+IOReturn VMQemuVGAAccelerator::destroy3DSurface(uint32_t context_id, uint32_t surface_id) {
+    IOLog("VMQemuVGAAccelerator::destroy3DSurface: context_id=%u, surface_id=%u (stub)\n", context_id, surface_id);
+    return kIOReturnSuccess;
+}
+
+IOReturn VMQemuVGAAccelerator::createFramebuffer(uint32_t context_id, uint32_t width, uint32_t height, uint32_t color_format, uint32_t depth_format, uint32_t* framebuffer_id) {
+    IOLog("VMQemuVGAAccelerator::createFramebuffer: context_id=%u, %ux%u, formats=0x%x/0x%x (stub)\n", context_id, width, height, color_format, depth_format);
+    if (framebuffer_id) *framebuffer_id = 2000; // Return a dummy framebuffer ID
+    return kIOReturnSuccess;
+}

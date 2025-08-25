@@ -4814,3 +4814,40 @@ IOReturn CLASS::validatePixelFormat(VMIOSurfacePixelFormat format)
 
 // =============================================================================
 
+
+OSObject* VMIOSurfaceManager::findSurface(uint32_t surface_id) {
+    IOLog("VMIOSurfaceManager::findSurface: surface_id=%u (stub)\n", surface_id);
+    return nullptr;
+}
+
+uint32_t VMIOSurfaceManager::allocateSurfaceId() {
+    IOLog("VMIOSurfaceManager::allocateSurfaceId (stub)\n");
+    return 1000; // Return a dummy ID
+}
+
+void VMIOSurfaceManager::releaseSurfaceId(uint32_t surface_id) {
+    IOLog("VMIOSurfaceManager::releaseSurfaceId: surface_id=%u (stub)\n", surface_id);
+}
+
+uint32_t VMIOSurfaceManager::calculateSurfaceSize(const VMIOSurfaceDescriptor* descriptor) {
+    IOLog("VMIOSurfaceManager::calculateSurfaceSize: descriptor=%p (stub)\n", descriptor);
+    return descriptor ? (descriptor->width * descriptor->height * 4) : 0; // Assume 32-bit RGBA
+}
+
+IOReturn VMIOSurfaceManager::allocateSurfaceMemory(const VMIOSurfaceDescriptor* descriptor, IOMemoryDescriptor** memory) {
+    IOLog("VMIOSurfaceManager::allocateSurfaceMemory: descriptor=%p (stub)\n", descriptor);
+    if (memory) *memory = nullptr;
+    return kIOReturnSuccess;
+}
+
+IOReturn VMIOSurfaceManager::setupPlaneInfo(VMIOSurfacePixelFormat format, uint32_t width, uint32_t height, VMIOSurfacePlaneInfo* plane_info, uint32_t* plane_count) {
+    IOLog("VMIOSurfaceManager::setupPlaneInfo: format=0x%x, %ux%u (stub)\n", format, width, height);
+    if (plane_count) *plane_count = 1; // Assume single plane
+    if (plane_info) {
+        plane_info->bytes_per_element = 4; // Assume 32-bit
+        plane_info->bytes_per_row = width * 4;
+        plane_info->element_width = 1;
+        plane_info->element_height = 1;
+    }
+    return kIOReturnSuccess;
+}

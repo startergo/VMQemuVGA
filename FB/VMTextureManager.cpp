@@ -9214,3 +9214,8 @@ uint32_t CLASS::calculateTextureSize(const VMTextureDescriptor* descriptor)
     
     return validation_result.final_validated_size;
 }
+
+IOReturn VMTextureManager::unbindTexture(uint32_t context_id, uint32_t binding_point) {
+    IOLog("VMTextureManager::unbindTexture: context_id=%u, binding_point=%u (stub)\n", context_id, binding_point);
+    return kIOReturnSuccess;
+}

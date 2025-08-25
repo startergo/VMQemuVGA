@@ -4446,3 +4446,11 @@ IOReturn CLASS::flushTextureCache(uint32_t context_id)
     
     return result;
 }
+
+IOReturn VMOpenGLBridge::queryOpenGLVersionString(uint32_t context_id, char* version_string, size_t buffer_size) {
+    IOLog("VMOpenGLBridge::queryOpenGLVersionString: context_id=%u (stub)\n", context_id);
+    if (version_string && buffer_size > 0) {
+        strlcpy(version_string, "2.1", buffer_size);
+    }
+    return kIOReturnSuccess;
+}
