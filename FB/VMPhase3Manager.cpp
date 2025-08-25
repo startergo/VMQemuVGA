@@ -1342,12 +1342,27 @@ IOReturn CLASS::setDisplayScaling(float scale_factor) {
     return kIOReturnSuccess;
 }
 
+__attribute__((used))
 IOReturn CLASS::configureColorSpace(uint32_t color_space) {
     IOLog("VMPhase3Manager::configureColorSpace: color_space=%u (stub)\n", color_space);
     return kIOReturnSuccess;
 }
 
+__attribute__((used))
 IOReturn CLASS::enableVariableRefreshRate() {
     IOLog("VMPhase3Manager::enableVariableRefreshRate (stub)\n");
     return kIOReturnSuccess;
+}
+
+// Simple C function exports with exact Snow Leopard symbol names
+extern "C" {
+    IOReturn __ZN15VMPhase3Manager19configureColorSpaceEj() {
+        IOLog("VMPhase3Manager: Snow Leopard configureColorSpace stub called\n");
+        return kIOReturnSuccess;
+    }
+    
+    IOReturn __ZN15VMPhase3Manager25enableVariableRefreshRateEv() {
+        IOLog("VMPhase3Manager: Snow Leopard enableVariableRefreshRate stub called\n");
+        return kIOReturnSuccess;
+    }
 }
