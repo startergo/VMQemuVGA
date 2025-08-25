@@ -2002,3 +2002,54 @@ bool CLASS::supportsFeature(uint32_t feature_flags) const {
     IOLog("VMVirtIOGPU::supportsFeature: feature_flags=0x%x (stub)\n", feature_flags);
     return false;
 }
+
+// Snow Leopard compatibility stubs for missing VMVirtIOGPU methods
+void CLASS::enableVSync(bool enabled) {
+    IOLog("VMVirtIOGPU::enableVSync: enabled=%d (stub)\n", enabled);
+}
+
+void CLASS::enableVirgl() {
+    IOLog("VMVirtIOGPU::enableVirgl (stub)\n");
+}
+
+void CLASS::setMockMode(bool enabled) {
+    IOLog("VMVirtIOGPU::setMockMode: enabled=%d (stub)\n", enabled);
+}
+
+IOReturn CLASS::updateDisplay(uint32_t scanout_id, uint32_t resource_id, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
+    IOLog("VMVirtIOGPU::updateDisplay: scanout_id=%u resource_id=%u x=%u y=%u w=%u h=%u (stub)\n", scanout_id, resource_id, x, y, width, height);
+    return kIOReturnSuccess;
+}
+
+IOReturn CLASS::mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_addr) {
+    IOLog("VMVirtIOGPU::mapGuestMemory: guest_memory=%p gpu_addr=%p (stub)\n", guest_memory, gpu_addr);
+    if (gpu_addr) *gpu_addr = 0;
+    return kIOReturnSuccess;
+}
+
+void CLASS::setBasic3DSupport(bool enabled) {
+    IOLog("VMVirtIOGPU::setBasic3DSupport: enabled=%d (stub)\n", enabled);
+}
+
+void CLASS::enableResourceBlob() {
+    IOLog("VMVirtIOGPU::enableResourceBlob (stub)\n");
+}
+
+void CLASS::enable3DAcceleration() {
+    IOLog("VMVirtIOGPU::enable3DAcceleration (stub)\n");
+}
+
+bool CLASS::setOptimalQueueSizes() {
+    IOLog("VMVirtIOGPU::setOptimalQueueSizes (stub)\n");
+    return true;
+}
+
+bool CLASS::setupGPUMemoryRegions() {
+    IOLog("VMVirtIOGPU::setupGPUMemoryRegions (stub)\n");
+    return true;
+}
+
+bool CLASS::initializeVirtIOQueues() {
+    IOLog("VMVirtIOGPU::initializeVirtIOQueues (stub)\n");
+    return true;
+}
