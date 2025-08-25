@@ -69,6 +69,10 @@ private:
 	
 	// Lilu Issue #2299 workaround: Early device registration for framework compatibility
 	void publishDeviceForLiluFrameworks();
+	
+	// Snow Leopard system graphics integration
+	IOReturn registerWithSystemGraphics();
+	IOReturn initializeIOSurfaceSupport();
 
 	IODisplayModeID TryDetectCurrentDisplayMode(IODisplayModeID defaultMode) const;
 
@@ -113,6 +117,14 @@ public:
 	IOReturn	CustomMode(CustomModeData const* inData, CustomModeData* outData, 
 										size_t inSize, size_t* outSize);
 	IOReturn 	setDisplayMode(IODisplayModeID displayMode, IOIndex depth) override;
+	
+	// Canvas 2D hardware acceleration methods for YouTube/browser support
+	IOReturn acceleratedCanvasDrawImage(const void* imageData, size_t imageSize, 
+										int32_t srcX, int32_t srcY, int32_t srcW, int32_t srcH,
+										int32_t dstX, int32_t dstY, int32_t dstW, int32_t dstH);
+	IOReturn acceleratedCanvasFillRect(int32_t x, int32_t y, int32_t width, int32_t height, uint32_t color);
+	IOReturn acceleratedCanvasDrawText(const char* text, int32_t x, int32_t y, uint32_t fontSize, uint32_t color);
+	IOReturn enableCanvasAcceleration(bool enable);
 	
 	// Snow Leopard IOFramebuffer compatibility methods
 	// These methods exist in Snow Leopard's IOFramebuffer but may have different signatures

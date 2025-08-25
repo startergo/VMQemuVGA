@@ -116,6 +116,11 @@ public:
     IOReturn updateDisplay(uint32_t scanout_id, uint32_t resource_id,
                           uint32_t x, uint32_t y, uint32_t width, uint32_t height);
     
+    // Cursor management interface
+    IOReturn updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y,
+                         uint32_t scanout_id, uint32_t x, uint32_t y);
+    IOReturn moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y);
+    
     // Capability queries
     uint32_t getMaxScanouts() const { return m_max_scanouts; }
     bool supports3D() const { return m_num_capsets > 0; }
@@ -126,8 +131,8 @@ public:
     uint32_t getMaxDisplays() const { return m_max_scanouts; }
     uint32_t getMaxResolutionX() const { return 4096; } // Default max resolution
     uint32_t getMaxResolutionY() const { return 4096; }
-    bool supportsVirgl() const { return supportsFeature(VIRTIO_GPU_FEATURE_VIRGL); }
-    bool supportsResourceBlob() const { return supportsFeature(VIRTIO_GPU_FEATURE_RESOURCE_BLOB); }
+    bool supportsVirgl() const { return supports3D(); } // Virgl support requires 3D acceleration
+    bool supportsResourceBlob() const { return supports3D(); } // Resource blob requires 3D support
     
     // Mock device configuration for compatibility mode
     void setMockMode(bool enabled);
@@ -142,17 +147,13 @@ public:
     bool setOptimalQueueSizes();
     void enableResourceBlob();
     void enableVirgl();
+    void initializeWebGLAcceleration();
     void setPreferredRefreshRate(uint32_t hz);
     void enableVSync(bool enabled);
     
     // Memory management
     IOReturn allocateGPUMemory(size_t size, IOMemoryDescriptor** memory);
     IOReturn mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_addr);
-    
-    // Hardware cursor support
-    IOReturn updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y, 
-                         uint32_t scanout_id, uint32_t x, uint32_t y);
-    IOReturn moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y);
 };
 
 #endif /* __VMVirtIOGPU_H__ */
