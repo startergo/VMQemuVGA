@@ -24,18 +24,18 @@ GCC_PREPROCESSOR_DEFINITIONS = KERNEL KERNEL_PRIVATE MACH_KERNEL_PRIVATE PRIVATE
 
 // x86_64 targeting flags (macOS 10.6+ support)
 ARCHS = x86_64;
-MACOSX_DEPLOYMENT_TARGET = 10.13;
-OTHER_CFLAGS = -static -nostdlib -Wno-stdlibcxx-not-found -target x86_64-apple-macos10.13 -fallow-unsupported -fno-stack-protector -fno-jump-tables;
-OTHER_LDFLAGS = -static -target x86_64-apple-macos10.13 -lkmod;
+MACOSX_DEPLOYMENT_TARGET = 10.6;
+OTHER_CFLAGS = -static -nostdlib -Wno-stdlibcxx-not-found -target x86_64-apple-macos10.6 -fallow-unsupported -fno-stack-protector -fno-jump-tables;
+OTHER_LDFLAGS = -static -target x86_64-apple-macos10.6 -lkmod;
 CLANG_CXX_LIBRARY = ;
 
 // Modern Kernel Extension Build Settings
 KERNEL_EXTENSION = YES;
 KERNEL_FRAMEWORK = IOKit;
 
-// Code Signing Configuration - Apple Developer ID G2
-CODE_SIGN_IDENTITY = Developer ID Application: ;
-CODE_SIGN_ENTITLEMENTS = VMQemuVGA.entitlements;
+// Code Signing Configuration - Disabled for Snow Leopard compatibility
+CODE_SIGN_IDENTITY = ;
+CODE_SIGN_ENTITLEMENTS = ;
 
 // Override header map style warning
 USE_HEADERMAP = NO;

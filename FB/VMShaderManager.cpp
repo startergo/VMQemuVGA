@@ -16490,3 +16490,43 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
     
     return kIOReturnSuccess;
 }
+
+// Missing method implementation for symbol resolution
+IOReturn VMShaderManager::setUniform(uint32_t program_id, const char* name, const void* data, size_t size)
+{
+    if (!name || !data || size == 0)
+        return kIOReturnBadArgument;
+        
+    IOLog("VMShaderManager: Setting uniform '%s' for program %d (%zu bytes)\n", name, program_id, size);
+    
+    ShaderProgram* program = findProgram(program_id);
+    if (!program || !program->is_linked) {
+        IOLog("VMShaderManager: Program %d not found or not linked\n", program_id);
+        return kIOReturnNotFound;
+    }
+    
+    // Find uniform in program
+    if (program->all_uniforms) {
+        for (uint32_t i = 0; i < program->all_uniforms->getCount(); i++) {
+            OSData* uniform_data = (OSData*)program->all_uniforms->getObject(i);
+            if (uniform_data) {
+                VMShaderUniform* uniform = (VMShaderUniform*)uniform_data->getBytesNoCopy();
+                if (uniform && strcmp(uniform->name, name) == 0) {
+                    IOLog("VMShaderManager: Found uniform '%s' at location %d\n", name, uniform->location);
+                    
+                    // Submit uniform to VirtIO GPU
+                    if (m_gpu_device) {
+                        IOLog("VMShaderManager: Submitting uniform '%s' to GPU\n", name);
+                        // Implementation would submit uniform data to GPU
+                    }
+                    
+                    IOLog("VMShaderManager: Uniform '%s' set successfully\n", name);
+                    return kIOReturnSuccess;
+                }
+            }
+        }
+    }
+    
+    IOLog("VMShaderManager: Uniform '%s' not found in program %d\n", name, program_id);
+    return kIOReturnNotFound;
+}

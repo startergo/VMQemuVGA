@@ -1993,3 +1993,12 @@ IOReturn CLASS::moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y)
     
     return ret;
 }
+
+void CLASS::setPreferredRefreshRate(uint32_t hz) {
+    IOLog("VMVirtIOGPU::setPreferredRefreshRate: hz=%u (stub)\n", hz);
+}
+
+bool CLASS::supportsFeature(uint32_t feature_flags) const {
+    IOLog("VMVirtIOGPU::supportsFeature: feature_flags=0x%x (stub)\n", feature_flags);
+    return false;
+}
