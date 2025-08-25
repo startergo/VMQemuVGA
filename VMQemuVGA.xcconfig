@@ -25,8 +25,8 @@ GCC_PREPROCESSOR_DEFINITIONS = KERNEL KERNEL_PRIVATE MACH_KERNEL_PRIVATE PRIVATE
 // x86_64 targeting flags (macOS 10.6+ support)
 ARCHS = x86_64;
 MACOSX_DEPLOYMENT_TARGET = 10.6;
-OTHER_CFLAGS = -static -nostdlib -Wno-stdlibcxx-not-found -target x86_64-apple-macos10.6 -fallow-unsupported -fno-stack-protector -fno-jump-tables;
-OTHER_LDFLAGS = -static -target x86_64-apple-macos10.6 -lkmod;
+OTHER_CFLAGS = -static -nostdlib -Wno-stdlibcxx-not-found -target x86_64-apple-macos10.6 -fallow-unsupported -fno-stack-protector -fno-jump-tables -fvisibility=default;
+OTHER_LDFLAGS = -static -target x86_64-apple-macos10.6 -lkmod -Wl,-all_load;
 CLANG_CXX_LIBRARY = ;
 
 // Modern Kernel Extension Build Settings
