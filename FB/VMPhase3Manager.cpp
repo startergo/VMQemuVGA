@@ -1335,3 +1335,19 @@ double fabs(double x) {
 #ifdef __cplusplus
 }
 #endif
+
+// Snow Leopard compatibility stubs for missing VMPhase3Manager methods
+IOReturn CLASS::setDisplayScaling(float scale_factor) {
+    IOLog("VMPhase3Manager::setDisplayScaling: scale_factor=%f (stub)\n", scale_factor);
+    return kIOReturnSuccess;
+}
+
+IOReturn CLASS::configureColorSpace(uint32_t color_space) {
+    IOLog("VMPhase3Manager::configureColorSpace: color_space=%u (stub)\n", color_space);
+    return kIOReturnSuccess;
+}
+
+IOReturn CLASS::enableVariableRefreshRate() {
+    IOLog("VMPhase3Manager::enableVariableRefreshRate (stub)\n");
+    return kIOReturnSuccess;
+}
