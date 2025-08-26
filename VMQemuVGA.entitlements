@@ -8,9 +8,27 @@
     <key>com.apple.developer.kernel.increased-memory-limit</key>
     <true/>
     
-    <!-- VMQemuVGA Phase 3 Advanced 3D Acceleration entitlements -->
+    <!-- Enhanced kernel and system access -->
     <key>com.apple.developer.kernel.extended-virtual-addressing</key>
     <true/>
+    <key>com.apple.developer.driverkit.family.audio</key>
+    <true/>
+    <key>com.apple.developer.driverkit.family.networking</key>
+    <true/>
+    <key>com.apple.developer.driverkit.family.serial</key>
+    <true/>
+    <key>com.apple.developer.driverkit.family.usb</key>
+    <true/>
+    <key>com.apple.developer.driverkit.family.hid</key>
+    <true/>
+    <key>com.apple.developer.system.logging</key>
+    <true/>
+    <key>com.apple.developer.kernel.memory-mapping</key>
+    <true/>
+    <key>com.apple.developer.kernel.pci-device-access</key>
+    <true/>
+    
+    <!-- Graphics and display acceleration -->
     <key>com.apple.developer.metal.framework-access</key>
     <true/>
     <key>com.apple.developer.opengl.framework-access</key>
@@ -21,12 +39,62 @@
     <true/>
     <key>com.apple.developer.gpu.command-queue-access</key>
     <true/>
-    <key>com.apple.developer.virtio.gpu-paravirtualization</key>
-    <true/>
     <key>com.apple.developer.graphics.shader-compilation</key>
     <true/>
+    <key>com.apple.developer.graphics.framebuffer-access</key>
+    <true/>
+    <key>com.apple.developer.graphics.display-management</key>
+    <true/>
+    <key>com.apple.developer.display.brightness-control</key>
+    <true/>
+    <key>com.apple.developer.coregraphics.kernel-access</key>
+    <true/>
     
-    <!-- Phase 3 Component-specific entitlements -->
+    <!-- Virtualization and VirtIO support -->
+    <key>com.apple.developer.virtio.gpu-paravirtualization</key>
+    <true/>
+    <key>com.apple.developer.virtualization.generic</key>
+    <true/>
+    <key>com.apple.developer.hypervisor</key>
+    <true/>
+    <key>com.apple.developer.driverkit.transport.virtio</key>
+    <true/>
+    <key>com.apple.developer.driverkit.transport.pci</key>
+    <true/>
+    
+    <!-- Security and signature validation -->
+    <key>com.apple.developer.kernel.extended-security</key>
+    <true/>
+    <key>com.apple.security.kernel-extension-policy</key>
+    <true/>
+    <key>com.apple.security.device-access</key>
+    <true/>
+    <key>com.apple.security.exception-handling</key>
+    <true/>
+    <key>com.apple.security.temporary-exception.apple-events</key>
+    <true/>
+    
+    <!-- Hardware and device management -->
+    <key>com.apple.developer.device-information.identifiers</key>
+    <true/>
+    <key>com.apple.developer.hardware.accelerated-video-decode</key>
+    <true/>
+    <key>com.apple.developer.hardware.accelerated-video-encode</key>
+    <true/>
+    <key>com.apple.developer.av.multichannelsession</key>
+    <true/>
+    
+    <!-- Memory and resource management -->
+    <key>com.apple.developer.memory-mapped-io</key>
+    <true/>
+    <key>com.apple.developer.shared-memory</key>
+    <true/>
+    <key>com.apple.developer.kernel.background-processing</key>
+    <true/>
+    <key>com.apple.developer.kernel.interrupt-handling</key>
+    <true/>
+    
+    <!-- VMQemuVGA Phase 3 Advanced 3D Acceleration entitlements -->
     <key>com.vmqemuvga.phase3.metal-bridge</key>
     <true/>
     <key>com.vmqemuvga.phase3.opengl-bridge</key>
@@ -42,6 +110,14 @@
     <key>com.vmqemuvga.phase3.command-buffer</key>
     <true/>
     <key>com.vmqemuvga.phase3.manager</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.virtio-transport</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.qxl-compatibility</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.display-controller</key>
+    <true/>
+    <key>com.vmqemuvga.phase3.memory-allocator</key>
     <true/>
 </dict>
 </plist>

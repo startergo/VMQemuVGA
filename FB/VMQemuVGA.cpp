@@ -65,13 +65,16 @@ IOService* VMQemuVGA::probe(IOService* provider, SInt32* score)
     
     VLOG("Found PCI device: vendor=0x%04x, device=0x%04x", vendorID, deviceID);
     
-    if (vendorID == 0x1b36 && deviceID == 0x0100) {
+    // Support both QXL and VirtIO-GPU devices
+    if ((vendorID == 0x1b36 && deviceID == 0x0100) ||      // QXL Graphics
+        (vendorID == 0x1af4 && deviceID == 0x1050)) {      // VirtIO-GPU
         *score = 90000;  // High score to beat NDRV
-        VLOG("VMQemuVGA probe successful with score %d", *score);
+        VLOG("VMQemuVGA probe successful with score %d for %s", *score, 
+             (vendorID == 0x1b36) ? "QXL" : "VirtIO-GPU");
         return this;
     }
     
-    VLOG("Device not supported");
+    VLOG("Device not supported: vendor=0x%04x, device=0x%04x", vendorID, deviceID);
     return NULL;
 }/*************START********************/
 bool CLASS::start(IOService* provider)
