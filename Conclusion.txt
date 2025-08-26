@@ -1,0 +1,13 @@
+VMQemuVGA Installation Complete
+
+The VMQemuVGA kernel extension has been successfully installed.
+
+IMPORTANT: A restart is required to activate the graphics driver and enable hardware acceleration.
+
+Please restart your computer to complete the installation.
+
+After reboot, you can verify installation with:
+• System Information → Graphics/Displays
+• Terminal: system_profiler SPDisplaysDataType
+
+For troubleshooting, visit: https://github.com/startergo/VMQemuVGA
