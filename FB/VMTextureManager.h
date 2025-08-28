@@ -185,6 +185,7 @@ private:
     // Internal methods
     ManagedTexture* findTexture(uint32_t texture_id);
     TextureSampler* findSampler(uint32_t sampler_id);
+    void updateAccessTime(ManagedTexture* texture);
     
     IOReturn createTextureInternal(const VMTextureDescriptor* descriptor, 
                                   IOMemoryDescriptor* initial_data,
@@ -205,7 +206,6 @@ private:
     IOReturn evictLeastRecentlyUsedTexture();
     IOReturn addToCache(ManagedTexture* texture);
     IOReturn removeFromCache(uint32_t texture_id);
-    void updateAccessTime(ManagedTexture* texture);
     
     // Format conversion
     IOReturn convertTextureFormat(IOMemoryDescriptor* source_data,
