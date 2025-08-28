@@ -24,6 +24,9 @@ private:
     IOMemoryMap* m_notify_map;
     IOCommandGate* m_command_gate;
     
+    // VirtIO transport device handle
+    IOService* m_virtio_device;
+    
     // VirtIO GPU configuration
     uint32_t m_max_scanouts;
     uint32_t m_num_capsets;
@@ -61,14 +64,40 @@ private:
     IOLock* m_resource_lock;
     IOLock* m_context_lock;
     
-    // Display and timing control
-    bool m_vsync_enabled;
-    uint32_t m_preferred_refresh_rate;
-    bool m_basic_3d_enabled;
-    bool m_mock_mode;
+    // VirtIO queue ring structures for real hardware communication
+    struct vring_desc {
+        uint64_t addr;   // Buffer physical address
+        uint32_t len;    // Buffer length
+        uint16_t flags;  // Buffer flags
+        uint16_t next;   // Next buffer if chained
+    };
+    
+    struct vring_avail {
+        uint16_t flags;
+        uint16_t idx;
+        uint16_t ring[];
+    };
+    
+    struct vring_used_elem {
+        uint32_t id;
+        uint32_t len;
+    };
+    
+    struct vring_used {
+        uint16_t flags;
+        uint16_t idx;
+        struct vring_used_elem ring[];
+    };
+    
+    // VirtIO queue state
+    struct vring_desc* m_control_desc_ring;
+    struct vring_avail* m_control_avail_ring;
+    struct vring_used* m_control_used_ring;
+    uint16_t m_control_queue_last_used_idx;
     
     // VirtIO operations
     bool initVirtIOGPU();
+    bool initVirtIORings();
     void cleanupVirtIOGPU();
     
     // Command processing
@@ -104,6 +133,11 @@ private:
     gpu_3d_context* findContext(uint32_t context_id);
     
 public:
+    // Display management methods called by VMQemuVGA
+    IOReturn createScanoutResource(uint32_t resource_id, uint32_t width, uint32_t height, uint32_t format);
+    IOReturn enableDisplayOutput(uint32_t scanout_id);
+    IOReturn setPrimaryScanout(uint32_t width, uint32_t height, uint32_t format);
+    
     virtual bool start(IOService* provider) override;
     virtual void stop(IOService* provider) override;
     virtual bool init(OSDictionary* properties = nullptr) override;
@@ -160,6 +194,10 @@ public:
     // Memory management
     IOReturn allocateGPUMemory(size_t size, IOMemoryDescriptor** memory);
     IOReturn mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_addr);
+    
+    // VRAM management for System Profiler integration
+    uint64_t getVRAMSize() const;
+    IODeviceMemory* getVRAMRange();
 };
 
 #endif /* __VMVirtIOGPU_H__ */

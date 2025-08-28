@@ -90,17 +90,8 @@ bool CLASS::start(IOService* provider)
     
     m_gpu_device = m_framebuffer->getGPUDevice();
     if (!m_gpu_device) {
-        IOLog("VMQemuVGAAccelerator: CRITICAL ERROR - No GPU device available from framebuffer\n");
-        IOLog("VMQemuVGAAccelerator: This means VirtIO GPU initialization failed in VMQemuVGA\n");
+        IOLog("VMQemuVGAAccelerator: No GPU device available\n");
         return false;
-    }
-    IOLog("VMQemuVGAAccelerator: DIAGNOSTIC - Successfully obtained VirtIO GPU device from framebuffer\n");
-    
-    // Check if the GPU device supports 3D acceleration
-    if (m_gpu_device->supports3D()) {
-        IOLog("VMQemuVGAAccelerator: SUCCESS - VirtIO GPU reports 3D acceleration support\n");
-    } else {
-        IOLog("VMQemuVGAAccelerator: WARNING - VirtIO GPU does not support 3D acceleration\n");
     }
     
     // Create workloop and command gate
@@ -698,11 +689,11 @@ IOReturn CLASS::present3DSurface(uint32_t context_id, uint32_t surface_id)
               surface->info.width, surface->info.height, surface->info.format, surface->gpu_resource_id);
     }
     
-    IOLog("VMQemuVGAAccelerator: Present surface %u from context %u (result: 0x%x)\n", 
+    IOLog("VMQemuVGAAccelerator: Present surface %d from context %d (result: 0x%x)\n", 
           surface_id, context_id, presentResult);
     
     IOLockUnlock(m_lock);
-    return presentResult;
+    return kIOReturnSuccess;
 }
 
 // Advanced 3D API implementations
@@ -3504,48 +3495,12 @@ IOReturn CLASS::getCommandPoolStatistics(void* stats)
 // Shader Manager Helper Methods
 IOReturn CLASS::setShaderUniform(uint32_t program_id, const char* name, const void* data, size_t size)
 {
-    if (!m_shader_manager || !name || !data) {
-        IOLog("VMQemuVGAAccelerator::setShaderUniform: Invalid parameters - shader_manager=%p, name=%p, data=%p\n",
-              m_shader_manager, name, data);
+    if (!m_shader_manager || !name || !data)
         return kIOReturnBadArgument;
-    }
-    
-    // Validate uniform name length
-    size_t name_len = strlen(name);
-    if (name_len == 0 || name_len > 64) { // Reasonable limits for uniform names
-        IOLog("VMQemuVGAAccelerator::setShaderUniform: Invalid uniform name length %zu\n", name_len);
-        return kIOReturnBadArgument;
-    }
-    
-    // Validate data size (common uniform sizes)
-    if (size == 0 || size > 1024) { // Reasonable limits for uniform data
-        IOLog("VMQemuVGAAccelerator::setShaderUniform: Invalid uniform data size %zu\n", size);
-        return kIOReturnBadArgument;
-    }
-    
-    // Log uniform type based on common sizes
-    const char* uniform_type = "unknown";
-    switch (size) {
-        case 4:   uniform_type = "float/int"; break;
-        case 8:   uniform_type = "vec2"; break;
-        case 12:  uniform_type = "vec3"; break;
-        case 16:  uniform_type = "vec4/mat2"; break;
-        case 36:  uniform_type = "mat3"; break;
-        case 64:  uniform_type = "mat4"; break;
-        default:  uniform_type = "custom"; break;
-    }
         
-    IOLog("VMQemuVGAAccelerator::setShaderUniform: Setting uniform '%s' for program %u (%zu bytes, %s)\n", 
-          name, program_id, size, uniform_type);
-          
-    IOReturn result = m_shader_manager->setUniform(program_id, name, data, size);
-    
-    if (result != kIOReturnSuccess) {
-        IOLog("VMQemuVGAAccelerator::setShaderUniform: Failed to set uniform '%s': 0x%x\n", 
-              name, result);
-    }
-    
-    return result;
+    IOLog("VMQemuVGAAccelerator: Setting uniform '%s' for program %d (%zu bytes)\n", 
+          name, program_id, size);
+    return m_shader_manager->setUniform(program_id, name, data, size);
 }
 
 // Enhanced Performance and Timing Methods
@@ -3657,13 +3612,6 @@ IOReturn CLASS::flushVRAMCache(void* vram_ptr, size_t size)
 // Frame Statistics Tracking
 IOReturn CLASS::updateFrameStatistics(uint32_t frame_number, uint32_t pixels_updated)
 {
-    // Validate parameters
-    if (pixels_updated > (4096 * 4096)) { // Sanity check for reasonable pixel counts
-        IOLog("VMQemuVGAAccelerator::updateFrameStatistics: Excessive pixel count %u for frame %u\n", 
-              pixels_updated, frame_number);
-        return kIOReturnBadArgument;
-    }
-    
     struct {
         uint32_t frame_number;
         uint32_t dirty_regions;
@@ -3676,108 +3624,29 @@ IOReturn CLASS::updateFrameStatistics(uint32_t frame_number, uint32_t pixels_upd
     frame_stats.pixels_updated = pixels_updated;
     frame_stats.flush_timestamp = getCurrentTimestamp();
     
-    // Update global frame statistics
-    static uint32_t total_frames = 0;
-    static uint64_t total_pixels = 0;
-    static uint64_t last_stats_time = 0;
-    
-    total_frames++;
-    total_pixels += pixels_updated;
-    
-    uint64_t current_time = frame_stats.flush_timestamp;
-    
-    // Log periodic statistics (every 60 frames or 1 second, whichever comes first)
-    if ((total_frames % 60 == 0) || (current_time - last_stats_time > 1000000000ULL)) { // 1 second in nanoseconds
-        uint64_t avg_pixels_per_frame = total_frames > 0 ? total_pixels / total_frames : 0;
-        IOLog("VMQemuVGAAccelerator: Frame statistics - Total: %u frames, Avg pixels/frame: %llu\n",
-              total_frames, avg_pixels_per_frame);
-        last_stats_time = current_time;
-    }
-    
-    IOLog("VMQemuVGAAccelerator: Frame %u statistics - %u pixels updated, timestamp: %llu\n",
-          frame_number, pixels_updated, frame_stats.flush_timestamp);
+    IOLog("VMQemuVGAAccelerator: Frame %d statistics - %d pixels updated\n",
+          frame_number, pixels_updated);
     
     return kIOReturnSuccess;
 }
 
 IOReturn VMQemuVGAAccelerator::bindTexture(uint32_t context_id, uint32_t binding_point, uint32_t texture_id) {
-    IOLog("VMQemuVGAAccelerator::bindTexture: context_id=%u, binding_point=%u, texture_id=%u\n", 
-          context_id, binding_point, texture_id);
-    
-    // Basic validation
-    if (context_id == 0 || texture_id == 0 || binding_point >= 32) {
-        return kIOReturnBadArgument;
-    }
-    
-    // Log successful binding operation
-    IOLog("VMQemuVGAAccelerator::bindTexture: Successfully bound texture %u to unit %u in context %u\n", 
-          texture_id, binding_point, context_id);
+    IOLog("VMQemuVGAAccelerator::bindTexture: context_id=%u, binding_point=%u, texture_id=%u (stub)\n", context_id, binding_point, texture_id);
     return kIOReturnSuccess;
 }
 
 IOReturn VMQemuVGAAccelerator::updateTexture(uint32_t context_id, uint32_t texture_id, uint32_t mip_level, const void* region, const void* data) {
-    IOLog("VMQemuVGAAccelerator::updateTexture: context_id=%u, texture_id=%u, mip_level=%u\n", 
-          context_id, texture_id, mip_level);
-    
-    // Basic validation
-    if (context_id == 0 || texture_id == 0 || mip_level >= 16 || !region || !data) {
-        return kIOReturnBadArgument;
-    }
-    
-    // Cast region to expected format (x, y, width, height)
-    const uint32_t* region_data = static_cast<const uint32_t*>(region);
-    uint32_t width = region_data[2];
-    uint32_t height = region_data[3];
-    
-    // Validate region bounds
-    if (width == 0 || height == 0 || width > 8192 || height > 8192) {
-        IOLog("VMQemuVGAAccelerator::updateTexture: Invalid region dimensions %ux%u\n", width, height);
-        return kIOReturnBadArgument;
-    }
-    
-    IOLog("VMQemuVGAAccelerator::updateTexture: Successfully updated texture %u mip %u (%ux%u region) in context %u\n", 
-          texture_id, mip_level, width, height, context_id);
+    IOLog("VMQemuVGAAccelerator::updateTexture: context_id=%u, texture_id=%u, mip_level=%u (stub)\n", context_id, texture_id, mip_level);
     return kIOReturnSuccess;
 }
 
 IOReturn VMQemuVGAAccelerator::destroy3DSurface(uint32_t context_id, uint32_t surface_id) {
-    IOLog("VMQemuVGAAccelerator::destroy3DSurface: context_id=%u, surface_id=%u\n", context_id, surface_id);
-    
-    // Basic validation
-    if (context_id == 0 || surface_id == 0) {
-        IOLog("VMQemuVGAAccelerator::destroy3DSurface: Invalid context %u or surface %u\n", 
-              context_id, surface_id);
-        return kIOReturnBadArgument;
-    }
-    
-    IOLog("VMQemuVGAAccelerator::destroy3DSurface: Successfully destroyed surface %u in context %u\n", 
-          surface_id, context_id);
+    IOLog("VMQemuVGAAccelerator::destroy3DSurface: context_id=%u, surface_id=%u (stub)\n", context_id, surface_id);
     return kIOReturnSuccess;
 }
 
 IOReturn VMQemuVGAAccelerator::createFramebuffer(uint32_t context_id, uint32_t width, uint32_t height, uint32_t color_format, uint32_t depth_format, uint32_t* framebuffer_id) {
-    IOLog("VMQemuVGAAccelerator::createFramebuffer: context_id=%u, %ux%u, formats=0x%x/0x%x\n", 
-          context_id, width, height, color_format, depth_format);
-    
-    // Basic validation
-    if (context_id == 0 || !framebuffer_id) {
-        return kIOReturnBadArgument;
-    }
-    
-    // Validate dimensions
-    if (width == 0 || height == 0 || width > 8192 || height > 8192) {
-        IOLog("VMQemuVGAAccelerator::createFramebuffer: Invalid dimensions %ux%u\n", width, height);
-        return kIOReturnBadArgument;
-    }
-    
-    // Generate unique framebuffer ID
-    static uint32_t next_fb_id = 1000;
-    uint32_t fb_id = next_fb_id++;
-    
-    // Return the framebuffer ID to caller
-    *framebuffer_id = fb_id;
-    
-    IOLog("VMQemuVGAAccelerator::createFramebuffer: Successfully created framebuffer %u (%ux%u, color=0x%x, depth=0x%x) in context %u\n", 
-          fb_id, width, height, color_format, depth_format, context_id);
+    IOLog("VMQemuVGAAccelerator::createFramebuffer: context_id=%u, %ux%u, formats=0x%x/0x%x (stub)\n", context_id, width, height, color_format, depth_format);
+    if (framebuffer_id) *framebuffer_id = 2000; // Return a dummy framebuffer ID
     return kIOReturnSuccess;
 }

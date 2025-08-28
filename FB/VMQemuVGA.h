@@ -12,6 +12,18 @@
 // Forward declarations
 class VMQemuVGAAccelerator;
 
+// Device type enumeration for multi-path architecture
+enum VMDeviceType {
+	VM_DEVICE_UNKNOWN = 0,
+	VM_DEVICE_QXL = 1,				// QXL device (0x1B36:0x0100)
+	VM_DEVICE_VIRTIO_GPU = 2,		// VirtIO GPU (0x1AF4:0x1050-105F)
+	VM_DEVICE_QEMU_VGA = 3,			// QEMU Standard VGA (0x1234:0x1111)
+	VM_DEVICE_VMWARE_SVGA = 4,		// VMware SVGA (0x15AD:0x0405)
+	VM_DEVICE_HYPER_V = 5,			// Hyper-V Synthetic GPU (0x1414:0x5353+)
+	VM_DEVICE_INTEL_VIRT = 6,		// Intel virtualized GPU
+	VM_DEVICE_AMD_VIRT = 7,			// AMD virtualized GPU
+	VM_DEVICE_NVIDIA_VIRT = 8		// NVIDIA virtualized GPU
+};
 
 class VMQemuVGA : public IOFramebuffer
 {
@@ -22,8 +34,13 @@ private:
 	QemuVGADevice svga;					//the svga device
 	IODeviceMemory* m_vram;				//VRAM Framebuffer (BAR0)
 	
+	// Device type detection and multi-path architecture
+	VMDeviceType m_device_type;			//Detected device type for proper code path selection
+	bool m_is_virtio_gpu;				//Quick check for VirtIO GPU devices
+	bool m_is_qxl_device;				//Quick check for QXL devices
+	
 	// 3D acceleration support
-	VMVirtIOGPU* m_gpu_device;			//VirtIO GPU device for 3D acceleration
+	    VMVirtIOGPU*              m_gpu_device;					//VirtIO GPU device for 3D acceleration (disabled)
 	VMQemuVGAAccelerator* m_accelerator; //3D accelerator service
 	bool m_3d_acceleration_enabled;		//Whether 3D acceleration is available
 	
@@ -145,6 +162,22 @@ public:
 	VMVirtIOGPU* getGPUDevice() { return m_gpu_device; }
 	VMQemuVGAAccelerator* getAccelerator() { return m_accelerator; }
 	bool is3DAccelerationEnabled() const { return m_3d_acceleration_enabled; }
+	
+	// Device type detection and multi-path support
+	VMDeviceType getDeviceType() const { return m_device_type; }
+	bool isVirtIOGPUDevice() const { return m_is_virtio_gpu; }
+	bool isQXLDevice() const { return m_is_qxl_device; }
+	VMDeviceType detectDeviceType();
+	void configureDeviceSpecificSettings();
+	
+	// Multi-path 3D acceleration initialization methods
+	bool initVirtIOGPUAcceleration();
+	bool initQXLAcceleration();
+	bool initGenericAcceleration();
+	bool initVMwareAcceleration();
+	bool initHyperVAcceleration();
+	bool initAcceleratorService();
+	
 	void lockDevice();
 	void unlockDevice();
 	void useAccelUpdates(bool state);

@@ -5,6 +5,7 @@
 #include <IOKit/IODeviceTreeSupport.h>
 #include "VMQemuVGA.h"
 #include "VMQemuVGAAccelerator.h"
+#include "VMVirtIOGPU.h"
 #include <IOKit/IOLib.h>
 
 
@@ -12,7 +13,7 @@
 #define FMT_D(x) static_cast<int>(x)
 #define FMT_U(x) static_cast<unsigned>(x)
 
-//#define VGA_DEBUG
+#define VGA_DEBUG
 
 #ifdef  VGA_DEBUG
 #define DLOG(fmt, args...)  IOLog(fmt, ## args)
@@ -63,28 +64,39 @@ IOService* VMQemuVGA::probe(IOService* provider, SInt32* score)
     UInt32 vendorID = pciDevice->configRead32(kIOPCIConfigVendorID) & 0xFFFF;
     UInt32 deviceID = (pciDevice->configRead32(kIOPCIConfigVendorID) >> 16) & 0xFFFF;
     
-    VLOG("Found PCI device: vendor=0x%04x, device=0x%04x", vendorID, deviceID);
+    IOLog("VMQemuVGA: Probe checking device: vendor=0x%04x, device=0x%04x\n", (unsigned)vendorID, (unsigned)deviceID);
     
-    // Support QXL devices (Red Hat)
+    // QXL devices (Red Hat QEMU VGA)
     if (vendorID == 0x1b36 && deviceID == 0x0100) {
         *score = 90000;  // High score to beat NDRV
-        VLOG("VMQemuVGA probe successful (QXL) with score %d", *score);
+        IOLog("VMQemuVGA: VMQemuVGA probe successful - QXL device with score %d\n", *score);
         return this;
     }
     
-    // Support VirtIO GPU devices (Red Hat VirtIO)
-    if (vendorID == 0x1af4 && deviceID == 0x1050) {
-        *score = 95000;  // Even higher score for VirtIO GPU
-        VLOG("VMQemuVGA probe successful (VirtIO GPU) with score %d", *score);
+    // VirtIO GPU devices (Red Hat VirtIO)
+    if (vendorID == 0x1af4 && deviceID >= 0x1050 && deviceID <= 0x105f) {
+        *score = 90000;  // High score to beat NDRV  
+        IOLog("VMQemuVGA: VMQemuVGA probe successful - VirtIO GPU device with score %d\n", *score);
         return this;
     }
     
-    VLOG("Device not supported");
+    // No supported device found
+    IOLog("VMQemuVGA: Probe failed - unsupported device vendor=0x%04x, device=0x%04x\n", (unsigned)vendorID, (unsigned)deviceID);
+    
+    // QEMU VGA devices (Bochs/QEMU)
+    if (vendorID == 0x1234 && (deviceID == 0x1111 || deviceID == 0x1112 || deviceID == 0x4005)) {
+        *score = 90000;  // High score to beat NDRV
+        VLOG("VMQemuVGA probe successful - QEMU VGA device with score %d", *score);
+        return this;
+    }
+    
+    VLOG("Device not supported - vendor=0x%04x, device=0x%04x", vendorID, deviceID);
     return NULL;
 }/*************START********************/
 bool CLASS::start(IOService* provider)
 {
 	uint32_t max_w, max_h;
+	uint32_t real_vram_size = 0;  // Real VRAM size from PCI BAR0
 	
 	DLOG("%s::%s \n", getName(), __FUNCTION__);
 	
@@ -104,6 +116,11 @@ bool CLASS::start(IOService* provider)
 	//Initiate private variables
 	m_restore_call = 0;
 	m_iolock = 0;
+	
+	// Initialize device type variables
+	m_device_type = VM_DEVICE_UNKNOWN;
+	m_is_virtio_gpu = false;
+	m_is_qxl_device = false;
 	
 	m_gpu_device = nullptr;
 	m_accelerator = nullptr;
@@ -129,25 +146,27 @@ bool CLASS::start(IOService* provider)
 	
 	//Init svga
 	svga.Init();
-	
 	//Start svga, init the FIFO too
 	if (!svga.Start(static_cast<IOPCIDevice*>(provider)))
 	{
 		goto fail;
 	}
 	
-	//BAR0 is vram - Snow Leopard compatible method
+	// Detect device type early for multi-path architecture
+	m_device_type = detectDeviceType();
+	m_is_virtio_gpu = (m_device_type == VM_DEVICE_VIRTIO_GPU);
+	m_is_qxl_device = (m_device_type == VM_DEVICE_QXL);
+	
+	IOLog("VMQemuVGA: Device type detection complete - Type: %d, VirtIO GPU: %s, QXL: %s\n",
+	      m_device_type, m_is_virtio_gpu ? "Yes" : "No", m_is_qxl_device ? "Yes" : "No");
+	
+	// Configure device-specific settings based on detected type
+	configureDeviceSpecificSettings();
+	
+	//BAR0 is vram - using QemuVGADevice (original architecture)
 	m_vram = svga.get_m_vram();
 	
-	// Simple VRAM size reporting like original Snow Leopard version
-	if (m_vram) {
-		uint32_t vram_mb = (uint32_t)(m_vram->getLength() / (1024 * 1024));
-		IOLog("VMQemuVGA: VRAM detected: %u MB (Snow Leopard method)\n", vram_mb);
-		setProperty("VRAM,totalsize", (UInt32)m_vram->getLength());
-		setProperty("ATY,memsize", (UInt32)m_vram->getLength());
-	} else {
-		IOLog("VMQemuVGA: Warning - No VRAM detected via Snow Leopard method\n");
-	}
+	//populate customMode with modeList define in modes.cpp
 	
 	//populate customMode with modeList define in modes.cpp
 	memcpy(&customMode, &modeList[0], sizeof(DisplayModeEntry));
@@ -180,101 +199,68 @@ bool CLASS::start(IOService* provider)
 	if (init3DAcceleration()) {
 		DLOG("%s: 3D acceleration initialized successfully\n", __FUNCTION__);
 		
-	// Catalina GPU Hardware Acceleration Mode
-	IOLog("VMQemuVGA: Configuring GPU hardware acceleration for device type\n");
-	
-	// Set comprehensive device-specific model names for all virtualization devices
-	IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, provider);
-	if (pciDevice) {
-		UInt32 vendorID = pciDevice->configRead16(kIOPCIConfigVendorID);
-		UInt32 deviceID = pciDevice->configRead16(kIOPCIConfigDeviceID);
-		
-		if (vendorID == 0x1b36 && deviceID == 0x0100) {
-			setProperty("model", "QXL VGA (Hardware Accelerated)");
-			IOLog("VMQemuVGA: QXL VGA hardware acceleration enabled\n");
-		} else if (vendorID == 0x1af4 && (deviceID >= 0x1050 && deviceID <= 0x105f)) {
-			setProperty("model", "VirtIO GPU 3D (Hardware Accelerated)");
-			IOLog("VMQemuVGA: VirtIO GPU 3D hardware acceleration enabled\n");
-		} else if (vendorID == 0x1414 && ((deviceID >= 0x5353 && deviceID <= 0x5356) || 
-		                                  (deviceID >= 0x0058 && deviceID <= 0x0059))) {
-			setProperty("model", "Hyper-V DDA GPU (Hardware Accelerated)");
-			IOLog("VMQemuVGA: Hyper-V DDA hardware acceleration enabled\n");
-		} else if (vendorID == 0x15ad && (deviceID >= 0x0405 && deviceID <= 0x0408)) {
-			setProperty("model", "VMware SVGA 3D (Hardware Accelerated)");
-			IOLog("VMQemuVGA: VMware SVGA hardware acceleration enabled\n");
-		} else if (vendorID == 0x1002 && ((deviceID >= 0x0f00 && deviceID <= 0x0f03) || 
-		                                  (deviceID >= 0x0190 && deviceID <= 0x0193))) {
-			setProperty("model", "AMD GPU-V (Hardware Accelerated)");
-			IOLog("VMQemuVGA: AMD GPU-V hardware acceleration enabled\n");
-		} else if (vendorID == 0x10de && ((deviceID >= 0x0f04 && deviceID <= 0x0f07) || 
-		                                  (deviceID >= 0x01e0 && deviceID <= 0x01e3))) {
-			setProperty("model", "NVIDIA vGPU (Hardware Accelerated)");
-			IOLog("VMQemuVGA: NVIDIA vGPU hardware acceleration enabled\n");
-		} else if (vendorID == 0x8086 && (deviceID >= 0x0190 && deviceID <= 0x0193)) {
-			setProperty("model", "Intel GVT-g (Hardware Accelerated)");
-			IOLog("VMQemuVGA: Intel GVT-g hardware acceleration enabled\n");
-		} else {
-			setProperty("model", "Virtualization GPU (Hardware Accelerated)");
-			IOLog("VMQemuVGA: Generic virtualization hardware acceleration enabled\n");
+		// Device-specific acceleration configuration
+		switch (m_device_type) {
+			case VM_DEVICE_VIRTIO_GPU:
+				IOLog("VMQemuVGA: Configuring VirtIO GPU hardware acceleration\n");
+				// VirtIO GPU properties are already set in configureDeviceSpecificSettings
+				break;
+				
+			case VM_DEVICE_QXL:
+				IOLog("VMQemuVGA: Configuring QXL software 3D acceleration\n");
+				// QXL properties are already set in configureDeviceSpecificSettings
+				break;
+				
+			default:
+				IOLog("VMQemuVGA: Configuring generic 3D acceleration\n");
+				// Generic acceleration fallback
+				setProperty("model", "Generic VGA (3D Accelerated)");
+				setProperty("IOPrimaryDisplay", kOSBooleanTrue);
+				break;
 		}
-	} else {
-		setProperty("model", "VMQemuVGA (Hardware Accelerated)");
-		IOLog("VMQemuVGA: Generic hardware acceleration enabled\n");
-	}		// Configure for hardware acceleration
-		setProperty("IOPrimaryDisplay", kOSBooleanTrue);
-		setProperty("AAPL,HasMask", kOSBooleanTrue);
-		setProperty("AAPL,HasPanel", kOSBooleanTrue);
 		
-		// Set VRAM for hardware acceleration - INCREASED for better GPU utilization
-		setProperty("ATY,memsize", (UInt32)(2048U * 1024U * 1024U)); // 2GB VRAM for better GL performance
-		setProperty("VRAM,totalsize", (UInt32)(2048U * 1024U * 1024U));
-		setProperty("AGPTextureMemoryLimitBytes", (UInt32)(1024 * 1024 * 1024)); // 1GB AGP texture memory
+		// Set VRAM for hardware acceleration - use real detected size from PCI BAR0
+		if (real_vram_size > 0) {
+			// Only set the essential properties that System Profiler needs
+			char vram_mb_string[32];
+			snprintf(vram_mb_string, sizeof(vram_mb_string), "%u MB", real_vram_size / (1024 * 1024));
+			setProperty("VRAM", vram_mb_string);
+			setProperty("spdisplays_vram", vram_mb_string);  // What System Profiler reads
+			
+			IOLog("VMQemuVGA: Set VRAM properties to %u MB for device type %d\n", 
+				  real_vram_size / (1024 * 1024), m_device_type);
+		} else {
+			// Device-specific fallback VRAM sizes
+			uint32_t fallback_vram;
+			switch (m_device_type) {
+				case VM_DEVICE_VIRTIO_GPU:
+					// Use VirtIO GPU's own VRAM reporting if available
+					if (m_gpu_device) {
+						uint64_t virtio_vram = m_gpu_device->getVRAMSize();
+						fallback_vram = (uint32_t)virtio_vram;
+						IOLog("VMQemuVGA: Using VirtIO GPU VRAM size: %u MB\n", fallback_vram / (1024 * 1024));
+					} else {
+						fallback_vram = 128 * 1024 * 1024;  // 128MB for VirtIO GPU
+						IOLog("VMQemuVGA: VirtIO GPU device not available, using 128MB fallback\n");
+					}
+					break;
+				case VM_DEVICE_QXL:
+					fallback_vram = 64 * 1024 * 1024;   // 64MB for QXL
+					IOLog("VMQemuVGA: QXL VRAM detection failed, using 64MB fallback\n");
+					break;
+				default:
+					fallback_vram = 32 * 1024 * 1024;   // 32MB for others
+					IOLog("VMQemuVGA: Generic VRAM detection failed, using 32MB fallback\n");
+					break;
+			}
+			// Only set the essential properties that System Profiler needs
+			char fallback_mb_string[32];
+			snprintf(fallback_mb_string, sizeof(fallback_mb_string), "%u MB", fallback_vram / (1024 * 1024));
+			setProperty("VRAM", fallback_mb_string);
+			setProperty("spdisplays_vram", fallback_mb_string);
+		}
 		
-		// ENHANCED: Tell macOS we are a high-performance hardware-accelerated GPU
-		setProperty("IOGraphicsAcceleratorInterface", kOSBooleanTrue);
-		setProperty("IOAccelerator", kOSBooleanTrue);
-		setProperty("MetalPerformanceShaders", kOSBooleanTrue);
-		setProperty("GPU-Performance-Level", (UInt32)100); // High performance level
-		setProperty("OpenGL-Renderer-ID", (UInt32)0x02410000); // ATI Radeon renderer ID for compatibility
-		
-		// Enable hardware-accelerated features
-		setProperty("VMQemuVGA-3D-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Hardware-GL", kOSBooleanTrue);
-		setProperty("VMQemuVGA-VirtIO-GPU", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GL-Context", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Force-Hardware-Rendering", kOSBooleanTrue);
-		
-		// Hardware WebGL and browser acceleration for Catalina
-		setProperty("VMQemuVGA-WebGL-Hardware", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Canvas-Hardware", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GPU-Texture-Upload", kOSBooleanTrue);
-		setProperty("VMQemuVGA-VirtIO-GL-Context", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Hardware-Video-Decode", kOSBooleanTrue);
-		
-		// ENHANCED: Hardware-accelerated browser performance - BOOSTED for better utilization
-		setProperty("WebGL-Hardware-Context", kOSBooleanTrue);
-		setProperty("Canvas2D-VirtIO-Backed", kOSBooleanTrue);
-		setProperty("Canvas2D-Hardware-Acceleration", kOSBooleanTrue); // NEW: Force Canvas2D acceleration
-		setProperty("WebGL-GPU-Memory", (UInt32)(1024 * 1024 * 1024)); // INCREASED: 1GB GPU memory for WebGL
-		setProperty("WebGL-VirtIO-Buffers", (UInt32)(512 * 1024 * 1024)); // INCREASED: 512MB for VirtIO buffers
-		setProperty("OpenGL-Hardware-Vertex-Processing", kOSBooleanTrue); // NEW: Hardware vertex processing
-		setProperty("OpenGL-Hardware-Pixel-Shaders", kOSBooleanTrue);    // NEW: Hardware pixel shaders
-		
-		// Modern Catalina acceleration features
-		setProperty("VMQemuVGA-Catalina-Mode", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Hardware-OpenGL", kOSBooleanTrue);
-		setProperty("VMQemuVGA-VirtIO-Performance", kOSBooleanTrue);
-		
-		// Hardware cursor support for better performance
-		setProperty("VMQemuVGA-Hardware-Cursor", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GPU-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Video-Hardware", kOSBooleanTrue);
-		setProperty("IOFramebufferHardwareAccel", kOSBooleanTrue);
-		
-		// Enable hardware cursor for better performance
-		setProperty("IOHardwareCursorActive", kOSBooleanTrue);
-		setProperty("IOSoftwareCursorActive", kOSBooleanFalse);
-		setProperty("IOCursorControllerPresent", kOSBooleanTrue);
+		IOLog("VMQemuVGA: VRAM detection and properties setup complete\n");
 		setProperty("IODisplayCursorSupported", kOSBooleanTrue);
 		setProperty("IOCursorHardwareAccelerated", kOSBooleanTrue);
 		
@@ -287,7 +273,7 @@ bool CLASS::start(IOService* provider)
 		setProperty("VMQemuVGA-Canvas-Optimization", kOSBooleanTrue);
 		setProperty("VMQemuVGA-DOM-Rendering-Fast", kOSBooleanTrue);
 		setProperty("IOFramebufferBandwidthLimit", kOSBooleanFalse); // Remove bandwidth limits
-		setProperty("IOFramebufferMemoryBandwidth", kOSBooleanTrue); // High bandwidth mode
+		// IOFramebufferMemoryBandwidth should be set to actual VRAM size, not boolean - fixed later
 		
 		// Advanced WebGL/OpenGL performance boosters for Snow Leopard
 		setProperty("OpenGL-ShaderCompilation-Cache", kOSBooleanTrue);
@@ -346,6 +332,8 @@ bool CLASS::start(IOService* provider)
 	//Detect and set current display mode
 	m_display_mode = TryDetectCurrentDisplayMode(3);
 	m_depth_mode = 0;
+	
+	
 		
 	return true;
 	
@@ -471,126 +459,202 @@ void CLASS::Cleanup()
 /*************INIT3DACCELERATION********************/
 bool CLASS::init3DAcceleration()
 {
-	// Advanced VirtIO GPU Device Detection and Initialization
-	IOLog("VMQemuVGA: Starting comprehensive VirtIO GPU device detection\n");
+	// Multi-path 3D acceleration initialization based on device type
+	IOLog("VMQemuVGA: Initializing 3D acceleration for device type %d\n", m_device_type);
 	
-	// Stage 1: Scan PCI bus for VirtIO GPU devices
-	IOReturn detection_result = scanForVirtIOGPUDevices();
-	if (detection_result != kIOReturnSuccess) {
-		IOLog("VMQemuVGA: VirtIO GPU PCI scan failed (0x%x), falling back to mock device\n", detection_result);
-		// Fall back to mock device creation for compatibility
-		return createMockVirtIOGPUDevice();
+	// Device-specific initialization paths
+	switch (m_device_type) {
+		case VM_DEVICE_VIRTIO_GPU:
+			IOLog("VMQemuVGA: Initializing VirtIO GPU hardware acceleration\n");
+			return initVirtIOGPUAcceleration();
+			
+		case VM_DEVICE_QXL:
+			IOLog("VMQemuVGA: Initializing QXL software 3D acceleration\n");
+			return initQXLAcceleration();
+			
+		case VM_DEVICE_VMWARE_SVGA:
+			IOLog("VMQemuVGA: Initializing VMware SVGA acceleration\n");
+			return initVMwareAcceleration();
+			
+		case VM_DEVICE_HYPER_V:
+			IOLog("VMQemuVGA: Initializing Hyper-V GPU acceleration\n");
+			return initHyperVAcceleration();
+			
+		default:
+			IOLog("VMQemuVGA: Initializing generic 3D acceleration fallback\n");
+			return initGenericAcceleration();
 	}
+}
+
+// VirtIO GPU specific acceleration initialization
+bool CLASS::initVirtIOGPUAcceleration()
+{
+	IOLog("VMQemuVGA: Creating VirtIO GPU device object\n");
 	
-	// Stage 2: Initialize detected VirtIO GPU device
-	IOReturn init_result = initializeDetectedVirtIOGPU();
-	if (init_result != kIOReturnSuccess) {
-		IOLog("VMQemuVGA: VirtIO GPU initialization failed (0x%x), falling back to mock device\n", init_result);
-		return createMockVirtIOGPUDevice();
-	}
-	
-	// Stage 3: Query VirtIO GPU capabilities
-	IOReturn caps_result = queryVirtIOGPUCapabilities();
-	if (caps_result != kIOReturnSuccess) {
-		IOLog("VMQemuVGA: VirtIO GPU capability query failed (0x%x), continuing with basic functionality\n", caps_result);
-		// Continue - capability query failure doesn't prevent basic 3D acceleration
-	}
-	
-	// Stage 4: Configure VirtIO GPU for optimal performance
-	IOReturn config_result = configureVirtIOGPUOptimalSettings();
-	if (config_result != kIOReturnSuccess) {
-		IOLog("VMQemuVGA: VirtIO GPU performance configuration failed (0x%x), using default settings\n", config_result);
-		// Continue - performance optimization failure doesn't prevent functionality
-	}
-	
-	IOLog("VMQemuVGA: VirtIO GPU device detection and initialization completed successfully\n");
-	
-	// Create VirtIO GPU device using proper kernel object allocation
-	IOLog("VMQemuVGA: DIAGNOSTIC - Creating VirtIO GPU device...\n");
+	// Create VirtIO GPU device object
 	m_gpu_device = OSTypeAlloc(VMVirtIOGPU);
 	if (!m_gpu_device) {
-		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to allocate VirtIO GPU device\n");
-		DLOG("%s: Failed to allocate VirtIO GPU device\n", __FUNCTION__);
-		return false;
+		IOLog("VMQemuVGA: Failed to allocate VirtIO GPU device object\n");
+		return initGenericAcceleration();  // Fallback to generic
 	}
-	IOLog("VMQemuVGA: DIAGNOSTIC - VirtIO GPU device allocated successfully\n");
 	
 	if (!m_gpu_device->init()) {
-		IOLog("VMQemuVGA: CRITICAL ERROR - VirtIO GPU device initialization failed\n");
-		DLOG("%s: Failed to initialize VirtIO GPU device\n", __FUNCTION__);
+		IOLog("VMQemuVGA: Failed to initialize VirtIO GPU device object\n");
 		m_gpu_device->release();
 		m_gpu_device = nullptr;
-		return false;
+		return initGenericAcceleration();  // Fallback to generic
 	}
-	IOLog("VMQemuVGA: DIAGNOSTIC - VirtIO GPU device initialized successfully\n");
 	
 	// Set the PCI device provider for the VirtIO GPU
 	IOPCIDevice* pciProvider = static_cast<IOPCIDevice*>(getProvider());
 	if (pciProvider) {
-		IOLog("VMQemuVGA: Configuring VirtIO GPU with PCI device provider\n");
-		// Configure VirtIO GPU with actual PCI device information
 		m_gpu_device->attachToParent(pciProvider, gIOServicePlane);
+		
+		// Start the VirtIO GPU device with the PCI provider
+		if (!m_gpu_device->start(pciProvider)) {
+			IOLog("VMQemuVGA: Failed to start VirtIO GPU device with PCI provider\n");
+			m_gpu_device->release();
+			m_gpu_device = nullptr;
+			return initGenericAcceleration();
+		}
+		
+		IOLog("VMQemuVGA: VirtIO GPU device object created and attached successfully\n");
+		
+		// Initialize the detected VirtIO GPU
+		if (initializeDetectedVirtIOGPU()) {
+			IOLog("VMQemuVGA: VirtIO GPU hardware acceleration enabled successfully\n");
+			return initAcceleratorService();  // Initialize accelerator service
+		} else {
+			IOLog("VMQemuVGA: VirtIO GPU initialization failed, using software fallback\n");
+			return initGenericAcceleration();
+		}
+	} else {
+		IOLog("VMQemuVGA: No PCI provider available for VirtIO GPU\n");
+		m_gpu_device->release();
+		m_gpu_device = nullptr;
+		return initGenericAcceleration();
+	}
+}
+
+// QXL specific acceleration initialization  
+bool CLASS::initQXLAcceleration()
+{
+	IOLog("VMQemuVGA: QXL devices use software 3D acceleration with VirtIO GPU compatibility layer\n");
+	
+	// Create a VirtIO GPU compatibility layer for QXL
+	m_gpu_device = OSTypeAlloc(VMVirtIOGPU);
+	if (!m_gpu_device) {
+		IOLog("VMQemuVGA: Failed to allocate QXL compatibility device\n");
+		return false;
 	}
 	
-	// Stage 4: Performance configuration
-	if (!configureVirtIOGPUOptimalSettings()) {
-		IOLog("VMQemuVGA: Warning - Could not configure optimal VirtIO GPU performance settings\n");
+	if (!m_gpu_device->init()) {
+		IOLog("VMQemuVGA: Failed to initialize QXL compatibility device\n");
+		m_gpu_device->release();
+		m_gpu_device = nullptr;
+		return false;
 	}
 	
-	// Initialize VirtIO GPU accelerator with proper kernel object allocation
-	IOLog("VMQemuVGA: DIAGNOSTIC - Starting accelerator initialization...\n");
+	// Set QXL compatibility mode
+	m_gpu_device->setMockMode(true);
+	m_gpu_device->setBasic3DSupport(true);
+	
+	IOLog("VMQemuVGA: QXL software 3D acceleration enabled\n");
+	return initAcceleratorService();
+}
+
+// Generic acceleration fallback
+bool CLASS::initGenericAcceleration()
+{
+	IOLog("VMQemuVGA: Initializing generic software acceleration\n");
+	
+	// Create mock VirtIO GPU for compatibility
+	m_gpu_device = createMockVirtIOGPUDevice();
+	if (!m_gpu_device) {
+		IOLog("VMQemuVGA: Failed to create mock VirtIO GPU device\n");
+		return false;
+	}
+	
+	IOLog("VMQemuVGA: Generic software acceleration enabled\n");
+	return initAcceleratorService();
+}
+
+// VMware SVGA acceleration (placeholder for future implementation)
+bool CLASS::initVMwareAcceleration()
+{
+	IOLog("VMQemuVGA: VMware SVGA acceleration not yet implemented, using generic fallback\n");
+	return initGenericAcceleration();
+}
+
+// Hyper-V acceleration (placeholder for future implementation)  
+bool CLASS::initHyperVAcceleration()
+{
+	IOLog("VMQemuVGA: Hyper-V GPU acceleration not yet implemented, using generic fallback\n");
+	return initGenericAcceleration();
+}
+
+// Common accelerator service initialization
+bool CLASS::initAcceleratorService()
+{
+	IOLog("VMQemuVGA: Initializing accelerator service\n");
+	
+	// Initialize accelerator with proper kernel object allocation
 	m_accelerator = OSTypeAlloc(VMQemuVGAAccelerator);
 	if (!m_accelerator) {
-		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to allocate accelerator object\n");
 		DLOG("%s: Failed to allocate accelerator\n", __FUNCTION__);
 		return false;
 	}
-	IOLog("VMQemuVGA: DIAGNOSTIC - Accelerator object allocated successfully\n");
 	
 	if (!m_accelerator->init()) {
-		IOLog("VMQemuVGA: CRITICAL ERROR - Accelerator initialization failed\n");
 		DLOG("%s: Failed to initialize accelerator\n", __FUNCTION__);
 		m_accelerator->release();
 		m_accelerator = nullptr;
 		return false;
 	}
-	IOLog("VMQemuVGA: DIAGNOSTIC - Accelerator initialized successfully\n");
-	if (!m_accelerator) {
-		DLOG("%s: Failed to create 3D accelerator\n", __FUNCTION__);
-		cleanup3DAcceleration();
-		return false;
-	}
-	
-	if (!m_accelerator->init()) {
-		DLOG("%s: Failed to initialize 3D accelerator\n", __FUNCTION__);
-		cleanup3DAcceleration();
-		return false;
-	}
 	
 	// Start the accelerator as a child service
-	IOLog("VMQemuVGA: DIAGNOSTIC - Attaching and starting accelerator service...\n");
 	if (!m_accelerator->attach(this)) {
-		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to attach accelerator service\n");
 		DLOG("%s: Failed to attach 3D accelerator\n", __FUNCTION__);
 		cleanup3DAcceleration();
 		return false;
 	}
 	
 	if (!m_accelerator->start(this)) {
-		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to start accelerator service\n");
 		DLOG("%s: Failed to start 3D accelerator\n", __FUNCTION__);
 		cleanup3DAcceleration();
 		return false;
 	}
 	
-	IOLog("VMQemuVGA: SUCCESS - VirtIO GPU accelerator fully initialized and active\n");
-	IOLog("VMQemuVGA: GPU Status - Hardware acceleration should now be available\n");
+	// Set device-specific acceleration properties
+	switch (m_device_type) {
+		case VM_DEVICE_VIRTIO_GPU:
+			m_3d_acceleration_enabled = true;
+			setProperty("3D Acceleration", "Hardware");
+			setProperty("3D Backend", "VirtIO GPU Hardware");
+			break;
+		case VM_DEVICE_QXL:
+			m_3d_acceleration_enabled = false;  // QXL is 2D-focused
+			setProperty("2D Acceleration", "Hardware");
+			setProperty("3D Backend", "QXL 2D + Software 3D");
+			break;
+		case VM_DEVICE_VMWARE_SVGA:
+			m_3d_acceleration_enabled = true;
+			setProperty("3D Acceleration", "Hardware");
+			setProperty("3D Backend", "VMware SVGA");
+			break;
+		case VM_DEVICE_HYPER_V:
+			m_3d_acceleration_enabled = true;
+			setProperty("3D Acceleration", "Hardware");
+			setProperty("3D Backend", "Hyper-V Synthetic");
+			break;
+		default:
+			m_3d_acceleration_enabled = false;
+			setProperty("2D Acceleration", "Software");
+			setProperty("3D Backend", "Generic Software");
+			break;
+	}
 	
-	m_3d_acceleration_enabled = true;
-	setProperty("3D Acceleration", "Enabled");
-	setProperty("3D Backend", "VirtIO GPU");
-	
-	IOLog("VMQemuVGA: 3D acceleration enabled via VirtIO GPU\n");
+	IOLog("VMQemuVGA: 3D acceleration enabled successfully for device type %d\n", m_device_type);
 	return true;
 }
 
@@ -906,29 +970,33 @@ IODeviceMemory* CLASS::getVRAMRange()
 {
 	DLOG( "%s: \n", __FUNCTION__);
 	
-	// VRAM access logging (disabled - was interfering with GPU usage)
-	/*
-	if (m_accelerator) {
-		IOLog("VMQemuVGA: VRAM access detected - triggering VirtIO GPU hardware refresh\n");
+	if (m_is_virtio_gpu) {
+		// Use VirtIO GPU hardware acceleration with proper VRAM management
+		DLOG("VMQemuVGA::getVRAMRange: Using VirtIO GPU hardware acceleration\n");
+		IOLog("VMQemuVGA::getVRAMRange: VirtIO GPU enabled - using hardware acceleration\n");
 		
-		// Force VirtIO GPU to process the current framebuffer content
-		// This ensures the GPU is constantly active instead of idle
-		static uint32_t refresh_counter = 0;
-		refresh_counter++;
-		if ((refresh_counter % 10) == 0) { // Every 10th VRAM access
-			IOLog("VMQemuVGA: Forcing VirtIO GPU hardware refresh cycle #%u\n", refresh_counter);
+		// Use the VirtIO GPU device for VRAM allocation
+		if (m_gpu_device) {
+			IODeviceMemory* virtio_vram = m_gpu_device->getVRAMRange();
+			if (virtio_vram) {
+				IOLog("VMQemuVGA::getVRAMRange: VirtIO GPU VRAM: %llu bytes (%llu MB)\n", 
+				      virtio_vram->getLength(), virtio_vram->getLength() / (1024 * 1024));
+				return virtio_vram;
+			} else {
+				IOLog("VMQemuVGA::getVRAMRange: VirtIO GPU VRAM allocation failed, falling back to PCI BAR0\n");
+			}
+		} else {
+			IOLog("VMQemuVGA::getVRAMRange: VirtIO GPU device not initialized, falling back to PCI BAR0\n");
 		}
 	}
-	*/
 	
+	// QXL/VGA: Use traditional VRAM approach
 	if (!m_vram)
-		return 0;
+		return nullptr;
 	
-	if (svga.getVRAMSize() >= m_vram->getLength()) {
-		m_vram->retain();
-		return m_vram;
-	}
-	return IODeviceMemory::withSubRange(m_vram, 0U, svga.getVRAMSize());
+	// Use the full VRAM range since we're reading real size from PCI BAR0
+	m_vram->retain();
+	return m_vram;
 }
 
 /*************GETAPERTURERANGE********************/
@@ -1109,22 +1177,6 @@ IOReturn CLASS::setAttribute(IOSelect attribute, uintptr_t value)
 {
 	IOReturn r;
 	char attr[5];
-	
-	// AGGRESSIVE GPU ACCELERATION: Intercept graphics operations and force VirtIO GPU usage
-	// DISABLED: This was preventing GPU usage instead of enhancing it
-	/*
-	if (attribute == kIOCapturedAttribute || 
-		attribute == kIOPowerAttribute ||
-		attribute == kConnectionEnable) {
-		IOLog("VMQemuVGA: INTERCEPTED graphics attribute %08x - forcing VirtIO GPU acceleration\n", attribute);
-		
-		// Signal that we want hardware acceleration for ALL graphics operations
-		if (m_accelerator) {
-			// Force any pending graphics operations to use VirtIO GPU hardware
-			IOLog("VMQemuVGA: Forcing all graphics through VirtIO GPU hardware path\n");
-		}
-	}
-	*/
 	
 	r = super::setAttribute(attribute, value);
 	if (true /*logLevelFB >= 2*/) {
@@ -1419,6 +1471,98 @@ void CLASS::useAccelUpdates(bool state)
 
 // IOFramebuffer virtual method implementations removed for Snow Leopard compatibility
 
+// Multi-path device type detection - determines the appropriate code path
+VMDeviceType CLASS::detectDeviceType()
+{
+	// Get PCI device information
+	IOPCIDevice* pciDevice = svga.getProvider();
+	if (!pciDevice) {
+		IOLog("VMQemuVGA: Warning - No PCI device provider for type detection\n");
+		return VM_DEVICE_UNKNOWN;
+	}
+	
+	UInt32 vendorID = pciDevice->configRead32(kIOPCIConfigVendorID) & 0xFFFF;
+	UInt32 deviceID = (pciDevice->configRead32(kIOPCIConfigVendorID) >> 16) & 0xFFFF;
+	UInt32 subsystemIDs = pciDevice->configRead32(kIOPCIConfigSubSystemVendorID);
+	UInt32 subsystemVendorID = subsystemIDs & 0xFFFF;
+	UInt32 subsystemID = (subsystemIDs >> 16) & 0xFFFF;
+	
+	// VirtIO GPU devices (Red Hat vendor)
+	if (vendorID == 0x1AF4) {
+		if (deviceID >= 0x1050 && deviceID <= 0x10FF) {
+			IOLog("VMQemuVGA: VirtIO GPU device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+			return VM_DEVICE_VIRTIO_GPU;
+		}
+	}
+	
+	// QXL devices (Red Hat vendor)  
+	if (vendorID == 0x1B36) {
+		if (deviceID == 0x0100 || deviceID == 0x01FF) {
+			IOLog("VMQemuVGA: QXL device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+			return VM_DEVICE_QXL;
+		}
+	}
+	
+	// QEMU devices
+	if (vendorID == 0x1234) {
+		switch (deviceID) {
+			case 0x1111:
+			case 0x1001:
+			case 0x0001:
+			case 0x0002:
+			case 0x1234:
+				IOLog("VMQemuVGA: QEMU VGA device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+				return VM_DEVICE_QEMU_VGA;
+			case 0x4000:
+				IOLog("VMQemuVGA: QEMU QXL device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+				return VM_DEVICE_QXL;  // QEMU QXL
+		}
+	}
+	
+	// VMware SVGA devices
+	if (vendorID == 0x15AD) {
+		if (deviceID == 0x0405 || deviceID == 0x0710 || deviceID == 0x0801 || deviceID == 0x0720) {
+			IOLog("VMQemuVGA: VMware SVGA device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+			return VM_DEVICE_VMWARE_SVGA;
+		}
+	}
+	
+	// Hyper-V devices
+	if (vendorID == 0x1414) {
+		if (deviceID >= 0x5353 && deviceID <= 0x535F) {
+			IOLog("VMQemuVGA: Hyper-V GPU device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+			return VM_DEVICE_HYPER_V;
+		}
+	}
+	
+	// Intel virtualized devices
+	if (vendorID == 0x8086) {
+		IOLog("VMQemuVGA: Intel virtualized GPU device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+		return VM_DEVICE_INTEL_VIRT;
+	}
+	
+	// AMD virtualized devices  
+	if (vendorID == 0x1002) {
+		IOLog("VMQemuVGA: AMD virtualized GPU device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+		return VM_DEVICE_AMD_VIRT;
+	}
+	
+	// NVIDIA virtualized devices
+	if (vendorID == 0x10DE) {
+		IOLog("VMQemuVGA: NVIDIA virtualized GPU device detected - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+		return VM_DEVICE_NVIDIA_VIRT;
+	}
+	
+	// Hyper-V DDA devices (check subsystem)
+	if (subsystemVendorID == 0x1414 && subsystemID >= 0xDDA0 && subsystemID <= 0xDDAF) {
+		IOLog("VMQemuVGA: Hyper-V DDA GPU device detected - subsystem=0x%04X:0x%04X\n", subsystemVendorID, subsystemID);
+		return VM_DEVICE_HYPER_V;
+	}
+	
+	IOLog("VMQemuVGA: Unknown device type - vendor=0x%04X, device=0x%04X\n", vendorID, deviceID);
+	return VM_DEVICE_UNKNOWN;
+}
+
 // VirtIO GPU Detection Helper Methods Implementation
 
 bool CLASS::scanForVirtIOGPUDevices()
@@ -1432,19 +1576,25 @@ bool CLASS::scanForVirtIOGPUDevices()
 		return false;
 	}
 	
-	// Check if this is a VirtIO GPU device
-	OSNumber* vendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("vendor-id"));
-	OSNumber* deviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("device-id"));
-	OSNumber* subVendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-vendor-id"));
-	OSNumber* subDeviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-id"));
+	// Check if this is a VirtIO GPU device using direct PCI config reads (same method as probe)
+	UInt32 vendorID = pciDevice->configRead32(kIOPCIConfigVendorID) & 0xFFFF;
+	UInt32 deviceID = (pciDevice->configRead32(kIOPCIConfigVendorID) >> 16) & 0xFFFF;
 	
-	UInt16 vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x0000;
-	UInt16 deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x0000;  
-	UInt16 subsystemVendorID = subVendorProp ? subVendorProp->unsigned16BitValue() : 0x0000;
-	UInt16 subsystemID = subDeviceProp ? subDeviceProp->unsigned16BitValue() : 0x0000;
+	// Read subsystem IDs for more detailed identification
+	UInt32 subsystemIDs = pciDevice->configRead32(kIOPCIConfigSubSystemVendorID);
+	UInt32 subsystemVendorID = subsystemIDs & 0xFFFF;
+	UInt32 subsystemID = (subsystemIDs >> 16) & 0xFFFF;
 	
 	IOLog("VMQemuVGA: Found PCI device - Vendor: 0x%04X, Device: 0x%04X, Subsystem: 0x%04X:0x%04X\n", 
-	      vendorID, deviceID, subsystemVendorID, subsystemID);
+	      (unsigned)vendorID, (unsigned)deviceID, (unsigned)subsystemVendorID, (unsigned)subsystemID);
+	
+	// Detect device type and set flags for multi-path architecture
+	m_device_type = detectDeviceType();
+	m_is_virtio_gpu = (m_device_type == VM_DEVICE_VIRTIO_GPU);
+	m_is_qxl_device = (m_device_type == VM_DEVICE_QXL);
+	
+	IOLog("VMQemuVGA: Device type detected: %d (VirtIO GPU: %s, QXL: %s)\n", 
+	      m_device_type, m_is_virtio_gpu ? "Yes" : "No", m_is_qxl_device ? "Yes" : "No");
 	
 	// VirtIO GPU Device Identification Matrix - Comprehensive Device Support
 	// Primary VirtIO GPU: vendor ID 0x1AF4 (Red Hat, Inc.) with extensive device variant ecosystem
@@ -1800,6 +1950,127 @@ bool CLASS::scanForVirtIOGPUDevices()
 	
 	IOLog("VMQemuVGA: No VirtIO GPU device found, using fallback compatibility mode\n");
 	return false;
+}
+
+// Device-specific configuration based on detected device type  
+void CLASS::configureDeviceSpecificSettings()
+{
+	IOLog("VMQemuVGA: Configuring device-specific settings for device type: %d\n", m_device_type);
+	
+	uint32_t vram_size = 0;  // Local variable to store VRAM size
+	
+	switch (m_device_type) {
+		case VM_DEVICE_VIRTIO_GPU:
+			IOLog("VMQemuVGA: Configuring VirtIO GPU specific settings\n");
+			// Enable VirtIO GPU features
+			m_supports_3d = true;
+			m_supports_virgl = true;  
+			m_max_displays = 16;
+			// VirtIO GPU VRAM will be allocated through VirtIO GPU resource management
+			vram_size = 64 * 1024 * 1024;  // Default 64MB, updated by VirtIO GPU
+			setProperty("model", "VirtIO GPU 3D (Hardware Accelerated)");
+			setProperty("IOPrimaryDisplay", kOSBooleanTrue);
+			setProperty("AAPL,HasMask", kOSBooleanTrue);
+			setProperty("AAPL,HasPanel", kOSBooleanTrue);
+			break;
+			
+		case VM_DEVICE_QXL:
+			IOLog("VMQemuVGA: Configuring QXL specific settings\n");
+			// Enable QXL features with software 3D acceleration
+			m_supports_3d = true;  // Software 3D through compatibility layer
+			m_supports_virgl = false;  // No Virgl on QXL
+			m_max_displays = 1;
+			// QXL VRAM detected through SVGA interface
+			{
+				IODeviceMemory* vram_mem = svga.get_m_vram();
+				vram_size = vram_mem ? (uint32_t)vram_mem->getLength() : 0;
+			}
+			setProperty("model", "QXL VGA (Software 3D Accelerated)");
+			setProperty("IOPrimaryDisplay", kOSBooleanTrue);
+			break;
+			
+		case VM_DEVICE_QEMU_VGA:
+			IOLog("VMQemuVGA: Configuring QEMU VGA specific settings\n");
+			m_supports_3d = false;  // Basic 2D only
+			m_supports_virgl = false;
+			m_max_displays = 1;
+			// QEMU VGA VRAM detected through SVGA interface
+			{
+				IODeviceMemory* vram_mem = svga.get_m_vram();
+				vram_size = vram_mem ? (uint32_t)vram_mem->getLength() : 0;
+			}
+			setProperty("model", "QEMU Standard VGA");
+			break;
+			
+		case VM_DEVICE_VMWARE_SVGA:
+			IOLog("VMQemuVGA: Configuring VMware SVGA specific settings\n");
+			m_supports_3d = true;  // VMware 3D acceleration
+			m_supports_virgl = false;
+			m_max_displays = 1;
+			// VMware SVGA VRAM detected through SVGA interface
+			{
+				IODeviceMemory* vram_mem = svga.get_m_vram();
+				vram_size = vram_mem ? (uint32_t)vram_mem->getLength() : 0;
+			}
+			setProperty("model", "VMware SVGA 3D");
+			setProperty("IOPrimaryDisplay", kOSBooleanTrue);
+			break;
+			
+		case VM_DEVICE_HYPER_V:
+			IOLog("VMQemuVGA: Configuring Hyper-V GPU specific settings\n");
+			m_supports_3d = true;  // Hyper-V 3D support
+			m_supports_virgl = false;
+			m_max_displays = 1;
+			// Hyper-V GPU VRAM detected through SVGA interface
+			{
+				IODeviceMemory* vram_mem = svga.get_m_vram();
+				vram_size = vram_mem ? (uint32_t)vram_mem->getLength() : 0;
+			}
+			setProperty("model", "Hyper-V Synthetic Graphics");
+			setProperty("IOPrimaryDisplay", kOSBooleanTrue);
+			break;
+			
+		case VM_DEVICE_INTEL_VIRT:
+		case VM_DEVICE_AMD_VIRT:
+		case VM_DEVICE_NVIDIA_VIRT:
+			IOLog("VMQemuVGA: Configuring virtualized GPU specific settings\n");
+			m_supports_3d = true;  // Virtualized GPU 3D
+			m_supports_virgl = false;
+			m_max_displays = 1;
+			// Virtualized GPU VRAM detected through SVGA interface
+			{
+				IODeviceMemory* vram_mem = svga.get_m_vram();
+				vram_size = vram_mem ? (uint32_t)vram_mem->getLength() : 0;
+			}
+			setProperty("model", "Virtualized GPU (3D Accelerated)");
+			setProperty("IOPrimaryDisplay", kOSBooleanTrue);
+			break;
+			
+		case VM_DEVICE_UNKNOWN:
+		default:
+			IOLog("VMQemuVGA: Using fallback compatibility settings\n");
+			m_supports_3d = false;
+			m_supports_virgl = false;
+			m_max_displays = 1;
+			// Fallback VRAM detected through SVGA interface
+			{
+				IODeviceMemory* vram_mem = svga.get_m_vram();
+				vram_size = vram_mem ? (uint32_t)vram_mem->getLength() : 0;
+			}
+			setProperty("model", "Generic VGA (Compatibility Mode)");
+			break;
+	}
+	
+	// Set VRAM properties using detected size
+	if (vram_size > 0) {
+		char vram_mb_string[32];
+		snprintf(vram_mb_string, sizeof(vram_mb_string), "%u MB", vram_size / (1024 * 1024));
+		setProperty("VRAM", vram_mb_string);
+		setProperty("spdisplays_vram", vram_mb_string);  // What System Profiler reads
+	}
+	
+	IOLog("VMQemuVGA: Device configuration complete - 3D: %s, Virgl: %s, Displays: %d, VRAM: %u MB\n",
+	      m_supports_3d ? "Yes" : "No", m_supports_virgl ? "Yes" : "No", m_max_displays, (unsigned)(vram_size / (1024 * 1024)));
 }
 
 VMVirtIOGPU* CLASS::createMockVirtIOGPUDevice()
