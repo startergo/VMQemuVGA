@@ -53,9 +53,7 @@
 			<key>IOAcceleratorTypes</key>
 			<array>
 				<string>Framebuffer</string>
-				<string>3D</string>
-				<string>VirtIO-GPU</string>
-				<string>Hyper-V-DDA</string>
+				<string>2D</string>
 			</array>
 			<key>IODisplayClass</key>
 			<string>IOFramebuffer</string>
