@@ -42,4 +42,4 @@ USE_HEADERMAP = NO;
 
 // Enhanced build settings for signed kext
 MODULE_NAME = com.vmware.kext.VMQemuVGA;
-MODULE_VERSION = 4.0.0;
+MODULE_VERSION = 8.0.0;

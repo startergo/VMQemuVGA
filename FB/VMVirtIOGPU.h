@@ -61,6 +61,12 @@ private:
     IOLock* m_resource_lock;
     IOLock* m_context_lock;
     
+    // Display and timing control
+    bool m_vsync_enabled;
+    uint32_t m_preferred_refresh_rate;
+    bool m_basic_3d_enabled;
+    bool m_mock_mode;
+    
     // VirtIO operations
     bool initVirtIOGPU();
     void cleanupVirtIOGPU();

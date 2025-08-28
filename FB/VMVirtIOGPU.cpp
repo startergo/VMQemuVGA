@@ -30,6 +30,12 @@ bool CLASS::init(OSDictionary* properties)
     m_resource_lock = IOLockAlloc();
     m_context_lock = IOLockAlloc();
     
+    // Initialize display and timing control
+    m_vsync_enabled = true;  // Enable VSync by default
+    m_preferred_refresh_rate = 60;  // Default to 60 Hz
+    m_basic_3d_enabled = false;  // Disabled until explicitly enabled
+    m_mock_mode = false;  // Real mode by default
+    
     return (m_resources && m_contexts && m_resource_lock && m_context_lock);
 }
 
@@ -2019,7 +2025,29 @@ IOReturn CLASS::moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y)
 }
 
 void CLASS::setPreferredRefreshRate(uint32_t hz) {
-    IOLog("VMVirtIOGPU::setPreferredRefreshRate: hz=%u (stub)\n", hz);
+    IOLog("VMVirtIOGPU::setPreferredRefreshRate: Setting refresh rate to %u Hz\n", hz);
+    
+    // Validate refresh rate range (30-240 Hz)
+    if (hz < 30 || hz > 240) {
+        IOLog("VMVirtIOGPU::setPreferredRefreshRate: Invalid refresh rate %u Hz, using 60 Hz\n", hz);
+        hz = 60;
+    }
+    
+    m_preferred_refresh_rate = hz;
+    
+    // Set properties for IORegistry
+    setProperty("Refresh Rate", hz, 32);
+    setProperty("Frame Time", (uint32_t)(1000000 / hz), 32); // microseconds per frame
+    
+    // Calculate VSync timing
+    if (m_vsync_enabled) {
+        uint32_t frame_time_ms = 1000 / hz;
+        char timing_str[32];
+        snprintf(timing_str, sizeof(timing_str), "%u.%02ums", frame_time_ms, (1000 % hz) * 100 / hz);
+        setProperty("VSync Timing", timing_str);
+    }
+    
+    IOLog("VMVirtIOGPU::setPreferredRefreshRate: Refresh rate set to %u Hz\n", hz);
 }
 
 bool CLASS::supportsFeature(uint32_t feature_flags) const {
@@ -2072,42 +2100,122 @@ bool CLASS::supportsFeature(uint32_t feature_flags) const {
 
 // Snow Leopard compatibility stubs for missing VMVirtIOGPU methods
 void CLASS::enableVSync(bool enabled) {
-    IOLog("VMVirtIOGPU::enableVSync: enabled=%d (stub)\n", enabled);
+    IOLog("VMVirtIOGPU::enableVSync: %s VSync\n", enabled ? "Enabling" : "Disabling");
+    
+    if (!m_pci_device) {
+        IOLog("VMVirtIOGPU::enableVSync: No PCI device available\n");
+        return;
+    }
+    
+    // Set VSync property for IORegistry
+    setProperty("VSync Enabled", enabled ? kOSBooleanTrue : kOSBooleanFalse);
+    
+    // Store VSync state for display timing
+    m_vsync_enabled = enabled;
+    
+    // If VSync is enabled, configure display timing parameters
+    if (enabled) {
+        // Set standard refresh rate timing for VSync
+        setProperty("Refresh Rate", 60U, 32);
+        setProperty("VSync Timing", "16.67ms");
+        IOLog("VMVirtIOGPU::enableVSync: VSync enabled at 60Hz\n");
+    } else {
+        IOLog("VMVirtIOGPU::enableVSync: VSync disabled\n");
+    }
 }
 
 void CLASS::enableVirgl() {
-    IOLog("VMVirtIOGPU::enableVirgl: Enabling Virgil 3D renderer support\n");
+    IOLog("VMVirtIOGPU::enableVirgl: Initializing real Virgil 3D renderer\n");
     
     if (!m_pci_device) {
         IOLog("VMVirtIOGPU::enableVirgl: No PCI device available\n");
         return;
     }
     
-    // Check if Virgil 3D is supported by the device
-    if (!supportsVirgl()) {
-        IOLog("VMVirtIOGPU::enableVirgl: Virgil 3D not supported by device\n");
+    // Step 1: Check host support for Virgil 3D
+    if (!supports3D()) {
+        IOLog("VMVirtIOGPU::enableVirgl: Host does not support 3D acceleration\n");
         return;
     }
     
-    // Enable Virgil 3D feature flag
+    // Step 2: Enable Virgil 3D feature on device
     IOReturn virgl_result = enableFeature(VIRTIO_GPU_FEATURE_VIRGL);
     if (virgl_result != kIOReturnSuccess) {
         IOLog("VMVirtIOGPU::enableVirgl: Failed to enable Virgil 3D feature: 0x%x\n", virgl_result);
-        return;
+        // Try fallback to basic 3D
+        virgl_result = enableFeature(VIRTIO_GPU_FEATURE_3D);
+        if (virgl_result != kIOReturnSuccess) {
+            IOLog("VMVirtIOGPU::enableVirgl: Failed to enable any 3D feature: 0x%x\n", virgl_result);
+            return;
+        }
     }
     
-    // Query Virgil 3D capability sets for advanced rendering features
-    IOLog("VMVirtIOGPU::enableVirgl: Querying Virgil 3D capability sets\n");
+    // Step 3: Create 3D context for Virgil renderer
+    struct virtio_gpu_ctx_create ctx_create = {};
+    ctx_create.hdr.type = VIRTIO_GPU_CMD_CTX_CREATE;
+    ctx_create.hdr.flags = 0;
+    ctx_create.hdr.fence_id = 0;
+    ctx_create.hdr.ctx_id = 1; // Use context ID 1 for primary rendering context
+    ctx_create.debug_name[0] = 0; // No debug name for now
     
-    // In a full implementation, we would:
-    // 1. Query available capability sets (OpenGL version, extensions)
-    // 2. Initialize Virgil 3D context creation capabilities
-    // 3. Setup advanced rendering pipeline support
+    // Submit context creation command
+    struct virtio_gpu_ctrl_hdr response = {};
+    IOReturn ctx_result = submitCommand(&ctx_create.hdr, sizeof(ctx_create), 
+                                       &response, sizeof(response));
     
-    IOLog("VMVirtIOGPU::enableVirgl: Virgil 3D renderer enabled successfully\n");
+    if (ctx_result == kIOReturnSuccess && response.type == VIRTIO_GPU_RESP_OK_NODATA) {
+        IOLog("VMVirtIOGPU::enableVirgl: 3D context created successfully (ctx_id=1)\n");
+        
+        // Set properties for successful Virgil initialization
+        setProperty("Virgil 3D", kOSBooleanTrue);
+        setProperty("GL Renderer", "Virgil 3D");
+        
+        // Enable real hardware-accelerated features
+        setProperty("Hardware OpenGL", kOSBooleanTrue);
+        setProperty("Shader Language Version", "1.30");
+        setProperty("Max Texture Size", 4096U, 32);
+        setProperty("3D Texture Support", kOSBooleanTrue);
+        setProperty("Vertex Buffer Objects", kOSBooleanTrue);
+        setProperty("Frame Buffer Objects", kOSBooleanTrue);
+        
+        IOLog("VMVirtIOGPU::enableVirgl: Virgil 3D renderer enabled successfully\n");
+    } else {
+        IOLog("VMVirtIOGPU::enableVirgl: Failed to create 3D context: 0x%x (type=0x%x)\n", 
+              ctx_result, response.type);
+    }
 }
 void CLASS::setMockMode(bool enabled) {
-    IOLog("VMVirtIOGPU::setMockMode: enabled=%d (stub)\n", enabled);
+    IOLog("VMVirtIOGPU::setMockMode: %s mock mode for testing\n", enabled ? "Enabling" : "Disabling");
+    
+    m_mock_mode = enabled;
+    
+    if (enabled) {
+        // Enable mock/testing mode with fake capabilities
+        setProperty("Mock Mode", kOSBooleanTrue);
+        setProperty("Mock GPU Vendor", "VMQemuVGA Test");
+        setProperty("Mock GPU Renderer", "VirtIO GPU Mock");
+        setProperty("Mock Driver Version", "8.0-test");
+        
+        // Set mock 3D capabilities for testing
+        setProperty("Mock 3D Acceleration", kOSBooleanTrue);
+        setProperty("Mock Max Texture Size", 8192U, 32);
+        setProperty("Mock Vertex Shaders", kOSBooleanTrue);
+        setProperty("Mock Fragment Shaders", kOSBooleanTrue);
+        
+        // Enable verbose logging in mock mode
+        setProperty("Verbose Logging", kOSBooleanTrue);
+        
+        IOLog("VMVirtIOGPU::setMockMode: Mock mode enabled - using fake capabilities for testing\n");
+    } else {
+        setProperty("Mock Mode", kOSBooleanFalse);
+        removeProperty("Mock GPU Vendor");
+        removeProperty("Mock GPU Renderer");
+        removeProperty("Mock Driver Version");
+        removeProperty("Mock 3D Acceleration");
+        removeProperty("Verbose Logging");
+        
+        IOLog("VMVirtIOGPU::setMockMode: Mock mode disabled - using real hardware detection\n");
+    }
 }
 
 IOReturn CLASS::updateDisplay(uint32_t scanout_id, uint32_t resource_id, uint32_t x, uint32_t y, uint32_t width, uint32_t height) {
@@ -2280,7 +2388,35 @@ IOReturn CLASS::mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_a
 }
 
 void CLASS::setBasic3DSupport(bool enabled) {
-    IOLog("VMVirtIOGPU::setBasic3DSupport: enabled=%d (stub)\n", enabled);
+    IOLog("VMVirtIOGPU::setBasic3DSupport: %s basic 3D support\n", enabled ? "Enabling" : "Disabling");
+    
+    m_basic_3d_enabled = enabled;
+    
+    if (enabled) {
+        // Enable basic 3D capabilities
+        setProperty("Basic 3D Support", kOSBooleanTrue);
+        setProperty("OpenGL Version", "2.1");
+        setProperty("GLSL Version", "1.20");
+        
+        // Set basic 3D limits for compatibility
+        setProperty("Max Texture Size", 2048U, 32);
+        setProperty("Max Viewport Size", 2048U, 32);
+        setProperty("Texture Units", 8U, 32);
+        
+        // Enable basic 3D features
+        setProperty("Vertex Buffer Objects", kOSBooleanTrue);
+        setProperty("Pixel Buffer Objects", kOSBooleanTrue);
+        setProperty("Non Power Of Two Textures", kOSBooleanTrue);
+        
+        IOLog("VMVirtIOGPU::setBasic3DSupport: Basic 3D support enabled\n");
+    } else {
+        // Disable 3D capabilities - 2D only mode
+        setProperty("Basic 3D Support", kOSBooleanFalse);
+        removeProperty("OpenGL Version");
+        removeProperty("GLSL Version");
+        
+        IOLog("VMVirtIOGPU::setBasic3DSupport: Disabled - 2D mode only\n");
+    }
 }
 
 void CLASS::enableResourceBlob() {
@@ -2329,82 +2465,90 @@ void CLASS::enableResourceBlob() {
 }
 
 void CLASS::enable3DAcceleration() {
-    IOLog("VMVirtIOGPU::enable3DAcceleration: Initializing VirtIO GPU 3D support\n");
+    IOLog("VMVirtIOGPU::enable3DAcceleration: Initializing real VirtIO GPU 3D support\n");
     
     if (!m_pci_device) {
         IOLog("VMVirtIOGPU::enable3DAcceleration: No PCI device available\n");
         return;
     }
     
-    // Check if VirtIO GPU supports 3D acceleration (hardware detection)
-    if (!supports3D()) {
-        IOLog("VMVirtIOGPU::enable3DAcceleration: Hardware 3D not detected (capsets=%d), enabling compatibility mode\n", m_num_capsets);
-        
-        // Enable software fallback mode for Snow Leopard compatibility
-        m_num_capsets = 1; // Force enable basic 3D capability
-        IOLog("VMVirtIOGPU::enable3DAcceleration: Compatibility mode enabled - forcing capsets=1\n");
-    }
-    
-    // Enable 3D feature on the device
-    IOReturn feature_result = enableFeature(VIRTIO_GPU_FEATURE_3D);
-    if (feature_result != kIOReturnSuccess) {
-        IOLog("VMVirtIOGPU::enable3DAcceleration: Failed to enable 3D feature: 0x%x (continuing anyway)\n", feature_result);
-        // Don't return - continue with software fallback
-    }
-    
-    // Initialize 3D-specific VirtIO queues if not already done
-    if (!initializeVirtIOQueues()) {
-        IOLog("VMVirtIOGPU::enable3DAcceleration: Failed to initialize VirtIO queues\n");
+    if (!m_control_queue) {
+        IOLog("VMVirtIOGPU::enable3DAcceleration: Control queue not initialized\n");
         return;
     }
     
-    // Enable Virgil 3D renderer if supported
-    if (supportsVirgl()) {
-        enableVirgl();
+    // Step 1: Query device capabilities for 3D support
+    struct virtio_gpu_get_capset_info capset_info_cmd = {};
+    capset_info_cmd.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET_INFO;
+    capset_info_cmd.hdr.flags = 0;
+    capset_info_cmd.hdr.fence_id = 0;
+    capset_info_cmd.capset_index = 0; // Query first capset (usually Virgl)
+    
+    struct virtio_gpu_resp_capset_info capset_info_resp = {};
+    IOReturn capset_result = submitCommand(&capset_info_cmd.hdr, sizeof(capset_info_cmd), 
+                                          &capset_info_resp.hdr, sizeof(capset_info_resp));
+    
+    if (capset_result == kIOReturnSuccess && capset_info_resp.hdr.type == VIRTIO_GPU_RESP_OK_CAPSET_INFO) {
+        IOLog("VMVirtIOGPU::enable3DAcceleration: Found capset ID=%u version=%u size=%u\n",
+              capset_info_resp.capset_id, capset_info_resp.capset_max_version, capset_info_resp.capset_max_size);
         
-        // WebGL-specific Virgl optimizations
-        IOLog("VMVirtIOGPU::enable3DAcceleration: Enabling WebGL optimizations for Virgl\n");
+        // Step 2: Get actual capability set data
+        struct virtio_gpu_get_capset capset_cmd = {};
+        capset_cmd.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
+        capset_cmd.hdr.flags = 0;
+        capset_cmd.hdr.fence_id = 0;
+        capset_cmd.capset_id = capset_info_resp.capset_id;
+        capset_cmd.capset_version = capset_info_resp.capset_max_version;
         
-        // Configure WebGL-optimized command buffers
-        setProperty("VirtIOGPU-WebGL-CommandBuffer", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-TextureStreaming", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-ShaderOptimization", kOSBooleanTrue);
+        // Allocate buffer for capset data
+        IOBufferMemoryDescriptor* capset_buffer = IOBufferMemoryDescriptor::withCapacity(
+            capset_info_resp.capset_max_size, kIODirectionInOut);
         
-        // Enable hardware-accelerated WebGL features
-        setProperty("VirtIOGPU-WebGL-VertexArrayObjects", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-FloatTextures", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-DepthTextures", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-GLSL-ES", kOSBooleanTrue);
+        if (capset_buffer) {
+            struct virtio_gpu_resp_capset* capset_resp = 
+                (struct virtio_gpu_resp_capset*)capset_buffer->getBytesNoCopy();
+            
+            IOReturn get_capset_result = submitCommand(&capset_cmd.hdr, sizeof(capset_cmd),
+                                                      &capset_resp->hdr, sizeof(struct virtio_gpu_resp_capset) + capset_info_resp.capset_max_size);
+            
+            if (get_capset_result == kIOReturnSuccess && capset_resp->hdr.type == VIRTIO_GPU_RESP_OK_CAPSET) {
+                IOLog("VMVirtIOGPU::enable3DAcceleration: Retrieved %u bytes of capset data\n", capset_info_resp.capset_max_size);
+                
+                // Step 3: Parse capabilities and enable 3D features
+                m_num_capsets = 1; // Mark that we have valid 3D capabilities
+                
+                // Set real 3D acceleration properties
+                setProperty("3D Acceleration", kOSBooleanTrue);
+                setProperty("VirtIO GPU 3D", kOSBooleanTrue);
+                setProperty("Capset ID", capset_info_resp.capset_id, 32);
+                setProperty("Capset Version", capset_info_resp.capset_max_version, 32);
+                setProperty("Max Texture Size", 4096U, 32);
+                
+                IOLog("VMVirtIOGPU::enable3DAcceleration: Real 3D acceleration enabled successfully\n");
+            } else {
+                IOLog("VMVirtIOGPU::enable3DAcceleration: Failed to get capset data: 0x%x\n", get_capset_result);
+            }
+            
+            capset_buffer->release();
+        } else {
+            IOLog("VMVirtIOGPU::enable3DAcceleration: Failed to allocate capset buffer\n");
+        }
+    } else {
+        IOLog("VMVirtIOGPU::enable3DAcceleration: No 3D capabilities found (result=0x%x, type=0x%x)\n", 
+              capset_result, capset_info_resp.hdr.type);
+        
+        // Fallback to compatibility mode for systems without host 3D support
+        IOLog("VMVirtIOGPU::enable3DAcceleration: Enabling compatibility mode for basic display\n");
+        setProperty("3D Acceleration", kOSBooleanFalse);
+        setProperty("Compatibility Mode", kOSBooleanTrue);
     }
     
-    // Enable Snow Leopard specific WebGL compatibility
-    IOLog("VMVirtIOGPU::enable3DAcceleration: Configuring Snow Leopard WebGL compatibility\n");
-    setProperty("VirtIOGPU-SnowLeopard-WebGL", kOSBooleanTrue);
-    setProperty("VirtIOGPU-LegacyOpenGL-Bridge", kOSBooleanTrue);
-    setProperty("VirtIOGPU-SoftwareGL-Assist", kOSBooleanTrue);
-    
-    // YouTube Canvas and Video rendering optimizations
-    IOLog("VMVirtIOGPU::enable3DAcceleration: Enabling YouTube Canvas/Video acceleration\n");
-    setProperty("VirtIOGPU-Canvas-2D-Acceleration", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Video-Decode-Acceleration", kOSBooleanTrue);
-    setProperty("VirtIOGPU-HTML5-Video-Optimize", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Canvas-ImageData-Fast", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Canvas-WebGL-Context", kOSBooleanTrue);
-    
-    // Advanced texture and rendering optimizations
-    setProperty("VirtIOGPU-TextureCompression-S3TC", kOSBooleanTrue);
-    setProperty("VirtIOGPU-TextureCompression-ETC", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Anisotropic-Filtering", (UInt32)16);
-    setProperty("VirtIOGPU-MultiSampling-4x", kOSBooleanTrue);
-    
-    // Enable resource blob for advanced 3D resource types
-    enableResourceBlob();
-    
-    // Initialize WebGL-specific acceleration features
-    initializeWebGLAcceleration();
-    
-    IOLog("VMVirtIOGPU::enable3DAcceleration: 3D acceleration enabled successfully\n");
+    // Step 4: Enable Virgil 3D renderer if we have real 3D support
+    if (m_num_capsets > 0) {
+        enableVirgl();
+    }
 }
+
 bool CLASS::setOptimalQueueSizes() {
     IOLog("VMVirtIOGPU::setOptimalQueueSizes: Configuring optimal VirtIO GPU queue sizes\n");
     

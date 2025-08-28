@@ -55,10 +55,6 @@ enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_CMD_GET_CAPSET,
     VIRTIO_GPU_CMD_GET_EDID,
 
-    /* Cursor commands */
-    VIRTIO_GPU_CMD_UPDATE_CURSOR = 0x0300,
-    VIRTIO_GPU_CMD_MOVE_CURSOR,
-
     /* 3D commands */
     VIRTIO_GPU_CMD_CTX_CREATE = 0x0200,
     VIRTIO_GPU_CMD_CTX_DESTROY,
@@ -68,6 +64,16 @@ enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D,
     VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D,
     VIRTIO_GPU_CMD_SUBMIT_3D,
+    
+    /* Extended 3D commands for expanded functionality */
+    VIRTIO_GPU_CMD_BIND_TEXTURE,
+    VIRTIO_GPU_CMD_UPDATE_TEXTURE,
+    VIRTIO_GPU_CMD_DESTROY_SURFACE,
+    VIRTIO_GPU_CMD_CREATE_FRAMEBUFFER,
+    
+    /* Cursor commands */
+    VIRTIO_GPU_CMD_UPDATE_CURSOR,
+    VIRTIO_GPU_CMD_MOVE_CURSOR,
 
     /* Success responses */
     VIRTIO_GPU_RESP_OK_NODATA = 0x1100,
@@ -95,6 +101,11 @@ enum virtio_gpu_formats {
     VIRTIO_GPU_FORMAT_X8B8G8R8_UNORM  = 68,
     VIRTIO_GPU_FORMAT_A8B8G8R8_UNORM  = 121,
     VIRTIO_GPU_FORMAT_R8G8B8X8_UNORM  = 134,
+    
+    /* Depth/stencil formats */
+    VIRTIO_GPU_FORMAT_D16_UNORM       = 55,
+    VIRTIO_GPU_FORMAT_D32_FLOAT       = 71,
+    VIRTIO_GPU_FORMAT_D24_UNORM_S8_UINT = 49,
 };
 
 /* Resource targets for 3D */
@@ -265,7 +276,7 @@ struct virtio_gpu_resp_capset {
     uint8_t capset_data[];
 };
 
-/* Cursor command structures */
+/* Cursor structures */
 struct virtio_gpu_cursor_pos {
     uint32_t scanout_id;
     uint32_t x;

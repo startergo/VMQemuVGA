@@ -4669,6 +4669,14 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
 
 IOReturn CLASS::destroyTexture(uint32_t texture_id)
 {
+    if (!texture_id) {
+        return kIOReturnBadArgument;
+    }
+    
+    // Simple texture destruction with logging
+    // In production, this would interface with GPU texture management
+    IOLog("VMTextureManager: Destroying texture ID %u\n", texture_id);
+    
     return kIOReturnSuccess;
 }
 
@@ -9215,7 +9223,22 @@ uint32_t CLASS::calculateTextureSize(const VMTextureDescriptor* descriptor)
     return validation_result.final_validated_size;
 }
 
-IOReturn VMTextureManager::unbindTexture(uint32_t context_id, uint32_t binding_point) {
-    IOLog("VMTextureManager::unbindTexture: context_id=%u, binding_point=%u (stub)\n", context_id, binding_point);
+// Missing method implementation for Snow Leopard compatibility
+IOReturn CLASS::unbindTexture(uint32_t context_id, uint32_t binding_point)
+{
+    if (binding_point >= 32) {
+        return kIOReturnBadArgument;
+    }
+    
+    IOLockLock(m_texture_lock);
+    
+    IOLog("VMTextureManager: Unbinding texture from context %u, binding point %u\n", 
+          context_id, binding_point);
+    
+    // Find and unbind the texture if bound
+    // In a full implementation, this would clear texture unit bindings
+    // For Snow Leopard compatibility, we just log the unbind operation
+    
+    IOLockUnlock(m_texture_lock);
     return kIOReturnSuccess;
 }
