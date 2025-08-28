@@ -14,6 +14,7 @@ class VMTextureManager;
 class VMCommandBufferPool;
 class VMPhase3Manager;
 class VMMetalBridge;
+class IOPixelInformation;
 
 // 3D command types for user space communication
 enum VM3DCommandType {
@@ -247,6 +248,13 @@ public:
     // GPU synchronization and resource management
     IOReturn synchronizeGPUOperations(uint32_t context_id, bool wait_for_completion);
     IOReturn defragmentTextureMemory(uint32_t* compaction_ratio);
+    
+    // Hardware acceleration methods
+    IOReturn performBlit(IOPixelInformation* sourcePixelInfo, IOPixelInformation* destPixelInfo, 
+                        int sourceX, int sourceY, int destX, int destY);
+    IOReturn performFill(IOPixelInformation* pixelInfo, int x, int y, int width, int height, 
+                        uint32_t color);
+    IOReturn synchronize();
     
     // Performance profiling
     IOReturn startPerformanceProfiling(uint32_t context_id);

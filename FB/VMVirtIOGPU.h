@@ -95,6 +95,11 @@ private:
     struct vring_used* m_control_used_ring;
     uint16_t m_control_queue_last_used_idx;
     
+    // VirtIO queue state for real hardware communication
+    IOPhysicalAddress m_pending_cmd_phys;
+    IOPhysicalAddress m_pending_resp_phys;
+    size_t m_pending_resp_size;
+    
     // VirtIO operations
     bool initVirtIOGPU();
     bool initVirtIORings();
@@ -103,6 +108,11 @@ private:
     // Command processing
     IOReturn submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size, 
                           virtio_gpu_ctrl_hdr* resp, size_t resp_size);
+    IOReturn submitCommandGated(void* cmd_ptr, void* cmd_size_ptr, void* resp_ptr, void* resp_size_ptr);
+    IOReturn addToVirtQueue(IOPhysicalAddress cmdPhys, size_t cmdSize, IOPhysicalAddress respPhys, size_t respSize);
+    void notifyQueue(uint16_t queueIndex);
+    IOReturn waitForResponse(IOBufferMemoryDescriptor* respBuffer, virtio_gpu_ctrl_hdr* resp, size_t respSize, uint32_t timeoutMs);
+    bool checkResponseReady();
     IOReturn processControlQueue();
     
     // Resource management
