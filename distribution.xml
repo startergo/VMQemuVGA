@@ -23,8 +23,8 @@
         <pkg-ref id="com.vmqemuvga.phase3.kext"/>
     </choice>
     
-    <pkg-ref id="com.vmqemuvga.phase3.kext">
-        <bundle-version/>
+    <pkg-ref id="com.vmqemuvga.phase3.kext" onConclusion="RequireRestart">
+        VMQemuVGA-Component.pkg
     </pkg-ref>
     
     <product id="com.vmqemuvga.phase3" version="8.0"/>

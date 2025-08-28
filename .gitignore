@@ -80,7 +80,6 @@ certificates/
 installer_certificate*
 installer_private_key*
 codesign-cert*
-installer_csr.conf
 
 # Package files
 *.dmg
@@ -118,6 +117,13 @@ Package.resolved
 *_vers.c
 
 # Development tools
-*.sh
 scripts/
 test_results/
+
+# SSH keys - sensitive files
+vm-ssh-key
+vm-ssh-key.pub
+
+# Third-party repositories we cloned
+csrstat-NG-master/
+directhw/

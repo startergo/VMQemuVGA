@@ -65,16 +65,21 @@ IOService* VMQemuVGA::probe(IOService* provider, SInt32* score)
     
     VLOG("Found PCI device: vendor=0x%04x, device=0x%04x", vendorID, deviceID);
     
-    // Support both QXL and VirtIO-GPU devices
-    if ((vendorID == 0x1b36 && deviceID == 0x0100) ||      // QXL Graphics
-        (vendorID == 0x1af4 && deviceID == 0x1050)) {      // VirtIO-GPU
+    // Support QXL devices (Red Hat)
+    if (vendorID == 0x1b36 && deviceID == 0x0100) {
         *score = 90000;  // High score to beat NDRV
-        VLOG("VMQemuVGA probe successful with score %d for %s", *score, 
-             (vendorID == 0x1b36) ? "QXL" : "VirtIO-GPU");
+        VLOG("VMQemuVGA probe successful (QXL) with score %d", *score);
         return this;
     }
     
-    VLOG("Device not supported: vendor=0x%04x, device=0x%04x", vendorID, deviceID);
+    // Support VirtIO GPU devices (Red Hat VirtIO)
+    if (vendorID == 0x1af4 && deviceID == 0x1050) {
+        *score = 95000;  // Even higher score for VirtIO GPU
+        VLOG("VMQemuVGA probe successful (VirtIO GPU) with score %d", *score);
+        return this;
+    }
+    
+    VLOG("Device not supported");
     return NULL;
 }/*************START********************/
 bool CLASS::start(IOService* provider)
@@ -102,7 +107,7 @@ bool CLASS::start(IOService* provider)
 	
 	m_gpu_device = nullptr;
 	m_accelerator = nullptr;
-	m_3d_acceleration_enabled = false;
+	m_3d_acceleration_enabled = true; // Enable for Catalina VirtIO GPU GL
 	
 	m_intr_enabled = false;
 	m_accel_updates = false;
@@ -124,15 +129,25 @@ bool CLASS::start(IOService* provider)
 	
 	//Init svga
 	svga.Init();
+	
 	//Start svga, init the FIFO too
 	if (!svga.Start(static_cast<IOPCIDevice*>(provider)))
 	{
 		goto fail;
 	}
 	
-	//BAR0 is vram
-	//m_vram = provider->getDeviceMemoryWithIndex(0U);//Guest Framebuffer (BAR0)
-	m_vram = svga.get_m_vram();	
+	//BAR0 is vram - Snow Leopard compatible method
+	m_vram = svga.get_m_vram();
+	
+	// Simple VRAM size reporting like original Snow Leopard version
+	if (m_vram) {
+		uint32_t vram_mb = (uint32_t)(m_vram->getLength() / (1024 * 1024));
+		IOLog("VMQemuVGA: VRAM detected: %u MB (Snow Leopard method)\n", vram_mb);
+		setProperty("VRAM,totalsize", (UInt32)m_vram->getLength());
+		setProperty("ATY,memsize", (UInt32)m_vram->getLength());
+	} else {
+		IOLog("VMQemuVGA: Warning - No VRAM detected via Snow Leopard method\n");
+	}
 	
 	//populate customMode with modeList define in modes.cpp
 	memcpy(&customMode, &modeList[0], sizeof(DisplayModeEntry));
@@ -165,57 +180,103 @@ bool CLASS::start(IOService* provider)
 	if (init3DAcceleration()) {
 		DLOG("%s: 3D acceleration initialized successfully\n", __FUNCTION__);
 		
-		// Snow Leopard Compatibility Mode - Optimize for software OpenGL performance
-		IOLog("VMQemuVGA: Configuring Snow Leopard compatibility mode for optimal software OpenGL\n");
+	// Catalina GPU Hardware Acceleration Mode
+	IOLog("VMQemuVGA: Configuring GPU hardware acceleration for device type\n");
+	
+	// Set comprehensive device-specific model names for all virtualization devices
+	IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, provider);
+	if (pciDevice) {
+		UInt32 vendorID = pciDevice->configRead16(kIOPCIConfigVendorID);
+		UInt32 deviceID = pciDevice->configRead16(kIOPCIConfigDeviceID);
 		
-		// Accept that Snow Leopard will use software OpenGL, but optimize the experience
-		setProperty("model", "VMware SVGA 3D (Software Optimized + WebGL)");
-		
-		// Optimize for software rendering performance
+		if (vendorID == 0x1b36 && deviceID == 0x0100) {
+			setProperty("model", "QXL VGA (Hardware Accelerated)");
+			IOLog("VMQemuVGA: QXL VGA hardware acceleration enabled\n");
+		} else if (vendorID == 0x1af4 && (deviceID >= 0x1050 && deviceID <= 0x105f)) {
+			setProperty("model", "VirtIO GPU 3D (Hardware Accelerated)");
+			IOLog("VMQemuVGA: VirtIO GPU 3D hardware acceleration enabled\n");
+		} else if (vendorID == 0x1414 && ((deviceID >= 0x5353 && deviceID <= 0x5356) || 
+		                                  (deviceID >= 0x0058 && deviceID <= 0x0059))) {
+			setProperty("model", "Hyper-V DDA GPU (Hardware Accelerated)");
+			IOLog("VMQemuVGA: Hyper-V DDA hardware acceleration enabled\n");
+		} else if (vendorID == 0x15ad && (deviceID >= 0x0405 && deviceID <= 0x0408)) {
+			setProperty("model", "VMware SVGA 3D (Hardware Accelerated)");
+			IOLog("VMQemuVGA: VMware SVGA hardware acceleration enabled\n");
+		} else if (vendorID == 0x1002 && ((deviceID >= 0x0f00 && deviceID <= 0x0f03) || 
+		                                  (deviceID >= 0x0190 && deviceID <= 0x0193))) {
+			setProperty("model", "AMD GPU-V (Hardware Accelerated)");
+			IOLog("VMQemuVGA: AMD GPU-V hardware acceleration enabled\n");
+		} else if (vendorID == 0x10de && ((deviceID >= 0x0f04 && deviceID <= 0x0f07) || 
+		                                  (deviceID >= 0x01e0 && deviceID <= 0x01e3))) {
+			setProperty("model", "NVIDIA vGPU (Hardware Accelerated)");
+			IOLog("VMQemuVGA: NVIDIA vGPU hardware acceleration enabled\n");
+		} else if (vendorID == 0x8086 && (deviceID >= 0x0190 && deviceID <= 0x0193)) {
+			setProperty("model", "Intel GVT-g (Hardware Accelerated)");
+			IOLog("VMQemuVGA: Intel GVT-g hardware acceleration enabled\n");
+		} else {
+			setProperty("model", "Virtualization GPU (Hardware Accelerated)");
+			IOLog("VMQemuVGA: Generic virtualization hardware acceleration enabled\n");
+		}
+	} else {
+		setProperty("model", "VMQemuVGA (Hardware Accelerated)");
+		IOLog("VMQemuVGA: Generic hardware acceleration enabled\n");
+	}		// Configure for hardware acceleration
 		setProperty("IOPrimaryDisplay", kOSBooleanTrue);
 		setProperty("AAPL,HasMask", kOSBooleanTrue);
 		setProperty("AAPL,HasPanel", kOSBooleanTrue);
 		
-		// Set large VRAM to help software OpenGL with texture caching
-		setProperty("ATY,memsize", (UInt32)(512 * 1024 * 1024)); // 512MB VRAM
-		setProperty("VRAM,totalsize", (UInt32)(512 * 1024 * 1024));
+		// Set VRAM for hardware acceleration - INCREASED for better GPU utilization
+		setProperty("ATY,memsize", (UInt32)(2048U * 1024U * 1024U)); // 2GB VRAM for better GL performance
+		setProperty("VRAM,totalsize", (UInt32)(2048U * 1024U * 1024U));
+		setProperty("AGPTextureMemoryLimitBytes", (UInt32)(1024 * 1024 * 1024)); // 1GB AGP texture memory
 		
-		// Enable high-performance 2D acceleration to complement software 3D
-		setProperty("VMQemuVGA-2D-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Optimized-Blitting", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Fast-Scroll", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Large-Cursor-Support", kOSBooleanTrue);
+		// ENHANCED: Tell macOS we are a high-performance hardware-accelerated GPU
+		setProperty("IOGraphicsAcceleratorInterface", kOSBooleanTrue);
+		setProperty("IOAccelerator", kOSBooleanTrue);
+		setProperty("MetalPerformanceShaders", kOSBooleanTrue);
+		setProperty("GPU-Performance-Level", (UInt32)100); // High performance level
+		setProperty("OpenGL-Renderer-ID", (UInt32)0x02410000); // ATI Radeon renderer ID for compatibility
 		
-		// WebGL and web browser optimizations for Snow Leopard
-		setProperty("VMQemuVGA-WebGL-Optimized", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Canvas-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Texture-Upload-Fast", kOSBooleanTrue);
-		setProperty("VMQemuVGA-WebKit-Compatible", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Safari-Optimized", kOSBooleanTrue);
+		// Enable hardware-accelerated features
+		setProperty("VMQemuVGA-3D-Acceleration", kOSBooleanTrue);
+		setProperty("VMQemuVGA-Hardware-GL", kOSBooleanTrue);
+		setProperty("VMQemuVGA-VirtIO-GPU", kOSBooleanTrue);
+		setProperty("VMQemuVGA-GL-Context", kOSBooleanTrue);
+		setProperty("VMQemuVGA-Force-Hardware-Rendering", kOSBooleanTrue);
 		
-		// Browser-specific performance enhancements
-		setProperty("WebGL-ContextLoss-Prevention", kOSBooleanTrue);
-		setProperty("Canvas2D-Hardware-Backed", kOSBooleanTrue);
-		setProperty("WebGL-Texture-Memory", (UInt32)(256 * 1024 * 1024)); // 256MB for WebGL textures
-		setProperty("WebGL-Buffer-Memory", (UInt32)(128 * 1024 * 1024)); // 128MB for WebGL buffers
+		// Hardware WebGL and browser acceleration for Catalina
+		setProperty("VMQemuVGA-WebGL-Hardware", kOSBooleanTrue);
+		setProperty("VMQemuVGA-Canvas-Hardware", kOSBooleanTrue);
+		setProperty("VMQemuVGA-GPU-Texture-Upload", kOSBooleanTrue);
+		setProperty("VMQemuVGA-VirtIO-GL-Context", kOSBooleanTrue);
+		setProperty("VMQemuVGA-Hardware-Video-Decode", kOSBooleanTrue);
 		
-		// Compatibility flags for Snow Leopard
-		setProperty("VMQemuVGA-Snow-Leopard-Mode", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Software-OpenGL-Optimized", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Enhanced-2D-Performance", kOSBooleanTrue);
+		// ENHANCED: Hardware-accelerated browser performance - BOOSTED for better utilization
+		setProperty("WebGL-Hardware-Context", kOSBooleanTrue);
+		setProperty("Canvas2D-VirtIO-Backed", kOSBooleanTrue);
+		setProperty("Canvas2D-Hardware-Acceleration", kOSBooleanTrue); // NEW: Force Canvas2D acceleration
+		setProperty("WebGL-GPU-Memory", (UInt32)(1024 * 1024 * 1024)); // INCREASED: 1GB GPU memory for WebGL
+		setProperty("WebGL-VirtIO-Buffers", (UInt32)(512 * 1024 * 1024)); // INCREASED: 512MB for VirtIO buffers
+		setProperty("OpenGL-Hardware-Vertex-Processing", kOSBooleanTrue); // NEW: Hardware vertex processing
+		setProperty("OpenGL-Hardware-Pixel-Shaders", kOSBooleanTrue);    // NEW: Hardware pixel shaders
 		
-		// Chrome browser optimizations to prevent cursor flickering
-		setProperty("VMQemuVGA-Chrome-Optimized", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Browser-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Stable-Cursor", kOSBooleanTrue);
-		setProperty("IOFramebufferFlickerFix", kOSBooleanTrue);
+		// Modern Catalina acceleration features
+		setProperty("VMQemuVGA-Catalina-Mode", kOSBooleanTrue);
+		setProperty("VMQemuVGA-Hardware-OpenGL", kOSBooleanTrue);
+		setProperty("VMQemuVGA-VirtIO-Performance", kOSBooleanTrue);
 		
-		// Force software cursor mode early to prevent Chrome pointer flickering
-		setProperty("IOHardwareCursorActive", kOSBooleanFalse);
-		setProperty("IOSoftwareCursorActive", kOSBooleanTrue);
-		setProperty("IOCursorControllerPresent", kOSBooleanFalse);
-		setProperty("IODisplayCursorSupported", kOSBooleanFalse);
-		setProperty("IOCursorRedrawDisabled", kOSBooleanTrue);
+		// Hardware cursor support for better performance
+		setProperty("VMQemuVGA-Hardware-Cursor", kOSBooleanTrue);
+		setProperty("VMQemuVGA-GPU-Acceleration", kOSBooleanTrue);
+		setProperty("VMQemuVGA-Video-Hardware", kOSBooleanTrue);
+		setProperty("IOFramebufferHardwareAccel", kOSBooleanTrue);
+		
+		// Enable hardware cursor for better performance
+		setProperty("IOHardwareCursorActive", kOSBooleanTrue);
+		setProperty("IOSoftwareCursorActive", kOSBooleanFalse);
+		setProperty("IOCursorControllerPresent", kOSBooleanTrue);
+		setProperty("IODisplayCursorSupported", kOSBooleanTrue);
+		setProperty("IOCursorHardwareAccelerated", kOSBooleanTrue);
 		
 		// Memory optimization for software OpenGL and WebGL
 		setProperty("AGPMode", (UInt32)8); // Fast AGP mode
@@ -445,18 +506,23 @@ bool CLASS::init3DAcceleration()
 	IOLog("VMQemuVGA: VirtIO GPU device detection and initialization completed successfully\n");
 	
 	// Create VirtIO GPU device using proper kernel object allocation
+	IOLog("VMQemuVGA: DIAGNOSTIC - Creating VirtIO GPU device...\n");
 	m_gpu_device = OSTypeAlloc(VMVirtIOGPU);
 	if (!m_gpu_device) {
+		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to allocate VirtIO GPU device\n");
 		DLOG("%s: Failed to allocate VirtIO GPU device\n", __FUNCTION__);
 		return false;
 	}
+	IOLog("VMQemuVGA: DIAGNOSTIC - VirtIO GPU device allocated successfully\n");
 	
 	if (!m_gpu_device->init()) {
+		IOLog("VMQemuVGA: CRITICAL ERROR - VirtIO GPU device initialization failed\n");
 		DLOG("%s: Failed to initialize VirtIO GPU device\n", __FUNCTION__);
 		m_gpu_device->release();
 		m_gpu_device = nullptr;
 		return false;
 	}
+	IOLog("VMQemuVGA: DIAGNOSTIC - VirtIO GPU device initialized successfully\n");
 	
 	// Set the PCI device provider for the VirtIO GPU
 	IOPCIDevice* pciProvider = static_cast<IOPCIDevice*>(getProvider());
@@ -472,18 +538,23 @@ bool CLASS::init3DAcceleration()
 	}
 	
 	// Initialize VirtIO GPU accelerator with proper kernel object allocation
+	IOLog("VMQemuVGA: DIAGNOSTIC - Starting accelerator initialization...\n");
 	m_accelerator = OSTypeAlloc(VMQemuVGAAccelerator);
 	if (!m_accelerator) {
+		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to allocate accelerator object\n");
 		DLOG("%s: Failed to allocate accelerator\n", __FUNCTION__);
 		return false;
 	}
+	IOLog("VMQemuVGA: DIAGNOSTIC - Accelerator object allocated successfully\n");
 	
 	if (!m_accelerator->init()) {
+		IOLog("VMQemuVGA: CRITICAL ERROR - Accelerator initialization failed\n");
 		DLOG("%s: Failed to initialize accelerator\n", __FUNCTION__);
 		m_accelerator->release();
 		m_accelerator = nullptr;
 		return false;
 	}
+	IOLog("VMQemuVGA: DIAGNOSTIC - Accelerator initialized successfully\n");
 	if (!m_accelerator) {
 		DLOG("%s: Failed to create 3D accelerator\n", __FUNCTION__);
 		cleanup3DAcceleration();
@@ -497,17 +568,23 @@ bool CLASS::init3DAcceleration()
 	}
 	
 	// Start the accelerator as a child service
+	IOLog("VMQemuVGA: DIAGNOSTIC - Attaching and starting accelerator service...\n");
 	if (!m_accelerator->attach(this)) {
+		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to attach accelerator service\n");
 		DLOG("%s: Failed to attach 3D accelerator\n", __FUNCTION__);
 		cleanup3DAcceleration();
 		return false;
 	}
 	
 	if (!m_accelerator->start(this)) {
+		IOLog("VMQemuVGA: CRITICAL ERROR - Failed to start accelerator service\n");
 		DLOG("%s: Failed to start 3D accelerator\n", __FUNCTION__);
 		cleanup3DAcceleration();
 		return false;
 	}
+	
+	IOLog("VMQemuVGA: SUCCESS - VirtIO GPU accelerator fully initialized and active\n");
+	IOLog("VMQemuVGA: GPU Status - Hardware acceleration should now be available\n");
 	
 	m_3d_acceleration_enabled = true;
 	setProperty("3D Acceleration", "Enabled");
@@ -828,6 +905,22 @@ const char* CLASS::getPixelFormats()
 IODeviceMemory* CLASS::getVRAMRange()
 {
 	DLOG( "%s: \n", __FUNCTION__);
+	
+	// VRAM access logging (disabled - was interfering with GPU usage)
+	/*
+	if (m_accelerator) {
+		IOLog("VMQemuVGA: VRAM access detected - triggering VirtIO GPU hardware refresh\n");
+		
+		// Force VirtIO GPU to process the current framebuffer content
+		// This ensures the GPU is constantly active instead of idle
+		static uint32_t refresh_counter = 0;
+		refresh_counter++;
+		if ((refresh_counter % 10) == 0) { // Every 10th VRAM access
+			IOLog("VMQemuVGA: Forcing VirtIO GPU hardware refresh cycle #%u\n", refresh_counter);
+		}
+	}
+	*/
+	
 	if (!m_vram)
 		return 0;
 	
@@ -1016,6 +1109,22 @@ IOReturn CLASS::setAttribute(IOSelect attribute, uintptr_t value)
 {
 	IOReturn r;
 	char attr[5];
+	
+	// AGGRESSIVE GPU ACCELERATION: Intercept graphics operations and force VirtIO GPU usage
+	// DISABLED: This was preventing GPU usage instead of enhancing it
+	/*
+	if (attribute == kIOCapturedAttribute || 
+		attribute == kIOPowerAttribute ||
+		attribute == kConnectionEnable) {
+		IOLog("VMQemuVGA: INTERCEPTED graphics attribute %08x - forcing VirtIO GPU acceleration\n", attribute);
+		
+		// Signal that we want hardware acceleration for ALL graphics operations
+		if (m_accelerator) {
+			// Force any pending graphics operations to use VirtIO GPU hardware
+			IOLog("VMQemuVGA: Forcing all graphics through VirtIO GPU hardware path\n");
+		}
+	}
+	*/
 	
 	r = super::setAttribute(attribute, value);
 	if (true /*logLevelFB >= 2*/) {
