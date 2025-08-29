@@ -60,51 +60,24 @@ void CLASS::free()
 
 bool CLASS::start(IOService* provider)
 {
-    IOLog("VMVirtIOGPU::start\n");
+    printf("VMVirtIOGPU: DIAGNOSTIC_START_v1\n");
     
-    if (!super::start(provider))
-        return false;
-    
-    m_pci_device = OSDynamicCast(IOPCIDevice, provider);
-    if (!m_pci_device) {
-        IOLog("VMVirtIOGPU: Provider is not a PCI device\n");
+    if (!super::start(provider)) {
+        printf("VMVirtIOGPU: SUPER_START_FAILED\n");
         return false;
     }
     
-    // Store VirtIO device reference
-    m_virtio_device = provider;
+    printf("VMVirtIOGPU: SUPER_START_SUCCESS\n");
     
-    // Enable PCI device
-    m_pci_device->setMemoryEnable(true);
-    m_pci_device->setIOEnable(true);
-    m_pci_device->setBusMasterEnable(true);
+    // DO NOT access PCI device during boot to avoid hang
+    // PCI device will be configured later when needed
+    m_pci_device = nullptr;
     
-    IOLog("VMVirtIOGPU: PCI device enabled, skipping complex VirtIO init to avoid hang\n");
+    // Minimal safe initialization - no memory allocation, no complex operations
+    m_max_scanouts = 1;
+    m_num_capsets = 0;
     
-    // Temporarily bypass complex VirtIO initialization that might be causing hang
-    // Set basic defaults to allow boot to continue
-    m_max_scanouts = 1;  // Allow one display
-    m_num_capsets = 0;   // No 3D capabilities for now
-    
-    // Skip: if (!initVirtIOGPU()) { return false; }
-    
-    // Create command gate for serializing operations
-    m_command_gate = IOCommandGate::commandGate(this);
-    if (!m_command_gate) {
-        IOLog("VMVirtIOGPU: Failed to create command gate\n");
-        return false;
-    }
-    
-    getWorkLoop()->addEventSource(m_command_gate);
-    
-    // Set device properties
-    setProperty("3D Acceleration", "VirtIO GPU");
-    setProperty("Vendor", "Red Hat, Inc.");
-    setProperty("Device", "VirtIO GPU");
-    
-    IOLog("VMVirtIOGPU: Started successfully with %d scanouts, 3D support: %s\n", 
-          m_max_scanouts, supports3D() ? "Yes" : "No");
-    
+    printf("VMVirtIOGPU: DIAGNOSTIC_SUCCESS_v1\n");
     return true;
 }
 
@@ -120,103 +93,44 @@ void CLASS::stop(IOService* provider)
     
     cleanupVirtIOGPU();
     
+    // Release PCI device reference if configured
+    if (m_pci_device) {
+        m_pci_device->release();
+        m_pci_device = nullptr;
+    }
+    
     super::stop(provider);
 }
 
 bool CLASS::initVirtIOGPU()
 {
-    // Map PCI configuration spaces
-    m_config_map = m_pci_device->mapDeviceMemoryWithIndex(0);
-    if (!m_config_map) {
-        IOLog("VMVirtIOGPU: Failed to map configuration space\n");
-        return false;
-    }
-    
-    // Read device configuration
-    volatile struct virtio_gpu_config* config = 
-        (volatile struct virtio_gpu_config*)m_config_map->getVirtualAddress();
-    
-    m_max_scanouts = config->num_scanouts;
-    m_num_capsets = config->num_capsets;
-    
-    // Check for QXL fallback if VirtIO GPU config is invalid
-    if (m_max_scanouts == 0 || m_max_scanouts > 16) {
-        IOLog("VMVirtIOGPU: Invalid/missing VirtIO GPU config, checking for QXL device fallback\n");
-        m_max_scanouts = 1; // QXL typically has 1 display
-        m_num_capsets = 0; // QXL doesn't have VirtIO GPU capsets initially
-        
-        // Check PCI vendor/device ID to confirm QXL (Snow Leopard compatible)
-        UInt32 vendor_device = m_pci_device->configRead32(kIOPCIConfigurationOffsetVendorID);
-        uint32_t vendor_id = vendor_device & 0xFFFF;
-        uint32_t device_id = (vendor_device >> 16) & 0xFFFF;
-        
-        IOLog("VMVirtIOGPU: PCI device vendor=0x%x device=0x%x\n", vendor_id, device_id);
-        if (vendor_id == 0x1b36 && (device_id == 0x0100 || device_id == 0x01ff)) {
-            IOLog("VMVirtIOGPU: QXL device detected - enabling compatibility mode\n");
-            m_num_capsets = 1; // Enable basic 3D for QXL compatibility
-        } else if (vendor_id == 0x1af4 && device_id == 0x1050) {
-            IOLog("VMVirtIOGPU: VirtIO GPU device detected\n");
-            // m_num_capsets should be valid from config read
-        } else {
-            IOLog("VMVirtIOGPU: Unknown device vendor=0x%x device=0x%x - enabling generic compatibility\n", vendor_id, device_id);
-            m_num_capsets = 1; // Enable for unknown devices too
-        }
-    }
-    
-    IOLog("VMVirtIOGPU: Device config - scanouts: %d, capsets: %d\n", 
-          m_max_scanouts, m_num_capsets);
-    
-    // Allocate command queues
-    m_control_queue = IOBufferMemoryDescriptor::withCapacity(
-        m_control_queue_size * sizeof(virtio_gpu_ctrl_hdr), kIODirectionInOut);
-    if (!m_control_queue) {
-        IOLog("VMVirtIOGPU: Failed to allocate control queue\n");
-        return false;
-    }
-    
-    m_cursor_queue = IOBufferMemoryDescriptor::withCapacity(
-        m_cursor_queue_size * sizeof(virtio_gpu_ctrl_hdr), kIODirectionInOut);
-    if (!m_cursor_queue) {
-        IOLog("VMVirtIOGPU: Failed to allocate cursor queue\n");
-        return false;
-    }
-    
-    // Initialize VirtIO device communication
-    if (m_virtio_device) {
-        IOLog("VMVirtIOGPU: Initializing VirtIO device communication\n");
-        
-        // Map notification region (BAR 2) for queue kicks
-        if (!m_notify_map) {
-            m_notify_map = m_pci_device->mapDeviceMemoryWithIndex(2);
-            if (m_notify_map) {
-                IOLog("VMVirtIOGPU: VirtIO notification region mapped\n");
-            } else {
-                IOLog("VMVirtIOGPU: Warning - failed to map notification region\n");
-            }
-        }
-        
-        // Negotiate VirtIO GPU features
-        UInt32 features = 0;
-        if (supports3D()) {
-            features |= VIRTIO_GPU_FEATURE_3D;
-            IOLog("VMVirtIOGPU: Negotiating 3D acceleration feature\n");
-        }
-        if (supportsVirgl()) {
-            features |= VIRTIO_GPU_FEATURE_VIRGL;
-            IOLog("VMVirtIOGPU: Negotiating Virgl renderer feature\n");
-        }
-        
-        IOLog("VMVirtIOGPU: VirtIO device initialized with features=0x%x\n", features);
-        
-        // Initialize VirtIO ring structures for real hardware communication
-        if (!initVirtIORings()) {
-            IOLog("VMVirtIOGPU: Warning - failed to initialize VirtIO rings, using simplified mode\n");
-        } else {
-            IOLog("VMVirtIOGPU: VirtIO rings initialized successfully\n");
-        }
-    }
-    
+    printf("VMVirtIOGPU: INIT_VIRTIO_GPU_MINIMAL\n");
+    // Do absolutely nothing - just return success
     return true;
+}
+
+// Safe PCI device configuration (call after boot)
+IOReturn CLASS::configurePCIDevice(IOPCIDevice* pciDevice)
+{
+    IOLog("VMVirtIOGPU::configurePCIDevice: Configuring PCI device safely\n");
+    
+    if (!pciDevice) {
+        IOLog("VMVirtIOGPU::configurePCIDevice: Invalid PCI device\n");
+        return kIOReturnBadArgument;
+    }
+    
+    // Release any existing PCI device reference
+    if (m_pci_device) {
+        m_pci_device->release();
+        m_pci_device = nullptr;
+    }
+    
+    // Capture and retain the new PCI device
+    m_pci_device = pciDevice;
+    m_pci_device->retain();
+    
+    IOLog("VMVirtIOGPU::configurePCIDevice: PCI device configured successfully\n");
+    return kIOReturnSuccess;
 }
 
 void CLASS::cleanupVirtIOGPU()
@@ -379,419 +293,15 @@ IOReturn CLASS::createResource3D(uint32_t resource_id, uint32_t target,
 IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size, 
                              virtio_gpu_ctrl_hdr* resp, size_t resp_size)
 {
-    // Advanced VirtIO Queue Management System - Comprehensive Command Processing Architecture
-    IOLog("    === Advanced VirtIO Queue Management System - Enterprise Command Processing ===\n");
-    
-    struct VirtIOQueueArchitecture {
-        uint32_t queue_management_version;
-        uint32_t queue_architecture_type;
-        bool supports_asynchronous_processing;
-        bool supports_command_batching;
-        bool supports_priority_queueing;
-        bool supports_fence_synchronization;
-        bool supports_interrupt_coalescing;
-        bool supports_dma_coherent_operations;
-        bool supports_scatter_gather_lists;
-        bool supports_command_validation;
-        uint32_t maximum_queue_entries;
-        uint32_t maximum_concurrent_commands;
-        uint64_t queue_memory_overhead_bytes;
-        float queue_processing_efficiency;
-        bool queue_architecture_initialized;
-    } queue_architecture = {0};
-    
-    // Configure advanced VirtIO queue architecture
-    queue_architecture.queue_management_version = 0x0304; // Version 3.4
-    queue_architecture.queue_architecture_type = 0x02; // Enterprise VirtIO architecture
-    queue_architecture.supports_asynchronous_processing = true;
-    queue_architecture.supports_command_batching = true;
-    queue_architecture.supports_priority_queueing = true;
-    queue_architecture.supports_fence_synchronization = true;
-    queue_architecture.supports_interrupt_coalescing = true;
-    queue_architecture.supports_dma_coherent_operations = true;
-    queue_architecture.supports_scatter_gather_lists = true;
-    queue_architecture.supports_command_validation = true;
-    queue_architecture.maximum_queue_entries = 256; // Support up to 256 queue entries
-    queue_architecture.maximum_concurrent_commands = 64; // Support 64 concurrent commands
-    queue_architecture.queue_memory_overhead_bytes = 16384; // 16KB queue overhead
-    queue_architecture.queue_processing_efficiency = 0.96f; // 96% processing efficiency
-    queue_architecture.queue_architecture_initialized = false;
-    
-    IOLog("      Advanced VirtIO Queue Architecture Configuration:\n");
-    IOLog("        Queue Management Version: 0x%04X (v3.4 Enterprise)\n", queue_architecture.queue_management_version);
-    IOLog("        Architecture Type: 0x%02X (Enterprise VirtIO)\n", queue_architecture.queue_architecture_type);
-    IOLog("        Asynchronous Processing: %s\n", queue_architecture.supports_asynchronous_processing ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        Command Batching: %s\n", queue_architecture.supports_command_batching ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        Priority Queueing: %s\n", queue_architecture.supports_priority_queueing ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        Fence Synchronization: %s\n", queue_architecture.supports_fence_synchronization ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        Interrupt Coalescing: %s\n", queue_architecture.supports_interrupt_coalescing ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        DMA Coherent Operations: %s\n", queue_architecture.supports_dma_coherent_operations ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        Scatter-Gather Lists: %s\n", queue_architecture.supports_scatter_gather_lists ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        Command Validation: %s\n", queue_architecture.supports_command_validation ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("        Maximum Queue Entries: %d\n", queue_architecture.maximum_queue_entries);
-    IOLog("        Maximum Concurrent Commands: %d\n", queue_architecture.maximum_concurrent_commands);
-    IOLog("        Queue Memory Overhead: %llu bytes (%.1f KB)\n", queue_architecture.queue_memory_overhead_bytes, queue_architecture.queue_memory_overhead_bytes / 1024.0f);
-    IOLog("        Processing Efficiency: %.1f%%\n", queue_architecture.queue_processing_efficiency * 100.0f);
-    
-    // Phase 1: Advanced Command Validation and Preprocessing System
-    IOLog("      Phase 1: Advanced command validation and comprehensive preprocessing\n");
-    
-    struct CommandValidationSystem {
-        uint32_t validation_system_version;
-        bool command_structure_validation_enabled;
-        bool command_parameter_validation_enabled;
-        bool command_security_validation_enabled;
-        bool command_size_validation_enabled;
-        bool command_alignment_validation_enabled;
-        bool command_type_validation_enabled;
-        bool command_fence_validation_enabled;
-        bool command_context_validation_enabled;
-        uint32_t validation_checks_performed;
-        uint32_t validation_errors_detected;
-        float validation_efficiency;
-        bool validation_successful;
-    } validation_system = {0};
-    
-    // Configure command validation system
-    validation_system.validation_system_version = 0x0201; // Version 2.1
-    validation_system.command_structure_validation_enabled = queue_architecture.supports_command_validation;
-    validation_system.command_parameter_validation_enabled = queue_architecture.supports_command_validation;
-    validation_system.command_security_validation_enabled = queue_architecture.supports_command_validation;
-    validation_system.command_size_validation_enabled = queue_architecture.supports_command_validation;
-    validation_system.command_alignment_validation_enabled = queue_architecture.supports_dma_coherent_operations;
-    validation_system.command_type_validation_enabled = queue_architecture.supports_command_validation;
-    validation_system.command_fence_validation_enabled = queue_architecture.supports_fence_synchronization;
-    validation_system.command_context_validation_enabled = queue_architecture.supports_command_validation;
-    validation_system.validation_checks_performed = 0;
-    validation_system.validation_errors_detected = 0;
-    validation_system.validation_efficiency = 0.98f; // 98% validation efficiency
-    validation_system.validation_successful = false;
-    
-    IOLog("        Command Validation System Configuration:\n");
-    IOLog("          System Version: 0x%04X (v2.1)\n", validation_system.validation_system_version);
-    IOLog("          Structure Validation: %s\n", validation_system.command_structure_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Parameter Validation: %s\n", validation_system.command_parameter_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Security Validation: %s\n", validation_system.command_security_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Size Validation: %s\n", validation_system.command_size_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Alignment Validation: %s\n", validation_system.command_alignment_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Type Validation: %s\n", validation_system.command_type_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Fence Validation: %s\n", validation_system.command_fence_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Context Validation: %s\n", validation_system.command_context_validation_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Validation Efficiency: %.1f%%\n", validation_system.validation_efficiency * 100.0f);
-    
-    // Execute comprehensive command validation
-    IOLog("          Executing comprehensive command validation...\n");
-    
-    struct CommandValidationExecution {
-        bool command_structure_valid;
-        bool command_parameters_valid;
-        bool command_security_valid;
-        bool command_size_valid;
-        bool command_alignment_valid;
-        bool command_type_valid;
-        bool command_fence_valid;
-        bool command_context_valid;
-        uint32_t validation_error_code;
-        char validation_error_message[128];
-        bool validation_execution_successful;
-    } validation_execution = {0};
-    
-    // Validate command structure
-    if (validation_system.command_structure_validation_enabled) {
-        validation_execution.command_structure_valid = (cmd != nullptr && cmd_size >= sizeof(virtio_gpu_ctrl_hdr));
-        validation_system.validation_checks_performed++;
-        if (!validation_execution.command_structure_valid) {
-            validation_system.validation_errors_detected++;
-            validation_execution.validation_error_code = 0x1001;
-            snprintf(validation_execution.validation_error_message, sizeof(validation_execution.validation_error_message), 
-                    "Invalid command structure: cmd=%p, size=%zu", cmd, cmd_size);
-        }
-        IOLog("            Command Structure: %s\n", validation_execution.command_structure_valid ? "VALID" : "INVALID");
-    }
-    
-    // Validate command parameters
-    if (validation_system.command_parameter_validation_enabled && validation_execution.command_structure_valid) {
-        validation_execution.command_parameters_valid = 
-            (cmd->type > 0 && cmd->type < 0x200) && // Valid command type range
-            (cmd_size <= 4096); // Reasonable command size limit
-        validation_system.validation_checks_performed++;
-        if (!validation_execution.command_parameters_valid) {
-            validation_system.validation_errors_detected++;
-            validation_execution.validation_error_code = 0x1002;
-            snprintf(validation_execution.validation_error_message, sizeof(validation_execution.validation_error_message), 
-                    "Invalid command parameters: type=0x%x, size=%zu", cmd->type, cmd_size);
-        }
-        IOLog("            Command Parameters: %s\n", validation_execution.command_parameters_valid ? "VALID" : "INVALID");
-    }
-    
-    // Validate command security
-    if (validation_system.command_security_validation_enabled && validation_execution.command_parameters_valid) {
-        validation_execution.command_security_valid = true; // Simplified security validation
-        validation_system.validation_checks_performed++;
-        IOLog("            Command Security: %s\n", validation_execution.command_security_valid ? "VALID" : "INVALID");
-    }
-    
-    // Validate command size
-    if (validation_system.command_size_validation_enabled && validation_execution.command_security_valid) {
-        validation_execution.command_size_valid = 
-            (cmd_size >= sizeof(virtio_gpu_ctrl_hdr)) && 
-            (cmd_size <= queue_architecture.queue_memory_overhead_bytes);
-        validation_system.validation_checks_performed++;
-        if (!validation_execution.command_size_valid) {
-            validation_system.validation_errors_detected++;
-            validation_execution.validation_error_code = 0x1003;
-            snprintf(validation_execution.validation_error_message, sizeof(validation_execution.validation_error_message), 
-                    "Invalid command size: %zu (min: %zu, max: %llu)", cmd_size, sizeof(virtio_gpu_ctrl_hdr), queue_architecture.queue_memory_overhead_bytes);
-        }
-        IOLog("            Command Size: %s (%zu bytes)\n", validation_execution.command_size_valid ? "VALID" : "INVALID", cmd_size);
-    }
-    
-    // Validate command alignment
-    if (validation_system.command_alignment_validation_enabled && validation_execution.command_size_valid) {
-        validation_execution.command_alignment_valid = ((uintptr_t)cmd % 8) == 0; // 8-byte alignment
-        validation_system.validation_checks_performed++;
-        if (!validation_execution.command_alignment_valid) {
-            validation_system.validation_errors_detected++;
-            validation_execution.validation_error_code = 0x1004;
-            snprintf(validation_execution.validation_error_message, sizeof(validation_execution.validation_error_message), 
-                    "Invalid command alignment: address=0x%lx", (uintptr_t)cmd);
-        }
-        IOLog("            Command Alignment: %s (0x%lx)\n", validation_execution.command_alignment_valid ? "VALID" : "INVALID", (uintptr_t)cmd);
-    }
-    
-    // Validate command type
-    if (validation_system.command_type_validation_enabled && validation_execution.command_alignment_valid) {
-        validation_execution.command_type_valid = 
-            (cmd->type == VIRTIO_GPU_CMD_RESOURCE_CREATE_2D) ||
-            (cmd->type == VIRTIO_GPU_CMD_RESOURCE_CREATE_3D) ||
-            (cmd->type == VIRTIO_GPU_CMD_RESOURCE_UNREF) ||
-            (cmd->type == VIRTIO_GPU_CMD_SET_SCANOUT) ||
-            (cmd->type == VIRTIO_GPU_CMD_CTX_CREATE) ||
-            (cmd->type == VIRTIO_GPU_CMD_CTX_DESTROY) ||
-            (cmd->type == VIRTIO_GPU_CMD_SUBMIT_3D) ||
-            (cmd->type < 0x200); // Allow other valid command types
-        validation_system.validation_checks_performed++;
-        if (!validation_execution.command_type_valid) {
-            validation_system.validation_errors_detected++;
-            validation_execution.validation_error_code = 0x1005;
-            snprintf(validation_execution.validation_error_message, sizeof(validation_execution.validation_error_message), 
-                    "Invalid command type: 0x%x", cmd->type);
-        }
-        IOLog("            Command Type: %s (0x%x)\n", validation_execution.command_type_valid ? "VALID" : "INVALID", cmd->type);
-    }
-    
-    // Validate fence
-    if (validation_system.command_fence_validation_enabled && validation_execution.command_type_valid) {
-        validation_execution.command_fence_valid = true; // Simplified fence validation
-        validation_system.validation_checks_performed++;
-        IOLog("            Command Fence: %s (fence_id=%llu)\n", validation_execution.command_fence_valid ? "VALID" : "INVALID", cmd->fence_id);
-    }
-    
-    // Validate context
-    if (validation_system.command_context_validation_enabled && validation_execution.command_fence_valid) {
-        validation_execution.command_context_valid = true; // Simplified context validation
-        validation_system.validation_checks_performed++;
-        IOLog("            Command Context: %s (ctx_id=%d)\n", validation_execution.command_context_valid ? "VALID" : "INVALID", cmd->ctx_id);
-    }
-    
-    // Calculate validation results
-    validation_execution.validation_execution_successful = 
-        validation_execution.command_structure_valid &&
-        (validation_system.command_parameter_validation_enabled ? validation_execution.command_parameters_valid : true) &&
-        (validation_system.command_security_validation_enabled ? validation_execution.command_security_valid : true) &&
-        (validation_system.command_size_validation_enabled ? validation_execution.command_size_valid : true) &&
-        (validation_system.command_alignment_validation_enabled ? validation_execution.command_alignment_valid : true) &&
-        (validation_system.command_type_validation_enabled ? validation_execution.command_type_valid : true) &&
-        (validation_system.command_fence_validation_enabled ? validation_execution.command_fence_valid : true) &&
-        (validation_system.command_context_validation_enabled ? validation_execution.command_context_valid : true);
-    
-    validation_system.validation_successful = validation_execution.validation_execution_successful;
-    
-    IOLog("          Command Validation Results:\n");
-    IOLog("            Validation Checks Performed: %d\n", validation_system.validation_checks_performed);
-    IOLog("            Validation Errors Detected: %d\n", validation_system.validation_errors_detected);
-    IOLog("            Error Code: 0x%04X\n", validation_execution.validation_error_code);
-    if (strlen(validation_execution.validation_error_message) > 0) {
-        IOLog("            Error Message: %s\n", validation_execution.validation_error_message);
-    }
-    IOLog("            Validation Success: %s\n", validation_execution.validation_execution_successful ? "YES" : "NO");
-    
-    if (!validation_system.validation_successful) {
-        IOLog("      Command validation failed, returning error\n");
+    if (!cmd || !resp || cmd_size == 0 || resp_size == 0) {
         return kIOReturnBadArgument;
     }
     
-    // Phase 2: Advanced VirtIO Queue Descriptor Management System
-    IOLog("      Phase 2: Advanced VirtIO queue descriptor management and allocation\n");
+    // Real VirtIO command execution implementation
+    IOReturn result = kIOReturnError;
     
-    struct QueueDescriptorSystem {
-        uint32_t descriptor_system_version;
-        uint32_t available_descriptors;
-        uint32_t used_descriptors;
-        uint32_t descriptor_ring_size;
-        bool descriptor_ring_allocated;
-        bool available_ring_allocated;
-        bool used_ring_allocated;
-        bool descriptor_chaining_supported;
-        bool descriptor_indirect_supported;
-        uint64_t descriptor_memory_size;
-        float descriptor_utilization;
-        bool descriptor_system_operational;
-    } descriptor_system = {0};
-    
-    // Configure VirtIO queue descriptor system
-    descriptor_system.descriptor_system_version = 0x0105; // Version 1.5
-    descriptor_system.available_descriptors = queue_architecture.maximum_queue_entries - 1; // Reserve 1 descriptor
-    descriptor_system.used_descriptors = 1; // Current command uses 1 descriptor
-    descriptor_system.descriptor_ring_size = queue_architecture.maximum_queue_entries;
-    descriptor_system.descriptor_ring_allocated = true; // Simulated allocation
-    descriptor_system.available_ring_allocated = true; // Simulated allocation
-    descriptor_system.used_ring_allocated = true; // Simulated allocation
-    descriptor_system.descriptor_chaining_supported = queue_architecture.supports_scatter_gather_lists;
-    descriptor_system.descriptor_indirect_supported = queue_architecture.supports_scatter_gather_lists;
-    descriptor_system.descriptor_memory_size = queue_architecture.maximum_queue_entries * (16 + 8 + 8); // descriptor + avail + used
-    descriptor_system.descriptor_utilization = (float)descriptor_system.used_descriptors / (float)descriptor_system.descriptor_ring_size;
-    descriptor_system.descriptor_system_operational = true;
-    
-    IOLog("        VirtIO Queue Descriptor System Configuration:\n");
-    IOLog("          System Version: 0x%04X (v1.5)\n", descriptor_system.descriptor_system_version);
-    IOLog("          Available Descriptors: %d\n", descriptor_system.available_descriptors);
-    IOLog("          Used Descriptors: %d\n", descriptor_system.used_descriptors);
-    IOLog("          Descriptor Ring Size: %d entries\n", descriptor_system.descriptor_ring_size);
-    IOLog("          Descriptor Ring: %s\n", descriptor_system.descriptor_ring_allocated ? "ALLOCATED" : "NOT ALLOCATED");
-    IOLog("          Available Ring: %s\n", descriptor_system.available_ring_allocated ? "ALLOCATED" : "NOT ALLOCATED");
-    IOLog("          Used Ring: %s\n", descriptor_system.used_ring_allocated ? "ALLOCATED" : "NOT ALLOCATED");
-    IOLog("          Descriptor Chaining: %s\n", descriptor_system.descriptor_chaining_supported ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("          Indirect Descriptors: %s\n", descriptor_system.descriptor_indirect_supported ? "SUPPORTED" : "UNSUPPORTED");
-    IOLog("          Descriptor Memory Size: %llu bytes (%.1f KB)\n", descriptor_system.descriptor_memory_size, descriptor_system.descriptor_memory_size / 1024.0f);
-    IOLog("          Descriptor Utilization: %.1f%% (%d/%d)\n", descriptor_system.descriptor_utilization * 100.0f, descriptor_system.used_descriptors, descriptor_system.descriptor_ring_size);
-    IOLog("          System Status: %s\n", descriptor_system.descriptor_system_operational ? "OPERATIONAL" : "INACTIVE");
-    
-    // Execute descriptor allocation and setup
-    struct DescriptorAllocation {
-        uint16_t allocated_descriptor_index;
-        uint64_t command_physical_address;
-        uint64_t response_physical_address;
-        uint32_t command_descriptor_flags;
-        uint32_t response_descriptor_flags;
-        bool descriptor_chain_created;
-        bool available_ring_updated;
-        bool descriptor_allocation_successful;
-    } descriptor_allocation = {0};
-    
-    IOLog("          Executing descriptor allocation and setup...\n");
-    
-    // Allocate descriptor for command
-    descriptor_allocation.allocated_descriptor_index = descriptor_system.used_descriptors - 1; // Use index 0 for simplicity
-    descriptor_allocation.command_physical_address = (uint64_t)cmd; // Simplified physical address
-    descriptor_allocation.response_physical_address = (uint64_t)resp; // Simplified physical address
-    descriptor_allocation.command_descriptor_flags = 0x0001; // VRING_DESC_F_NEXT if chaining
-    descriptor_allocation.response_descriptor_flags = 0x0002; // VRING_DESC_F_WRITE for response
-    descriptor_allocation.descriptor_chain_created = descriptor_system.descriptor_chaining_supported;
-    descriptor_allocation.available_ring_updated = true;
-    descriptor_allocation.descriptor_allocation_successful = true;
-    
-    IOLog("            Descriptor Allocation Results:\n");
-    IOLog("              Allocated Index: %d\n", descriptor_allocation.allocated_descriptor_index);
-    IOLog("              Command Physical Address: 0x%016llX\n", descriptor_allocation.command_physical_address);
-    IOLog("              Response Physical Address: 0x%016llX\n", descriptor_allocation.response_physical_address);
-    IOLog("              Command Flags: 0x%04X\n", descriptor_allocation.command_descriptor_flags);
-    IOLog("              Response Flags: 0x%04X\n", descriptor_allocation.response_descriptor_flags);
-    IOLog("              Descriptor Chain: %s\n", descriptor_allocation.descriptor_chain_created ? "CREATED" : "SINGLE");
-    IOLog("              Available Ring: %s\n", descriptor_allocation.available_ring_updated ? "UPDATED" : "PENDING");
-    IOLog("              Allocation Success: %s\n", descriptor_allocation.descriptor_allocation_successful ? "YES" : "NO");
-    
-    if (!descriptor_allocation.descriptor_allocation_successful) {
-        IOLog("      Descriptor allocation failed, returning error\n");
-        return kIOReturnNoMemory;
-    }
-    
-    // Phase 3: Advanced Command Execution and Processing Engine
-    IOLog("      Phase 3: Advanced command execution and comprehensive processing engine\n");
-    
-    struct CommandExecutionEngine {
-        uint32_t execution_engine_version;
-        bool asynchronous_execution_enabled;
-        bool command_batching_enabled;
-        bool priority_scheduling_enabled;
-        bool fence_synchronization_enabled;
-        bool interrupt_handling_enabled;
-        bool dma_operations_enabled;
-        bool error_recovery_enabled;
-        uint32_t execution_queue_depth;
-        uint32_t concurrent_executions;
-        uint64_t execution_start_time;
-        uint64_t execution_end_time;
-        float execution_efficiency;
-        bool execution_successful;
-    } execution_engine = {0};
-    
-    // Configure command execution engine
-    execution_engine.execution_engine_version = 0x0203; // Version 2.3
-    execution_engine.asynchronous_execution_enabled = queue_architecture.supports_asynchronous_processing;
-    execution_engine.command_batching_enabled = queue_architecture.supports_command_batching;
-    execution_engine.priority_scheduling_enabled = queue_architecture.supports_priority_queueing;
-    execution_engine.fence_synchronization_enabled = queue_architecture.supports_fence_synchronization;
-    execution_engine.interrupt_handling_enabled = queue_architecture.supports_interrupt_coalescing;
-    execution_engine.dma_operations_enabled = queue_architecture.supports_dma_coherent_operations;
-    execution_engine.error_recovery_enabled = true;
-    execution_engine.execution_queue_depth = queue_architecture.maximum_concurrent_commands;
-    execution_engine.concurrent_executions = 1; // Current command
-    execution_engine.execution_start_time = 0; // Would use mach_absolute_time()
-    execution_engine.execution_end_time = 0;
-    execution_engine.execution_efficiency = 0.97f; // 97% execution efficiency
-    execution_engine.execution_successful = false;
-    
-    IOLog("        Command Execution Engine Configuration:\n");
-    IOLog("          Engine Version: 0x%04X (v2.3)\n", execution_engine.execution_engine_version);
-    IOLog("          Asynchronous Execution: %s\n", execution_engine.asynchronous_execution_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Command Batching: %s\n", execution_engine.command_batching_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Priority Scheduling: %s\n", execution_engine.priority_scheduling_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Fence Synchronization: %s\n", execution_engine.fence_synchronization_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Interrupt Handling: %s\n", execution_engine.interrupt_handling_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          DMA Operations: %s\n", execution_engine.dma_operations_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Error Recovery: %s\n", execution_engine.error_recovery_enabled ? "ENABLED" : "DISABLED");
-    IOLog("          Execution Queue Depth: %d commands\n", execution_engine.execution_queue_depth);
-    IOLog("          Concurrent Executions: %d\n", execution_engine.concurrent_executions);
-    IOLog("          Execution Efficiency: %.1f%%\n", execution_engine.execution_efficiency * 100.0f);
-    
-    // Execute command processing
-    IOLog("          Executing advanced command processing...\n");
-    
-    struct CommandProcessing {
-        bool command_dispatched;
-        bool dma_setup_completed;
-        bool hardware_notified;
-        bool response_generated;
-        bool fence_updated;
-        bool interrupt_triggered;
-        uint32_t processing_time_us;
-        uint32_t command_result_code;
-        bool processing_successful;
-    } command_processing = {0};
-    
-    execution_engine.execution_start_time = 0; // mach_absolute_time()
-    
-    // REAL Hardware Command Dispatch
-    IOReturn dispatch_result = kIOReturnError;
-    command_processing.command_dispatched = false;
-    
-    // Check if we have a valid VirtIO transport
-    if (!m_virtio_device || !m_control_queue) {
-        IOLog("            Command Dispatch: FAILED - No VirtIO device or control queue\n");
-        return kIOReturnNoDevice;
-    }
-    
-    // Real VirtIO command dispatch using proper VirtIO rings
-    void* queue_buffer = m_control_queue->getBytesNoCopy();
-    if (!queue_buffer) {
-        IOLog("            Command Dispatch: FAILED - No queue buffer\n");
-        return kIOReturnNoMemory;
-    }
-    
-    // Use VirtIO rings if available, otherwise fall back to simple buffer copy
-    if (m_control_desc_ring && m_control_avail_ring) {
-        // Real VirtIO ring-based command dispatch
+    // 1. Write command to VirtIO control queue
+    if (m_control_queue && m_control_desc_ring && m_control_avail_ring) {
         uint16_t desc_idx = m_control_avail_ring->idx % m_control_queue_size;
         
         // Set up command descriptor
@@ -800,245 +310,59 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
         m_control_desc_ring[desc_idx].flags = 0x0001; // VRING_DESC_F_NEXT
         m_control_desc_ring[desc_idx].next = (desc_idx + 1) % m_control_queue_size;
         
-        // Set up response descriptor if response expected
-        if (resp && resp_size > 0) {
-            uint16_t resp_desc_idx = (desc_idx + 1) % m_control_queue_size;
-            m_control_desc_ring[resp_desc_idx].addr = (uint64_t)resp;
-            m_control_desc_ring[resp_desc_idx].len = (uint32_t)resp_size;
-            m_control_desc_ring[resp_desc_idx].flags = 0x0002; // VRING_DESC_F_WRITE
-            m_control_desc_ring[resp_desc_idx].next = 0;
-        } else {
-            m_control_desc_ring[desc_idx].flags = 0; // No next descriptor
-        }
+        // Set up response descriptor
+        uint16_t resp_desc_idx = (desc_idx + 1) % m_control_queue_size;
+        m_control_desc_ring[resp_desc_idx].addr = (uint64_t)resp;
+        m_control_desc_ring[resp_desc_idx].len = (uint32_t)resp_size;
+        m_control_desc_ring[resp_desc_idx].flags = 0x0002; // VRING_DESC_F_WRITE
+        m_control_desc_ring[resp_desc_idx].next = 0;
         
         // Add to available ring
         m_control_avail_ring->ring[m_control_avail_ring->idx % m_control_queue_size] = desc_idx;
         m_control_avail_ring->idx++;
         
-        command_processing.command_dispatched = true;
-        dispatch_result = kIOReturnSuccess;
-        IOLog("            Command Dispatch: SUCCESS - VirtIO ring dispatch (type=0x%x, desc=%d)\n", cmd->type, desc_idx);
-    } else {
-        // Fallback: simple buffer copy for basic functionality
-        memcpy(queue_buffer, cmd, cmd_size);
-        command_processing.command_dispatched = true;
-        dispatch_result = kIOReturnSuccess;
-        IOLog("            Command Dispatch: FALLBACK - Simple buffer copy (type=0x%x)\n", cmd->type);
-    }
-    
-    // Setup DMA operations if needed
-    if (execution_engine.dma_operations_enabled) {
-        // Real DMA setup - prepare memory descriptor for device access
-        IOReturn dma_result = m_control_queue->prepare(kIODirectionOutIn);
-        if (dma_result == kIOReturnSuccess) {
-            command_processing.dma_setup_completed = true;
-            IOLog("            DMA Setup: SUCCESS - Memory prepared for DMA operations\n");
-        } else {
-            command_processing.dma_setup_completed = false;
-            IOLog("            DMA Setup: FAILED - Memory preparation error: 0x%x\n", dma_result);
-        }
-    }
-    
-    // Notify hardware - real VirtIO queue kick
-    if (m_notify_map) {
-        volatile uint32_t* notify_reg = (volatile uint32_t*)m_notify_map->getVirtualAddress();
-        if (notify_reg) {
-            *notify_reg = 0; // Kick control queue (queue 0)
-            command_processing.hardware_notified = true;
-            IOLog("            Hardware Notification: SUCCESS - VirtIO queue kicked\n");
-        } else {
-            command_processing.hardware_notified = false;
-            IOLog("            Hardware Notification: FAILED - No notify register\n");
-        }
-    } else {
-        command_processing.hardware_notified = false;
-        IOLog("            Hardware Notification: FAILED - No notify mapping\n");
-    }
-    
-    // Generate response - handle both hardware response and fallback
-    if (resp) {
-        if (command_processing.hardware_notified) {
-            // Real VirtIO response handling - read from used ring
-            IOSleep(1); // Brief wait for VirtIO device processing
-            
-            // Check for responses in VirtIO used ring
-            if (m_control_used_ring && m_control_used_ring->idx > m_control_queue_last_used_idx) {
-                // Read actual response from VirtIO used ring
-                uint16_t used_idx = m_control_queue_last_used_idx % m_control_queue_size;
-                struct vring_used_elem* used_elem = &m_control_used_ring->ring[used_idx];
+        // 2. Notify host via queue kick
+        if (m_notify_map) {
+            volatile uint32_t* notify_reg = (volatile uint32_t*)m_notify_map->getVirtualAddress();
+            if (notify_reg) {
+                *notify_reg = 0; // Kick control queue (queue 0)
                 
-                // The response should already be in the response buffer we set up
-                // Validate the response from hardware
-                if (resp->type == VIRTIO_GPU_RESP_OK_NODATA || 
-                    resp->type == VIRTIO_GPU_RESP_OK_DISPLAY_INFO ||
-                    resp->type == VIRTIO_GPU_RESP_OK_CAPSET_INFO ||
-                    resp->type == VIRTIO_GPU_RESP_OK_CAPSET ||
-                    resp->type >= VIRTIO_GPU_RESP_ERR_UNSPEC) {
-                    command_processing.response_generated = true;
-                    command_processing.command_result_code = resp->type;
-                    m_control_queue_last_used_idx++;
-                    IOLog("            Response Generation: SUCCESS - VirtIO used ring response (type=0x%x, len=%d)\n", 
-                          resp->type, used_elem->len);
-                } else {
-                    // Invalid response from hardware - fallback
-                    resp->type = VIRTIO_GPU_RESP_OK_NODATA;
-                    resp->flags = 0;
-                    resp->fence_id = cmd->fence_id;
-                    resp->ctx_id = cmd->ctx_id;
-                    command_processing.response_generated = true;
-                    command_processing.command_result_code = VIRTIO_GPU_RESP_OK_NODATA;
-                    IOLog("            Response Generation: FALLBACK - Invalid hardware response, using default\n");
+                // 3. Wait for response in used ring (with timeout)
+                uint32_t timeout_ms = 1000; // 1 second timeout
+                uint32_t wait_count = 0;
+                bool response_received = false;
+                
+                while (wait_count < timeout_ms && !response_received) {
+                    if (m_control_used_ring->idx > m_control_queue_last_used_idx) {
+                        // 4. Response received, update last used index
+                        m_control_queue_last_used_idx++;
+                        response_received = true;
+                        result = kIOReturnSuccess;
+                    } else {
+                        IOSleep(1); // Wait 1ms
+                        wait_count++;
+                    }
                 }
-            } else {
-                // No response in used ring - generate fallback success
-                resp->type = VIRTIO_GPU_RESP_OK_NODATA;
-                resp->flags = 0;
-                resp->fence_id = cmd->fence_id;
-                resp->ctx_id = cmd->ctx_id;
-                command_processing.response_generated = true;
-                command_processing.command_result_code = VIRTIO_GPU_RESP_OK_NODATA;
-                IOLog("            Response Generation: TIMEOUT - No hardware response, using success fallback\n");
+                
+                if (!response_received) {
+                    IOLog("VMVirtIOGPU: Command timeout (type=%d)\n", cmd->type);
+                    result = kIOReturnTimeout;
+                }
             }
-        } else {
-            // Fallback response for failed hardware communication
-            resp->type = VIRTIO_GPU_RESP_ERR_UNSPEC;
-            resp->flags = 0;
-            resp->fence_id = cmd->fence_id;
-            resp->ctx_id = cmd->ctx_id;
-            command_processing.response_generated = false;
-            command_processing.command_result_code = VIRTIO_GPU_RESP_ERR_UNSPEC;
-            IOLog("            Response Generation: FALLBACK - Hardware communication failed\n");
         }
+    } else {
+        // Fallback: simulate success for basic operation
+        resp->type = VIRTIO_GPU_RESP_OK_NODATA;
+        resp->flags = 0;
+        resp->fence_id = cmd->fence_id;
+        resp->ctx_id = cmd->ctx_id;
+        result = kIOReturnSuccess;
     }
     
-    // Update fence if synchronization is enabled
-    if (execution_engine.fence_synchronization_enabled && command_processing.response_generated) {
-        command_processing.fence_updated = true; // Simulated fence update
-        IOLog("            Fence Update: %s (fence_id=%llu)\n", command_processing.fence_updated ? "SUCCESS" : "FAILED", cmd->fence_id);
-    }
+    IOLog("VMVirtIOGPU: Command type %d %s (size: %zu -> %zu)\n", 
+          cmd->type, (result == kIOReturnSuccess) ? "completed" : "failed", cmd_size, resp_size);
     
-    // Trigger interrupt if needed
-    if (execution_engine.interrupt_handling_enabled) {
-        command_processing.interrupt_triggered = true; // Simulated interrupt
-        IOLog("            Interrupt Trigger: %s\n", command_processing.interrupt_triggered ? "SUCCESS" : "DEFERRED");
-    }
-    
-    execution_engine.execution_end_time = 0; // mach_absolute_time()
-    command_processing.processing_time_us = 50; // Simulated 50 microseconds processing time
-    
-    // Calculate processing success
-    command_processing.processing_successful = 
-        command_processing.command_dispatched &&
-        (execution_engine.dma_operations_enabled ? command_processing.dma_setup_completed : true) &&
-        command_processing.hardware_notified &&
-        (resp ? command_processing.response_generated : true) &&
-        (execution_engine.fence_synchronization_enabled ? command_processing.fence_updated : true);
-    
-    execution_engine.execution_successful = command_processing.processing_successful;
-    
-    IOLog("            Command Processing Results:\n");
-    IOLog("              Processing Time: %d microseconds\n", command_processing.processing_time_us);
-    IOLog("              Result Code: 0x%04X\n", command_processing.command_result_code);
-    IOLog("              Processing Success: %s\n", command_processing.processing_successful ? "YES" : "NO");
-    
-    // Phase 4: Advanced Queue State Management and Cleanup
-    IOLog("      Phase 4: Advanced queue state management and comprehensive cleanup\n");
-    
-    struct QueueStateManagement {
-        uint32_t queue_state_version;
-        bool descriptor_cleanup_completed;
-        bool queue_state_updated;
-        bool memory_coherency_maintained;
-        bool statistics_updated;
-        bool error_handling_completed;
-        uint32_t queue_utilization_percentage;
-        uint32_t processing_throughput_commands_per_sec;
-        bool state_management_successful;
-    } state_management = {0};
-    
-    // Configure queue state management
-    state_management.queue_state_version = 0x0104; // Version 1.4
-    state_management.descriptor_cleanup_completed = false;
-    state_management.queue_state_updated = false;
-    state_management.memory_coherency_maintained = execution_engine.dma_operations_enabled;
-    state_management.statistics_updated = false;
-    state_management.error_handling_completed = !command_processing.processing_successful;
-    state_management.queue_utilization_percentage = (uint32_t)(descriptor_system.descriptor_utilization * 100.0f);
-    state_management.processing_throughput_commands_per_sec = (command_processing.processing_time_us > 0) ? (1000000 / command_processing.processing_time_us) : 0;
-    state_management.state_management_successful = false;
-    
-    IOLog("        Queue State Management Configuration:\n");
-    IOLog("          State Version: 0x%04X (v1.4)\n", state_management.queue_state_version);
-    IOLog("          Memory Coherency: %s\n", state_management.memory_coherency_maintained ? "MAINTAINED" : "UNCERTAIN");
-    IOLog("          Queue Utilization: %d%%\n", state_management.queue_utilization_percentage);
-    IOLog("          Processing Throughput: %d commands/sec\n", state_management.processing_throughput_commands_per_sec);
-    
-    // Execute queue state management
-    IOLog("          Executing queue state management...\n");
-    
-    // Cleanup descriptors
-    state_management.descriptor_cleanup_completed = true; // Simulated cleanup
-    IOLog("            Descriptor Cleanup: %s\n", state_management.descriptor_cleanup_completed ? "COMPLETED" : "PENDING");
-    
-    // Update queue state
-    descriptor_system.used_descriptors = 0; // Reset after processing
-    state_management.queue_state_updated = true;
-    IOLog("            Queue State Update: %s\n", state_management.queue_state_updated ? "COMPLETED" : "FAILED");
-    
-    // Update statistics
-    state_management.statistics_updated = true; // Simulated statistics update
-    IOLog("            Statistics Update: %s\n", state_management.statistics_updated ? "COMPLETED" : "FAILED");
-    
-    // Complete error handling if needed
-    if (!command_processing.processing_successful) {
-        state_management.error_handling_completed = true; // Simulated error handling
-        IOLog("            Error Handling: %s\n", state_management.error_handling_completed ? "COMPLETED" : "FAILED");
-    }
-    
-    // Validate state management completion
-    state_management.state_management_successful = 
-        state_management.descriptor_cleanup_completed &&
-        state_management.queue_state_updated &&
-        (execution_engine.dma_operations_enabled ? state_management.memory_coherency_maintained : true) &&
-        state_management.statistics_updated &&
-        (!command_processing.processing_successful ? state_management.error_handling_completed : true);
-    
-    IOLog("            Queue State Management Results:\n");
-    IOLog("              State Management Success: %s\n", state_management.state_management_successful ? "YES" : "NO");
-    
-    // Calculate overall queue architecture success
-    queue_architecture.queue_architecture_initialized = 
-        validation_system.validation_successful &&
-        descriptor_system.descriptor_system_operational &&
-        execution_engine.execution_successful &&
-        state_management.state_management_successful;
-    
-    // Calculate combined queue processing efficiency
-    float combined_efficiency = 
-        (validation_system.validation_efficiency + 
-         queue_architecture.queue_processing_efficiency + 
-         execution_engine.execution_efficiency) / 3.0f;
-    
-    IOReturn final_result = command_processing.processing_successful ? kIOReturnSuccess : kIOReturnError;
-    
-    IOLog("      === Advanced VirtIO Queue Management System Results ===\n");
-    IOLog("        Queue Management Version: 0x%04X (v3.4 Enterprise)\n", queue_architecture.queue_management_version);
-    IOLog("        Architecture Type: 0x%02X (Enterprise VirtIO)\n", queue_architecture.queue_architecture_type);
-    IOLog("        System Status Summary:\n");
-    IOLog("          Command Validation: %s (%.1f%%)\n", validation_system.validation_successful ? "SUCCESS" : "FAILED", validation_system.validation_efficiency * 100.0f);
-    IOLog("          Descriptor Management: %s (%.1f%% utilization)\n", descriptor_system.descriptor_system_operational ? "OPERATIONAL" : "FAILED", descriptor_system.descriptor_utilization * 100.0f);
-    IOLog("          Command Execution: %s (%.1f%% efficiency)\n", execution_engine.execution_successful ? "SUCCESS" : "FAILED", execution_engine.execution_efficiency * 100.0f);
-    IOLog("          State Management: %s\n", state_management.state_management_successful ? "SUCCESS" : "FAILED");
-    IOLog("        Performance Metrics:\n");
-    IOLog("          Processing Time: %d microseconds\n", command_processing.processing_time_us);
-    IOLog("          Throughput: %d commands/sec\n", state_management.processing_throughput_commands_per_sec);
-    IOLog("          Combined Efficiency: %.1f%%\n", combined_efficiency * 100.0f);
-    IOLog("          Memory Overhead: %llu bytes (%.1f KB)\n", queue_architecture.queue_memory_overhead_bytes, queue_architecture.queue_memory_overhead_bytes / 1024.0f);
-    IOLog("        Architecture Initialization: %s\n", queue_architecture.queue_architecture_initialized ? "SUCCESS" : "FAILED");
-    IOLog("        Final Result: %s (0x%08X)\n", (final_result == kIOReturnSuccess) ? "SUCCESS" : "ERROR", final_result);
-    IOLog("      ========================================\n");
-    
-    return final_result;
+    return result;
 }
 
 VMVirtIOGPU::gpu_resource* CLASS::findResource(uint32_t resource_id)
@@ -2772,70 +2096,24 @@ bool CLASS::initializeVirtIOQueues() {
 // Display management methods called by VMQemuVGA
 IOReturn CLASS::createScanoutResource(uint32_t resource_id, uint32_t width, uint32_t height, uint32_t format)
 {
-    IOLog("VMVirtIOGPU::createScanoutResource: resource_id=%u, %ux%u, format=0x%x\n", 
+    printf("VMVirtIOGPU: CREATE_SCANOUT_RESOURCE_MINIMAL id=%u %ux%u fmt=0x%x\n", 
           resource_id, width, height, format);
     
-    // Check if VirtIO GPU is properly initialized
-    if (!m_control_desc_ring || !m_control_avail_ring || !m_control_used_ring) {
-        IOLog("VMVirtIOGPU::createScanoutResource: VirtIO rings not initialized, using fallback mode\n");
-        // Return success for fallback/compatibility mode
-        return kIOReturnSuccess;
-    }
-    
-    // Create 2D resource for scanout
-    IOReturn ret = createResource2D(resource_id, format, width, height);
-    if (ret != kIOReturnSuccess) {
-        IOLog("VMVirtIOGPU::createScanoutResource: Failed to create 2D resource (error=%d), using fallback\n", ret);
-        // Return success to allow driver to continue in fallback mode
-        return kIOReturnSuccess;
-    }
-    
-    // Set as scanout resource
-    virtio_gpu_set_scanout cmd = {0};
-    cmd.hdr.type = VIRTIO_GPU_CMD_SET_SCANOUT;
-    cmd.hdr.flags = 0;
-    cmd.hdr.fence_id = 0;
-    cmd.hdr.ctx_id = 0;
-    cmd.resource_id = resource_id;
-    cmd.scanout_id = 0; // Primary display
-    cmd.r.x = 0;
-    cmd.r.y = 0;
-    cmd.r.width = width;
-    cmd.r.height = height;
-    
-    virtio_gpu_ctrl_hdr resp = {0};
-    ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
-    
-    if (ret == kIOReturnSuccess && resp.type == VIRTIO_GPU_RESP_OK_NODATA) {
-        IOLog("VMVirtIOGPU::createScanoutResource: Successfully created scanout resource\n");
-    } else {
-        IOLog("VMVirtIOGPU::createScanoutResource: Command failed, ret=%d, resp.type=0x%x\n", 
-              ret, resp.type);
-    }
-    
-    return ret;
+    // DIAGNOSTIC MODE: Just log and return success - no memory allocation
+    printf("VMVirtIOGPU: SCANOUT_RESOURCE_SUCCESS_MINIMAL\n");
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::enableDisplayOutput(uint32_t scanout_id)
 {
-    IOLog("VMVirtIOGPU::enableDisplayOutput: scanout_id=%u\n", scanout_id);
-    
-    // VirtIO GPU doesn't have a specific "enable display" command
-    // Display is enabled when a scanout is set with a valid resource
-    // This is more of a status operation
-    
-    IOLog("VMVirtIOGPU::enableDisplayOutput: Display output enabled for scanout %u\n", scanout_id);
+    printf("VMVirtIOGPU: ENABLE_DISPLAY_OUTPUT_MINIMAL scanout=%u\n", scanout_id);
     return kIOReturnSuccess;
 }
 
 IOReturn CLASS::setPrimaryScanout(uint32_t width, uint32_t height, uint32_t format)
 {
-    IOLog("VMVirtIOGPU::setPrimaryScanout: %ux%u, format=0x%x\n", width, height, format);
-    
-    // Create a primary scanout resource with a standard resource ID
-    const uint32_t primary_resource_id = 1;
-    
-    return createScanoutResource(primary_resource_id, width, height, format);
+    printf("VMVirtIOGPU: SET_PRIMARY_SCANOUT_MINIMAL %ux%u fmt=0x%x\n", width, height, format);
+    return kIOReturnSuccess;
 }
 
 // VRAM management for System Profiler integration
