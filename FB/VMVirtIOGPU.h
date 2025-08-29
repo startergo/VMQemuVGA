@@ -115,6 +115,9 @@ private:
     bool checkResponseReady();
     IOReturn processControlQueue();
     
+    // Boot-safe operations
+    void enableFullVirtIOOperations();
+    
     // Resource management
     IOReturn createResource2D(uint32_t resource_id, uint32_t format, 
                              uint32_t width, uint32_t height);
@@ -152,6 +155,9 @@ public:
     virtual void stop(IOService* provider) override;
     virtual bool init(OSDictionary* properties = nullptr) override;
     virtual void free() override;
+    
+    // Safe PCI device configuration (call after boot)
+    IOReturn configurePCIDevice(IOPCIDevice* pciDevice);
     
     // 3D acceleration interface
     IOReturn allocateResource3D(uint32_t* resource_id, uint32_t target, uint32_t format,
