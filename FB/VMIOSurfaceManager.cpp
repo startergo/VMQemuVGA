@@ -1191,7 +1191,7 @@ IOReturn CLASS::configureMemoryPools()
     } pool_configs[] = {
         { 1 * 1024 * 1024,   "Small" },    // 1MB pool
         { 4 * 1024 * 1024,   "Medium" },   // 4MB pool
-        { 16 * 1024 * 1024,  "Large" },    // 16MB pool
+        { 512 * 1024 * 1024,  "Large" },    // 512MB pool (matches VRAM size)
         { 64 * 1024 * 1024,  "XLarge" },   // 64MB pool
         { 0, nullptr }
     };
@@ -4812,42 +4812,104 @@ IOReturn CLASS::validatePixelFormat(VMIOSurfacePixelFormat format)
     }
 }
 
+// Include helper method implementations
+//#include "VMIOSurfaceManager_Helpers.cpp"
+
 // =============================================================================
 
-
-OSObject* VMIOSurfaceManager::findSurface(uint32_t surface_id) {
-    IOLog("VMIOSurfaceManager::findSurface: surface_id=%u (stub)\n", surface_id);
-    return nullptr;
+// Missing method implementations for Snow Leopard symbol resolution
+OSObject* CLASS::findSurface(uint32_t surface_id)
+{
+    IOLog("VMIOSurfaceManager: Finding surface ID %u\n", surface_id);
+    
+    // Stub implementation for Snow Leopard compatibility
+    if (!m_surface_map || surface_id == 0) {
+        return nullptr;
+    }
+    
+    char key_str[32];
+    snprintf(key_str, sizeof(key_str), "%u", surface_id);
+    
+    OSObject* surface_obj = m_surface_map->getObject(key_str);
+    if (surface_obj) {
+        IOLog("VMIOSurfaceManager: Found surface %u\n", surface_id);
+    } else {
+        IOLog("VMIOSurfaceManager: Surface %u not found\n", surface_id);
+    }
+    
+    return surface_obj;
 }
 
-uint32_t VMIOSurfaceManager::allocateSurfaceId() {
-    IOLog("VMIOSurfaceManager::allocateSurfaceId (stub)\n");
-    return 1000; // Return a dummy ID
-}
-
-void VMIOSurfaceManager::releaseSurfaceId(uint32_t surface_id) {
-    IOLog("VMIOSurfaceManager::releaseSurfaceId: surface_id=%u (stub)\n", surface_id);
-}
-
-uint32_t VMIOSurfaceManager::calculateSurfaceSize(const VMIOSurfaceDescriptor* descriptor) {
-    IOLog("VMIOSurfaceManager::calculateSurfaceSize: descriptor=%p (stub)\n", descriptor);
-    return descriptor ? (descriptor->width * descriptor->height * 4) : 0; // Assume 32-bit RGBA
-}
-
-IOReturn VMIOSurfaceManager::allocateSurfaceMemory(const VMIOSurfaceDescriptor* descriptor, IOMemoryDescriptor** memory) {
-    IOLog("VMIOSurfaceManager::allocateSurfaceMemory: descriptor=%p (stub)\n", descriptor);
-    if (memory) *memory = nullptr;
-    return kIOReturnSuccess;
-}
-
-IOReturn VMIOSurfaceManager::setupPlaneInfo(VMIOSurfacePixelFormat format, uint32_t width, uint32_t height, VMIOSurfacePlaneInfo* plane_info, uint32_t* plane_count) {
-    IOLog("VMIOSurfaceManager::setupPlaneInfo: format=0x%x, %ux%u (stub)\n", format, width, height);
-    if (plane_count) *plane_count = 1; // Assume single plane
+IOReturn CLASS::setupPlaneInfo(VMIOSurfacePixelFormat format, uint32_t width, uint32_t height, 
+                               VMIOSurfacePlaneInfo* plane_info, uint32_t* plane_count)
+{
+    IOLog("VMIOSurfaceManager: Setting up plane info for format 0x%x, %ux%u\n", 
+          format, width, height);
+    
+    // Stub implementation for Snow Leopard compatibility
+    if (plane_count) {
+        *plane_count = 1;  // Single plane for basic formats
+    }
     if (plane_info) {
-        plane_info->bytes_per_element = 4; // Assume 32-bit
-        plane_info->bytes_per_row = width * 4;
-        plane_info->element_width = 1;
-        plane_info->element_height = 1;
+        plane_info->offset = 0;
+        plane_info->bytes_per_row = width * 4; // Assume 4 bytes per pixel
+        plane_info->size = width * height * 4;
     }
     return kIOReturnSuccess;
+}
+
+void CLASS::releaseSurfaceId(uint32_t surface_id)
+{
+    IOLog("VMIOSurfaceManager: Releasing surface ID %u\n", surface_id);
+    
+    // Stub implementation for Snow Leopard compatibility
+    // In a full implementation, this would return the ID to the free pool
+}
+
+uint32_t CLASS::allocateSurfaceId()
+{
+    // Return a simple incremental ID for Snow Leopard compatibility
+    static uint32_t next_id = 1;
+    uint32_t id = next_id++;
+    IOLog("VMIOSurfaceManager: Allocated surface ID %u\n", id);
+    return id;
+}
+
+uint32_t CLASS::calculateSurfaceSize(const VMIOSurfaceDescriptor* descriptor)
+{
+    if (!descriptor) {
+        return 0;
+    }
+    
+    IOLog("VMIOSurfaceManager: Calculating size for %ux%u surface, format 0x%x\n", 
+          descriptor->width, descriptor->height, descriptor->pixel_format);
+    
+    // Stub calculation for Snow Leopard compatibility
+    uint32_t bytes_per_pixel = 4; // Assume 4 bytes per pixel
+    uint32_t size = descriptor->width * descriptor->height * bytes_per_pixel;
+    
+    IOLog("VMIOSurfaceManager: Calculated surface size: %u bytes\n", size);
+    return size;
+}
+
+IOReturn CLASS::allocateSurfaceMemory(const VMIOSurfaceDescriptor* descriptor, 
+                                     IOMemoryDescriptor** memory)
+{
+    if (!descriptor || !memory) {
+        return kIOReturnBadArgument;
+    }
+    
+    IOLog("VMIOSurfaceManager: Allocating memory for %ux%u surface\n", 
+          descriptor->width, descriptor->height);
+    
+    // Stub implementation for Snow Leopard compatibility
+    uint32_t size = calculateSurfaceSize(descriptor);
+    *memory = IOBufferMemoryDescriptor::withCapacity(size, kIODirectionInOut);
+    
+    if (*memory) {
+        IOLog("VMIOSurfaceManager: Allocated %u bytes surface memory\n", size);
+        return kIOReturnSuccess;
+    } else {
+        return kIOReturnNoMemory;
+    }
 }

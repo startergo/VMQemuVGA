@@ -2463,7 +2463,7 @@ IOReturn CLASS::initializeGPUMemoryPools()
         {64 * 1024 * 1024, "HighSpeed", true, true},      // 64MB high-speed coherent pool
         {128 * 1024 * 1024, "Standard", true, true},      // 128MB standard pool
         {32 * 1024 * 1024, "Texture", false, true},       // 32MB texture-optimized pool
-        {16 * 1024 * 1024, "Buffer", true, false},        // 16MB buffer pool
+        {512 * 1024 * 1024, "Buffer", true, false},        // 512MB buffer pool (matches VRAM)
         {8 * 1024 * 1024, "Streaming", false, true},      // 8MB streaming pool
         {256 * 1024 * 1024, "Bulk", false, true},         // 256MB bulk transfer pool
         {0, nullptr, false, false}

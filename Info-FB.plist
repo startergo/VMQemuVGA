@@ -35,9 +35,10 @@
 			<key>IOMatchCategory</key>
 			<string>IOFramebuffer</string>
 			<!-- Comprehensive VirtIO GPU and Virtualization Device Support -->
-			<!-- Includes: VirtIO GPU variants, QEMU devices, Hyper-V DDA, VMware SVGA, AMD GPU-V, NVIDIA vGPU, Intel GVT -->
+			<!-- Includes: QEMU devices, Hyper-V DDA, VMware SVGA, AMD GPU-V, NVIDIA vGPU, Intel GVT -->
+			<!-- Excludes: VirtIO GPU devices (handled by VMVirtIOGPU personality) -->
 			<key>IOPCIMatch</key>
-			<string>0x01001b36 0x10501af4 0x10511af4 0x10521af4 0x10531af4 0x10541af4 0x10551af4 0x10561af4 0x10571af4 0x10581af4 0x10591af4 0x105a1af4 0x105b1af4 0x105c1af4 0x105d1af4 0x105e1af4 0x105f1af4 0x40051234 0x11111234 0x11121234 0x05001234 0x04051234 0x04061234 0x04071234 0x04081234 0x04051af4 0x04061af4 0x04071af4 0x04081af4 0x04051b36 0x04061b36 0x04071b36 0x04081b36 0x04059999 0x04069999 0x04079999 0x04089999 0x53531414 0x53541414 0x53551414 0x53561414 0x00581414 0x00591414 0x040515ad 0x040615ad 0x040715ad 0x040815ad 0x0f001002 0x0f011002 0x0f021002 0x0f031002 0x0f0410de 0x0f0510de 0x0f0610de 0x0f0710de 0x01901002 0x01911002 0x01921002 0x01931002 0x01e010de 0x01e110de 0x01e210de 0x01e310de 0x01908086 0x01918086 0x01928086 0x01938086</string>
+			<string>0x10091af4 0x01001b36 0x40051234 0x11111234 0x11121234 0x05001234 0x04051234 0x04061234 0x04071234 0x04081234 0x04051af4 0x04061af4 0x04071af4 0x04081af4 0x04051b36 0x04061b36 0x04071b36 0x04081b36 0x04059999 0x04069999 0x04079999 0x04089999 0x53531414 0x53541414 0x53551414 0x53561414 0x00581414 0x00591414 0x040515ad 0x040615ad 0x040715ad 0x040815ad 0x0f001002 0x0f011002 0x0f021002 0x0f031002 0x0f0410de 0x0f0510de 0x0f0610de 0x0f0710de 0x01901002 0x01911002 0x01921002 0x01931002 0x01e010de 0x01e110de 0x01e210de 0x01e310de 0x01908086 0x01918086 0x01928086 0x01938086</string>
 			<key>IOProbeScore</key>
 			<integer>90000</integer>
 			<key>IOProviderClass</key>
@@ -82,9 +83,9 @@
 			<key>IOClass</key>
 			<string>VMVirtIOGPU</string>
 			<key>IOMatchCategory</key>
-			<string>VMVirtIOGPU</string>
+			<string>IODefaultMatchCategory</string>
 			<key>IOPCIMatch</key>
-			<string>0x10501af4 0x10511af4 0x10521af4 0x10531af4 0x10541af4 0x10551af4 0x01001b36 0x01ff1b36</string>
+			<string>0x10091af4 0x10501af4 0x10511af4 0x10521af4 0x10531af4 0x10541af4 0x10551af4 0x10561af4 0x10571af4 0x10581af4 0x10591af4 0x105a1af4 0x105b1af4 0x105c1af4 0x105d1af4 0x105e1af4 0x105f1af4</string>
 			<key>IOProbeScore</key>
 			<integer>95000</integer>
 			<key>IOProviderClass</key>
@@ -93,6 +94,12 @@
 			<string>1.0.0.0</string>
 			<key>IOHardwareModel</key>
 			<string>VirtIO GPU Acceleration Service</string>
+			<key>3D Acceleration</key>
+			<string>VirtIO GPU</string>
+			<key>Vendor</key>
+			<string>Red Hat, Inc.</string>
+			<key>Device</key>
+			<string>VirtIO GPU</string>
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
