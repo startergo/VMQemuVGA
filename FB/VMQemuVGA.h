@@ -38,10 +38,9 @@ private:
 	VMDeviceType m_device_type;			//Detected device type for proper code path selection
 	bool m_is_virtio_gpu;				//Quick check for VirtIO GPU devices
 	bool m_is_qxl_device;				//Quick check for QXL devices
-	bool m_virtio_gpu_initialized;		//Track VirtIO GPU initialization state
 	
 	// 3D acceleration support
-	    VMVirtIOGPU*              m_gpu_device;					//VirtIO GPU device for 3D acceleration (disabled)
+	VMVirtIOGPU* m_gpu_device;			//VirtIO GPU device for 3D acceleration
 	VMQemuVGAAccelerator* m_accelerator; //3D accelerator service
 	bool m_3d_acceleration_enabled;		//Whether 3D acceleration is available
 	
@@ -173,21 +172,12 @@ public:
 	
 	// Multi-path 3D acceleration initialization methods
 	bool initVirtIOGPUAcceleration();
+	bool initTraditionalAcceleration();
 	bool initQXLAcceleration();
 	bool initGenericAcceleration();
 	bool initVMwareAcceleration();
 	bool initHyperVAcceleration();
 	bool initAcceleratorService();
-	bool initializeVirtIOGPUHardwareAcceleration();  // New method for delayed hardware acceleration
-	
-	// Hardware acceleration methods
-	IOReturn acceleratedBlit(IOPixelInformation* src, IOPixelInformation* dst, SInt32 x, SInt32 y, SInt32 width, SInt32 height);
-	IOReturn acceleratedFill(IOPixelInformation* dst, SInt32 x, SInt32 y, SInt32 width, SInt32 height, UInt32 color);
-	IOReturn synchronizeAccelerator();
-	
-	// Optimized software fallback methods
-	IOReturn performOptimizedBlit(IOPixelInformation* src, IOPixelInformation* dst, SInt32 x, SInt32 y, SInt32 width, SInt32 height);
-	IOReturn performOptimizedFill(IOPixelInformation* dst, SInt32 x, SInt32 y, SInt32 width, SInt32 height, UInt32 color);
 	
 	void lockDevice();
 	void unlockDevice();

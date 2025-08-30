@@ -111,14 +111,15 @@ bool CLASS::start(IOService* provider)
 	//Initiate private variables
 	m_restore_call = 0;
 	m_iolock = 0;
-
+	
 	m_gpu_device = nullptr;
 	m_accelerator = nullptr;
+	m_3d_acceleration_enabled = true; // Enable for Catalina VirtIO GPU GL
 	
-	m_3d_acceleration_enabled = true; // Enable for all devices initially
-
 	m_intr_enabled = false;
-	m_accel_updates = false;	// VMQemuVGA Phase 3 startup logging
+	m_accel_updates = false;
+	
+	// VMQemuVGA Phase 3 startup logging
 	IOLog("VMQemuVGA: VMQemuVGA Phase 3 enhanced graphics driver starting\n");
 	IOLog("VMQemuVGA: Designed to complement MacHyperVSupport and resolve Lilu Issue #2299\n");
 	IOLog("VMQemuVGA: Supporting VirtIO GPU, Hyper-V DDA, and advanced virtualization graphics\n");
@@ -136,11 +137,14 @@ bool CLASS::start(IOService* provider)
 	//Init svga
 	svga.Init();
 	
-	// Declare variables before any goto statements to avoid C++ compilation errors
-	IOPCIDevice* pciProvider = OSDynamicCast(IOPCIDevice, provider);
-	bool isVirtIOGPU = false;
-	bool isQXL = false;
-	uint32_t detected_vram = 0;
+	// Declare variables before any goto statements to avoid jump initialization errors
+	UInt32 vendor_device = static_cast<IOPCIDevice*>(provider)->configRead32(kIOPCIConfigurationOffsetVendorID);
+	uint32_t vendor_id = vendor_device & 0xFFFF;
+	uint32_t device_id = (vendor_device >> 16) & 0xFFFF;
+	bool is_virtio = (vendor_id == 0x1af4 && device_id == 0x1050); // VirtIO GPU
+	
+	// Store hardware type for later use in init3DAcceleration()
+	m_is_virtio_gpu = is_virtio;
 	
 	//Start svga, init the FIFO too
 	if (!svga.Start(static_cast<IOPCIDevice*>(provider)))
@@ -149,55 +153,30 @@ bool CLASS::start(IOService* provider)
 	}
 	
 	//BAR0 is vram
-	// Check device type for proper VRAM detection method
-	if (pciProvider) {
-		UInt32 vendorID = pciProvider->configRead32(kIOPCIConfigVendorID) & 0xFFFF;
-		UInt32 deviceID = (pciProvider->configRead32(kIOPCIConfigVendorID) >> 16) & 0xFFFF;
-		
-		isVirtIOGPU = (vendorID == 0x1af4) && (deviceID >= 0x1050 && deviceID <= 0x105f);
-		isQXL = (vendorID == 0x1b36) && (deviceID == 0x0100);
-		
-		IOLog("VMQemuVGA: PCI device - Vendor: 0x%04x, Device: 0x%04x\n", vendorID, deviceID);
-		IOLog("VMQemuVGA: Device type - VirtIO GPU: %s, QXL: %s, VMware SVGA: %s\n", 
-			  isVirtIOGPU ? "YES" : "NO", 
-			  isQXL ? "YES" : "NO",
-			  (!isVirtIOGPU && !isQXL) ? "YES" : "NO");
-	}
+	//m_vram = provider->getDeviceMemoryWithIndex(0U);//Guest Framebuffer (BAR0)
 	
-	// Use appropriate VRAM detection method based on device type
-	if (isVirtIOGPU) {
-		// For VirtIO GPU devices, we'll set up VRAM after initializing the GPU component
-		// VirtIO GPU uses system memory pools managed by the GPU driver
-		IOLog("VMQemuVGA: VirtIO GPU detected - VRAM will be configured via GPU component\n");
-		m_vram = nullptr; // Will be set up after VirtIO GPU initialization
-		detected_vram = 0; // Will be determined by VirtIO GPU component
-	} else if (isQXL) {
-		// For QXL devices, use BAR0 for VRAM detection
-		IOLog("VMQemuVGA: QXL device detected - using BAR0 VRAM detection\n");
-		m_vram = provider->getDeviceMemoryWithIndex(0U);
-		if (m_vram) {
-			detected_vram = (uint32_t)m_vram->getLength();
-			IOLog("VMQemuVGA: QXL VRAM detected from BAR0: %u MB (%u bytes)\n", 
-				  detected_vram / (1024 * 1024), detected_vram);
-		}
+	// Initialize VRAM based on hardware type
+	
+	if (is_virtio) {
+		IOLog("VMQemuVGA: VirtIO GPU hardware detected (vendor=0x%x, device=0x%x)\n", vendor_id, device_id);
+		IOLog("VMQemuVGA: Deferring VRAM initialization until VirtIO GPU device is ready\n");
+		m_vram = nullptr; // Will be set later in init3DAcceleration()
 	} else {
-		// For VMware SVGA devices, use the legacy method
-		IOLog("VMQemuVGA: VMware SVGA device detected - using legacy VRAM detection\n");
+		IOLog("VMQemuVGA: Traditional VGA hardware detected (vendor=0x%x, device=0x%x)\n", vendor_id, device_id);
 		m_vram = svga.get_m_vram();
-		if (m_vram) {
-			detected_vram = svga.getVRAMSize();
-			IOLog("VMQemuVGA: VMware SVGA VRAM detected: %u MB (%u bytes)\n", 
-				  detected_vram / (1024 * 1024), detected_vram);
-		}
-	}
+	}	
 	
 	// Log detected VRAM size for debugging
-	if (detected_vram == 0) {
-		IOLog("VMQemuVGA: WARNING - VRAM size is 0! Check device configuration\n");
-		if (isVirtIOGPU) {
-			IOLog("VMQemuVGA: For VirtIO GPU GL, ensure QEMU is started with sufficient vram_size_mb\n");
-			IOLog("VMQemuVGA: Example: -device virtio-vga-gl,vram_size_mb=128\n");
+	if (m_vram) {
+		uint32_t detected_vram = svga.getVRAMSize();
+		IOLog("VMQemuVGA: Detected VRAM size: %u MB (%u bytes)\n", 
+			  detected_vram / (1024 * 1024), detected_vram);
+		
+		if (detected_vram == 0) {
+			IOLog("VMQemuVGA: WARNING - VRAM size is 0! Check hardware configuration\n");
 		}
+	} else if (is_virtio) {
+		IOLog("VMQemuVGA: VRAM initialization deferred for VirtIO GPU hardware\n");
 	}
 	
 	//populate customMode with modeList define in modes.cpp
@@ -205,22 +184,8 @@ bool CLASS::start(IOService* provider)
 	
 	/* End Added */
 	//select the valid modes
-	if (isVirtIOGPU) {
-		// For VirtIO GPU devices, use generous defaults since they're more flexible
-		max_w = 4096; // VirtIO GPU can typically handle up to 4K
-		max_h = 2160;
-		IOLog("VMQemuVGA: Using VirtIO GPU maximum resolution: %dx%d\n", max_w, max_h);
-	} else if (isQXL) {
-		// For QXL devices, use generous defaults (QXL supports high resolutions)
-		max_w = 4096; // QXL can handle high resolutions
-		max_h = 2160;
-		IOLog("VMQemuVGA: Using QXL maximum resolution: %dx%d\n", max_w, max_h);
-	} else {
-		// For VMware SVGA devices, query the hardware
-		max_w = svga.getMaxWidth();
-		max_h = svga.getMaxHeight();
-		IOLog("VMQemuVGA: VMware SVGA maximum resolution: %dx%d\n", max_w, max_h);
-	}
+	max_w = svga.getMaxWidth();
+	max_h = svga.getMaxHeight();
 	m_num_active_modes = 0U;
 	for (uint32_t i = 0U; i != NUM_DISPLAY_MODES; ++i)//26 in common_fb.h
 	{
@@ -259,27 +224,15 @@ bool CLASS::start(IOService* provider)
 		// Set VRAM for hardware acceleration - use real detected size
 		uint32_t real_vram_size = 0;
 		
-		// For VirtIO devices, get VRAM from PCI BAR, for QXL use svga method
-		IOPCIDevice* pciProvider = OSDynamicCast(IOPCIDevice, provider);
-		if (pciProvider) {
-			UInt32 vendorID = pciProvider->configRead32(kIOPCIConfigVendorID) & 0xFFFF;
-			UInt32 deviceID = (pciProvider->configRead32(kIOPCIConfigVendorID) >> 16) & 0xFFFF;
-			
-			if (vendorID == 0x1af4 && deviceID >= 0x1050 && deviceID <= 0x105f) {
-				// VirtIO GPU - get VRAM from PCI BAR0 (framebuffer)
-				IODeviceMemory* bar0 = pciProvider->getDeviceMemoryWithIndex(0);
-				if (bar0) {
-					real_vram_size = (uint32_t)bar0->getLength();
-					IOLog("VMQemuVGA: VirtIO GPU VRAM detected from PCI BAR0: %u bytes\n", real_vram_size);
-				}
-			} else {
-				// QXL/SVGA device - use traditional method
-				real_vram_size = svga.getVRAMSize();
-			}
+		// Use VirtIO GPU VRAM size if available, otherwise fall back to SVGA detection
+		if (m_vram && m_is_virtio_gpu) {
+			real_vram_size = (uint32_t)m_vram->getLength();
+			IOLog("VMQemuVGA: Using VirtIO GPU VRAM size: %u bytes (%u MB)\n", 
+				  real_vram_size, real_vram_size / (1024 * 1024));
 		} else {
-			// Fallback to svga method
 			real_vram_size = svga.getVRAMSize();
 		}
+		
 		if (real_vram_size > 0) {
 			setProperty("ATY,memsize", real_vram_size);
 			setProperty("VRAM,totalsize", real_vram_size);
@@ -531,37 +484,50 @@ void CLASS::Cleanup()
 /*************INIT3DACCELERATION********************/
 bool CLASS::init3DAcceleration()
 {
-	// Check device type to determine if 3D acceleration should be initialized
-	IOLog("VMQemuVGA: Checking device type for 3D acceleration support\n");
+	if (m_is_virtio_gpu) {
+		IOLog("VMQemuVGA: Initializing VirtIO GPU hardware acceleration\n");
+		return initVirtIOGPUAcceleration();
+	} else {
+		IOLog("VMQemuVGA: Initializing traditional VGA/QXL hardware acceleration\n");
+		return initTraditionalAcceleration();
+	}
+}
+
+bool CLASS::initVirtIOGPUAcceleration()
+{
+	// Advanced VirtIO GPU Device Detection and Initialization
+	IOLog("VMQemuVGA: Starting comprehensive VirtIO GPU device detection\n");
 	
-	// Direct PCI device check - avoid complex scanning
-	IOPCIDevice* pciProvider = OSDynamicCast(IOPCIDevice, this->getProvider());
-	if (!pciProvider) {
-		IOLog("VMQemuVGA: No PCI provider available for 3D acceleration\n");
-		return false;
+	// Stage 1: Scan PCI bus for VirtIO GPU devices
+	IOReturn detection_result = scanForVirtIOGPUDevices();
+	if (detection_result != kIOReturnSuccess) {
+		IOLog("VMQemuVGA: VirtIO GPU PCI scan failed (0x%x), falling back to mock device\n", detection_result);
+		// Fall back to mock device creation for compatibility
+		return createMockVirtIOGPUDevice();
 	}
 	
-	// Get device IDs directly from PCI configuration space
-	UInt32 vendorID = pciProvider->configRead32(kIOPCIConfigVendorID) & 0xFFFF;
-	UInt32 deviceID = (pciProvider->configRead32(kIOPCIConfigVendorID) >> 16) & 0xFFFF;
-	
-	IOLog("VMQemuVGA: PCI device - Vendor: 0x%04x, Device: 0x%04x\n", vendorID, deviceID);
-	
-	// Check if this is a VirtIO GPU device (vendor 0x1af4, device 0x1050-0x105f)
-	bool isVirtIOGPU = (vendorID == 0x1af4) && (deviceID >= 0x1050 && deviceID <= 0x105f);
-	bool isQXL = (vendorID == 0x1b36) && (deviceID == 0x0100);
-	
-	if (isQXL) {
-		IOLog("VMQemuVGA: QXL device detected - 3D acceleration not available for QXL\n");
-		return false;
+	// Stage 2: Initialize detected VirtIO GPU device
+	IOReturn init_result = initializeDetectedVirtIOGPU();
+	if (init_result != kIOReturnSuccess) {
+		IOLog("VMQemuVGA: VirtIO GPU initialization failed (0x%x), falling back to mock device\n", init_result);
+		return createMockVirtIOGPUDevice();
 	}
 	
-	if (!isVirtIOGPU) {
-		IOLog("VMQemuVGA: VMware SVGA device detected - 3D acceleration not available for SVGA\n");
-		return false;
+	// Stage 3: Query VirtIO GPU capabilities
+	IOReturn caps_result = queryVirtIOGPUCapabilities();
+	if (caps_result != kIOReturnSuccess) {
+		IOLog("VMQemuVGA: VirtIO GPU capability query failed (0x%x), continuing with basic functionality\n", caps_result);
+		// Continue - capability query failure doesn't prevent basic 3D acceleration
 	}
 	
-	IOLog("VMQemuVGA: VirtIO GPU device detected, initializing 3D acceleration\n");
+	// Stage 4: Configure VirtIO GPU for optimal performance
+	IOReturn config_result = configureVirtIOGPUOptimalSettings();
+	if (config_result != kIOReturnSuccess) {
+		IOLog("VMQemuVGA: VirtIO GPU performance configuration failed (0x%x), using default settings\n", config_result);
+		// Continue - performance optimization failure doesn't prevent functionality
+	}
+	
+	IOLog("VMQemuVGA: VirtIO GPU device detection and initialization completed successfully\n");
 	
 	// Create VirtIO GPU device using proper kernel object allocation
 	m_gpu_device = OSTypeAlloc(VMVirtIOGPU);
@@ -577,14 +543,32 @@ bool CLASS::init3DAcceleration()
 		return false;
 	}
 	
-	// Skip VirtIO GPU PCI configuration during boot to avoid hang
-	// PCI device access will be done later when needed
-	IOLog("VMQemuVGA: Skipping VirtIO GPU PCI configuration during boot\n");
-
-	// Skip performance configuration to avoid potential hangs
-	IOLog("VMQemuVGA: Skipping VirtIO GPU performance configuration to avoid hang\n");
-
-	// Initialize VirtIO GPU accelerator with proper kernel object allocation
+	// Set the PCI device provider for the VirtIO GPU
+	IOPCIDevice* pciProvider = static_cast<IOPCIDevice*>(getProvider());
+	if (pciProvider) {
+		IOLog("VMQemuVGA: Configuring VirtIO GPU with PCI device provider\n");
+		// Configure VirtIO GPU with actual PCI device information
+		m_gpu_device->attachToParent(pciProvider, gIOServicePlane);
+	}
+	
+	// Stage 5: Initialize VirtIO GPU VRAM if available
+	if (m_gpu_device) {
+		IODeviceMemory* virtio_vram = m_gpu_device->getVRAMRange();
+		if (virtio_vram) {
+			// Release the old SVGA VRAM and use VirtIO GPU VRAM instead
+			if (m_vram && m_vram != virtio_vram) {
+				m_vram->release();
+			}
+			m_vram = virtio_vram;
+			m_vram->retain(); // Retain the new VRAM reference
+			IOLog("VMQemuVGA: Switched to VirtIO GPU VRAM range (size: %llu bytes)\n", 
+				  m_vram->getLength());
+		} else {
+			IOLog("VMQemuVGA: VirtIO GPU device present but no VRAM range available\n");
+		}
+	}
+	
+	// Initialize VirtIO GPU accelerator
 	m_accelerator = OSTypeAlloc(VMQemuVGAAccelerator);
 	if (!m_accelerator) {
 		DLOG("%s: Failed to allocate accelerator\n", __FUNCTION__);
@@ -595,17 +579,6 @@ bool CLASS::init3DAcceleration()
 		DLOG("%s: Failed to initialize accelerator\n", __FUNCTION__);
 		m_accelerator->release();
 		m_accelerator = nullptr;
-		return false;
-	}
-	if (!m_accelerator) {
-		DLOG("%s: Failed to create 3D accelerator\n", __FUNCTION__);
-		cleanup3DAcceleration();
-		return false;
-	}
-	
-	if (!m_accelerator->init()) {
-		DLOG("%s: Failed to initialize 3D accelerator\n", __FUNCTION__);
-		cleanup3DAcceleration();
 		return false;
 	}
 	
@@ -626,31 +599,49 @@ bool CLASS::init3DAcceleration()
 	setProperty("3D Acceleration", "Enabled");
 	setProperty("3D Backend", "VirtIO GPU");
 	
-	// Set up VirtIO GPU VRAM after successful initialization
-	if (m_gpu_device && !m_vram) {
-		IOLog("VMQemuVGA: Setting up VirtIO GPU VRAM representation\n");
-		
-		// Safely configure the PCI device now that boot is complete
-		if (pciProvider) {
-			IOReturn result = m_gpu_device->configurePCIDevice(pciProvider);
-			if (result == kIOReturnSuccess) {
-				IOLog("VMQemuVGA: VirtIO GPU PCI device configured successfully\n");
-			} else {
-				IOLog("VMQemuVGA: Warning - Could not configure VirtIO GPU PCI device\n");
-			}
-		}
-		
-		m_vram = m_gpu_device->getVRAMRange();
-		if (m_vram) {
-			uint64_t vram_size = m_vram->getLength();
-			IOLog("VMQemuVGA: VirtIO GPU VRAM configured: %llu MB (%llu bytes)\n", 
-				  vram_size / (1024 * 1024), vram_size);
-		} else {
-			IOLog("VMQemuVGA: WARNING - Could not configure VirtIO GPU VRAM\n");
-		}
+	IOLog("VMQemuVGA: 3D acceleration enabled via VirtIO GPU\n");
+	return true;
+}
+
+bool CLASS::initTraditionalAcceleration()
+{
+	IOLog("VMQemuVGA: Initializing traditional QXL/VGA hardware acceleration\n");
+	
+	// For traditional hardware, we don't need VirtIO GPU device detection
+	// Just initialize the accelerator with existing SVGA/QXL backend
+	
+	// Initialize traditional accelerator
+	m_accelerator = OSTypeAlloc(VMQemuVGAAccelerator);
+	if (!m_accelerator) {
+		DLOG("%s: Failed to allocate traditional accelerator\n", __FUNCTION__);
+		return false;
 	}
 	
-	IOLog("VMQemuVGA: 3D acceleration enabled via VirtIO GPU\n");
+	if (!m_accelerator->init()) {
+		DLOG("%s: Failed to initialize traditional accelerator\n", __FUNCTION__);
+		m_accelerator->release();
+		m_accelerator = nullptr;
+		return false;
+	}
+	
+	// Start the accelerator as a child service
+	if (!m_accelerator->attach(this)) {
+		DLOG("%s: Failed to attach traditional accelerator\n", __FUNCTION__);
+		cleanup3DAcceleration();
+		return false;
+	}
+	
+	if (!m_accelerator->start(this)) {
+		DLOG("%s: Failed to start traditional accelerator\n", __FUNCTION__);
+		cleanup3DAcceleration();
+		return false;
+	}
+	
+	m_3d_acceleration_enabled = true;
+	setProperty("3D Acceleration", "Enabled");
+	setProperty("3D Backend", "QXL/SVGA");
+	
+	IOLog("VMQemuVGA: 3D acceleration enabled via traditional QXL/SVGA\n");
 	return true;
 }
 
@@ -1453,8 +1444,8 @@ bool CLASS::scanForVirtIOGPUDevices()
 {
 	IOLog("VMQemuVGA: Scanning for VirtIO GPU devices on PCI bus\n");
 	
-	// Get PCI device for this instance - use the direct provider instead of svga
-	IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, this->getProvider());
+	// Get PCI device for this instance - use the QemuVGADevice provider
+	IOPCIDevice* pciDevice = svga.getProvider();
 	if (!pciDevice) {
 		IOLog("VMQemuVGA: Warning - No PCI device provider available\n");
 		return false;

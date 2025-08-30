@@ -64,59 +64,15 @@ private:
     IOLock* m_resource_lock;
     IOLock* m_context_lock;
     
-    // VirtIO queue ring structures for real hardware communication
-    struct vring_desc {
-        uint64_t addr;   // Buffer physical address
-        uint32_t len;    // Buffer length
-        uint16_t flags;  // Buffer flags
-        uint16_t next;   // Next buffer if chained
-    };
-    
-    struct vring_avail {
-        uint16_t flags;
-        uint16_t idx;
-        uint16_t ring[];
-    };
-    
-    struct vring_used_elem {
-        uint32_t id;
-        uint32_t len;
-    };
-    
-    struct vring_used {
-        uint16_t flags;
-        uint16_t idx;
-        struct vring_used_elem ring[];
-    };
-    
-    // VirtIO queue state
-    struct vring_desc* m_control_desc_ring;
-    struct vring_avail* m_control_avail_ring;
-    struct vring_used* m_control_used_ring;
-    uint16_t m_control_queue_last_used_idx;
-    
-    // VirtIO queue state for real hardware communication
-    IOPhysicalAddress m_pending_cmd_phys;
-    IOPhysicalAddress m_pending_resp_phys;
-    size_t m_pending_resp_size;
-    
     // VirtIO operations
     bool initVirtIOGPU();
-    bool initVirtIORings();
     void cleanupVirtIOGPU();
+    void initHardwareDeferred();  // Deferred hardware init to prevent boot hang
     
     // Command processing
     IOReturn submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size, 
                           virtio_gpu_ctrl_hdr* resp, size_t resp_size);
-    IOReturn submitCommandGated(void* cmd_ptr, void* cmd_size_ptr, void* resp_ptr, void* resp_size_ptr);
-    IOReturn addToVirtQueue(IOPhysicalAddress cmdPhys, size_t cmdSize, IOPhysicalAddress respPhys, size_t respSize);
-    void notifyQueue(uint16_t queueIndex);
-    IOReturn waitForResponse(IOBufferMemoryDescriptor* respBuffer, virtio_gpu_ctrl_hdr* resp, size_t respSize, uint32_t timeoutMs);
-    bool checkResponseReady();
     IOReturn processControlQueue();
-    
-    // Boot-safe operations
-    void enableFullVirtIOOperations();
     
     // Resource management
     IOReturn createResource2D(uint32_t resource_id, uint32_t format, 
@@ -146,18 +102,10 @@ private:
     gpu_3d_context* findContext(uint32_t context_id);
     
 public:
-    // Display management methods called by VMQemuVGA
-    IOReturn createScanoutResource(uint32_t resource_id, uint32_t width, uint32_t height, uint32_t format);
-    IOReturn enableDisplayOutput(uint32_t scanout_id);
-    IOReturn setPrimaryScanout(uint32_t width, uint32_t height, uint32_t format);
-    
     virtual bool start(IOService* provider) override;
     virtual void stop(IOService* provider) override;
     virtual bool init(OSDictionary* properties = nullptr) override;
     virtual void free() override;
-    
-    // Safe PCI device configuration (call after boot)
-    IOReturn configurePCIDevice(IOPCIDevice* pciDevice);
     
     // 3D acceleration interface
     IOReturn allocateResource3D(uint32_t* resource_id, uint32_t target, uint32_t format,
@@ -182,6 +130,10 @@ public:
     bool supports3D() const { return m_num_capsets > 0; }
     IOReturn enableFeature(uint32_t feature_flags);
     bool supportsFeature(uint32_t feature_flags) const;
+    
+    // PCI device configuration and VRAM interface (for framebuffer compatibility)
+    IOReturn configurePCIDevice(IOPCIDevice* pciProvider);
+    IODeviceMemory* getVRAMRange();
     
     // Extended capability queries and configuration
     uint32_t getMaxDisplays() const { return m_max_scanouts; }
@@ -210,10 +162,6 @@ public:
     // Memory management
     IOReturn allocateGPUMemory(size_t size, IOMemoryDescriptor** memory);
     IOReturn mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_addr);
-    
-    // VRAM management for System Profiler integration
-    uint64_t getVRAMSize() const;
-    IODeviceMemory* getVRAMRange();
 };
 
 #endif /* __VMVirtIOGPU_H__ */
