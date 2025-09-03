@@ -33,13 +33,51 @@ CLANG_CXX_LIBRARY = ;
 KERNEL_EXTENSION = YES;
 KERNEL_FRAMEWORK = IOKit;
 
-// Code Signing Configuration - Disabled for Snow Leopard compatibility
-CODE_SIGN_IDENTITY = ;
-CODE_SIGN_ENTITLEMENTS = ;
+// Code Signing Configuration - CONDITIONAL for compatibility
+// 
+// Modern code signing breaks Snow Leopard kernel compatibility for several reasons:
+//
+// 1. BINARY FORMAT INCOMPATIBILITY:
+//    - Code signing adds LC_CODE_SIGNATURE load commands to Mach-O binaries
+//    - Snow Leopard's kernel (Darwin 10.x) doesn't understand these load commands
+//    - The kernel loader fails to parse signed binaries, causing load failures
+//
+// 2. SYMBOL TABLE CORRUPTION:
+//    - Code signing modifies the symbol table structure
+//    - Adds __TEXT.__code_signature sections that confuse Snow Leopard's kernel linker
+//    - Results in unresolved symbol errors and kernel panics
+//
+// 3. DEPLOYMENT TARGET CONFLICTS:
+//    - Code signing tools require MACOSX_DEPLOYMENT_TARGET >= 10.9
+//    - This creates binaries with newer SDK dependencies incompatible with 10.6
+//    - Runtime checks fail on Snow Leopard systems
+//
+// 4. ENTITLEMENTS AND SECURITY FRAMEWORK:
+//    - Modern kexts expect Security.framework APIs not present in Snow Leopard
+//    - Entitlements plist format is incompatible with older IOKit
+//    - Causes immediate kernel extension rejection
+//
+// 5. HASH ALGORITHM INCOMPATIBILITY:
+//    - Modern signatures use SHA-256/SHA-512 hashing
+//    - Snow Leopard only supports MD5/SHA-1 for kernel validation
+//    - Signature verification fails at kernel load time
+//
+// SOLUTION: Conditional code signing
+// - Default: Disabled for Snow Leopard compatibility
+// - Override: Enable via build script or xcodebuild command line
+// - Usage: xcodebuild CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY="Developer ID"
+CODE_SIGN_IDENTITY = $(VMQEMUVGA_CODE_SIGN_IDENTITY)
+CODE_SIGNING_ALLOWED = $(VMQEMUVGA_CODE_SIGNING_ALLOWED)
+CODE_SIGNING_REQUIRED = $(VMQEMUVGA_CODE_SIGNING_REQUIRED)
+
+// Default values (can be overridden)
+VMQEMUVGA_CODE_SIGN_IDENTITY = 
+VMQEMUVGA_CODE_SIGNING_ALLOWED = NO
+VMQEMUVGA_CODE_SIGNING_REQUIRED = NO
 
 // Override header map style warning
 USE_HEADERMAP = NO;
 
 // Enhanced build settings for signed kext
 MODULE_NAME = com.vmware.kext.VMQemuVGA;
-MODULE_VERSION = 8.0.0;
+MODULE_VERSION = 4.0.0;
