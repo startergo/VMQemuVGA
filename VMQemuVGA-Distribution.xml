@@ -33,7 +33,7 @@
     </choice>
     
     <!-- Package References -->
-    <pkg-ref id="com.vmware.kext.VMQemuVGA.legacy" version="3.0.0d1" onConclusion="RequireRestart" installKBytes="233" updateKBytes="0">#VMQemuVGA-Legacy.pkg</pkg-ref>
-    <pkg-ref id="com.vmware.kext.VMQemuVGA.modern" version="3.0.0d1" onConclusion="RequireRestart" installKBytes="233" updateKBytes="0">#VMQemuVGA-Modern.pkg</pkg-ref>
+    <pkg-ref id="com.vmware.kext.VMQemuVGA.legacy" version="3.0.0d1" onConclusion="none" installKBytes="233" updateKBytes="0">#VMQemuVGA-Legacy.pkg</pkg-ref>
+    <pkg-ref id="com.vmware.kext.VMQemuVGA.modern" version="3.0.0d1" onConclusion="none" installKBytes="233" updateKBytes="0">#VMQemuVGA-Modern.pkg</pkg-ref>
     
 </installer-gui-script>
