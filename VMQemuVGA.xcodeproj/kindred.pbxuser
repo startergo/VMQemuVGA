@@ -1,7 +1,7 @@
 // !$*UTF8*$!
 {
 	089C1669FE841209C02AAC07 /* Project object */ = {
-		activeBuildConfigurationName = ReleaseLeo;
+		activeBuildConfigurationName = Release;
 		activeTarget = 32D94FC30562CBF700B6AF17 /* VMQemuVGA */;
 		codeSenseManager = 671ABB1E16120D9200FBF5AD /* Code sense */;
 		perUserDictionary = {

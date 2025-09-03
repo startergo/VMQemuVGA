@@ -23,25 +23,9 @@
         <pkg-ref id="com.vmqemuvga.phase3.kext"/>
     </choice>
     
-    <pkg-ref id="com.vmqemuvga.phase3.kext" onConclusion="RequireRestart">
-        VMQemuVGA-Component.pkg
+    <pkg-ref id="com.vmqemuvga.phase3.kext">
+        <bundle-version/>
     </pkg-ref>
     
     <product id="com.vmqemuvga.phase3" version="8.0"/>
-    
-    <!-- Require restart after kext installation -->
-    <conclusion file="Conclusion.txt" mime-type="text/plain"/>
-    
-    <installation-check script="pm_install_check();"/>
-    <script>
-    function pm_install_check() {
-        if(!(system.compareVersions(system.version.ProductVersion, '10.6') >= 0)) {
-            my.result.title = 'Failure';
-            my.result.message = 'You need at least Mac OS X 10.6 to install VMQemuVGA.';
-            my.result.type = 'Fatal';
-            return false;
-        }
-        return true;
-    }
-    </script>
 </installer-gui-script>

@@ -129,9 +129,10 @@ private:
     bool m_multi_display_enabled;
     bool m_hdr_enabled;
     
-    // Display scaling management
-    void* m_scaling_config;
-    float m_current_scale_factor;
+    // Display configuration parameters
+    float m_display_scale_factor;
+    uint32_t m_color_space;
+    bool m_variable_refresh_rate_enabled;
     
     // Performance monitoring
     VMPhase3Statistics m_statistics;

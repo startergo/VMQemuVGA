@@ -72,11 +72,10 @@ IOService* VMQemuVGA::probe(IOService* provider, SInt32* score)
         return this;
     }
     
-    // VirtIO GPU devices (Red Hat VirtIO)
+    // VirtIO GPU devices are handled by VMVirtIOGPU personality - DO NOT ACCEPT
     if (vendorID == 0x1af4 && deviceID >= 0x1050 && deviceID <= 0x105f) {
-        *score = 90000;  // High score to beat NDRV  
-        VLOG("VMQemuVGA probe successful - VirtIO GPU device with score %d", *score);
-        return this;
+        VLOG("VMQemuVGA probe - VirtIO GPU device rejected, should use VMVirtIOGPU personality");
+        return NULL;  // Reject VirtIO devices
     }
     
     // QEMU VGA devices (Bochs/QEMU)
@@ -360,7 +359,7 @@ bool CLASS::start(IOService* provider)
 	m_display_mode = TryDetectCurrentDisplayMode(3);
 	m_depth_mode = 0;
 		
-	return true;
+	return kIOReturnSuccess;
 	
 fail:
 	Cleanup();
@@ -484,13 +483,40 @@ void CLASS::Cleanup()
 /*************INIT3DACCELERATION********************/
 bool CLASS::init3DAcceleration()
 {
-	if (m_is_virtio_gpu) {
-		IOLog("VMQemuVGA: Initializing VirtIO GPU hardware acceleration\n");
-		return initVirtIOGPUAcceleration();
-	} else {
-		IOLog("VMQemuVGA: Initializing traditional VGA/QXL hardware acceleration\n");
-		return initTraditionalAcceleration();
+	// Check PCI device properties to determine if this is a VirtIO GPU device
+	IOPCIDevice* pciDevice = static_cast<IOPCIDevice*>(svga.getProvider());
+	if (!pciDevice) {
+		IOLog("VMQemuVGA: No PCI device found, skipping 3D acceleration\n");
+		return true; // Return true but skip 3D acceleration setup
 	}
+	
+	// Read vendor and device IDs from properties (safer than config reads)
+	OSNumber* vendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("vendor-id"));
+	OSNumber* deviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("device-id"));
+	
+	uint16_t vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x0000;
+	uint16_t deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x0000;
+	
+	// Check if this is a VirtIO GPU device (vendor 0x1AF4 with VirtIO GPU device IDs)
+	bool isVirtIOGPU = (vendorID == 0x1AF4 && deviceID >= 0x1050 && deviceID <= 0x10FF);
+	
+	if (isVirtIOGPU) {
+		IOLog("VMQemuVGA: VirtIO GPU device detected (0x%04X:0x%04X), but VMQemuVGA should not handle VirtIO devices\n", vendorID, deviceID);
+		IOLog("VMQemuVGA: This device should be handled by VMVirtIOGPU personality - skipping 3D acceleration\n");
+		return true; // Return true but skip 3D acceleration setup
+	}
+	
+	// This is a QXL/SVGA device - completely skip 3D acceleration like working version
+	IOLog("VMQemuVGA: PCI device - Vendor: 0x%04X, Device: 0x%04X\n", vendorID, deviceID);
+	IOLog("VMQemuVGA: Not a VirtIO GPU device, skipping 3D acceleration\n");
+	
+	// Set properties to indicate 2D-only mode
+	setProperty("3D Acceleration", "Disabled");
+	setProperty("Graphics Mode", "2D Only");
+	setProperty("Hardware Type", "QXL/SVGA");
+	
+	// Return true to allow basic framebuffer functionality but skip 3D initialization
+	return true;
 }
 
 bool CLASS::initVirtIOGPUAcceleration()
@@ -600,7 +626,7 @@ bool CLASS::initVirtIOGPUAcceleration()
 	setProperty("3D Backend", "VirtIO GPU");
 	
 	IOLog("VMQemuVGA: 3D acceleration enabled via VirtIO GPU\n");
-	return true;
+	return kIOReturnSuccess;
 }
 
 bool CLASS::initTraditionalAcceleration()
@@ -642,7 +668,7 @@ bool CLASS::initTraditionalAcceleration()
 	setProperty("3D Backend", "QXL/SVGA");
 	
 	IOLog("VMQemuVGA: 3D acceleration enabled via traditional QXL/SVGA\n");
-	return true;
+	return kIOReturnSuccess;
 }
 
 /*************CLEANUP3DACCELERATION********************/
@@ -1440,7 +1466,7 @@ void CLASS::useAccelUpdates(bool state)
 
 // VirtIO GPU Detection Helper Methods Implementation
 
-bool CLASS::scanForVirtIOGPUDevices()
+IOReturn CLASS::scanForVirtIOGPUDevices()
 {
 	IOLog("VMQemuVGA: Scanning for VirtIO GPU devices on PCI bus\n");
 	
@@ -1448,7 +1474,7 @@ bool CLASS::scanForVirtIOGPUDevices()
 	IOPCIDevice* pciDevice = svga.getProvider();
 	if (!pciDevice) {
 		IOLog("VMQemuVGA: Warning - No PCI device provider available\n");
-		return false;
+		return kIOReturnNotFound;
 	}
 	
 	// Check if this is a VirtIO GPU device
@@ -1495,72 +1521,72 @@ bool CLASS::scanForVirtIOGPUDevices()
 		switch (deviceID) {
 			case 0x1050:
 				IOLog("VMQemuVGA: Standard VirtIO GPU device detected (ID: 0x1050) - 2D framebuffer support\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1051:
 				IOLog("VMQemuVGA: VirtIO GPU with 3D acceleration detected (ID: 0x1051) - Virgl/OpenGL support\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1052:
 				IOLog("VMQemuVGA: VirtIO GPU with enhanced memory management detected (ID: 0x1052) - Zero-copy/DMA\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1053:
 				IOLog("VMQemuVGA: VirtIO GPU with multi-display support detected (ID: 0x1053) - Up to 16 displays\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1054:
 				IOLog("VMQemuVGA: VirtIO GPU with HDR support detected (ID: 0x1054) - HDR10/Dolby Vision\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1055:
 				IOLog("VMQemuVGA: VirtIO GPU with video codec support detected (ID: 0x1055) - H.264/H.265/AV1\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1056:
 				IOLog("VMQemuVGA: VirtIO GPU with compute shader support detected (ID: 0x1056) - OpenCL/SPIR-V\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1057:
 				IOLog("VMQemuVGA: VirtIO GPU with ray tracing detected (ID: 0x1057) - Hardware RT acceleration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1058:
 				IOLog("VMQemuVGA: VirtIO GPU with neural processing detected (ID: 0x1058) - AI/ML acceleration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1059:
 				IOLog("VMQemuVGA: VirtIO GPU with advanced display detected (ID: 0x1059) - VRR/Adaptive sync\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x105A:
 				IOLog("VMQemuVGA: VirtIO GPU with virtualization extensions detected (ID: 0x105A) - SR-IOV support\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x105B:
 				IOLog("VMQemuVGA: VirtIO GPU with security enhancements detected (ID: 0x105B) - Encrypted buffers\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x105C:
 				IOLog("VMQemuVGA: VirtIO GPU with power management detected (ID: 0x105C) - Dynamic frequency scaling\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x105D:
 				IOLog("VMQemuVGA: VirtIO GPU with debugging interface detected (ID: 0x105D) - Performance counters\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x105E:
 				IOLog("VMQemuVGA: VirtIO GPU with experimental features detected (ID: 0x105E) - Research extensions\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x105F:
 				IOLog("VMQemuVGA: VirtIO GPU with legacy compatibility detected (ID: 0x105F) - Backward compatibility\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1060:
 				IOLog("VMQemuVGA: VirtIO GPU with Hyper-V DDA integration detected (ID: 0x1060) - Discrete Device Assignment\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1061:
 				IOLog("VMQemuVGA: VirtIO GPU with RemoteFX vGPU compatibility detected (ID: 0x1061) - Legacy RemoteFX bridge\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1062:
 				IOLog("VMQemuVGA: VirtIO GPU with Hyper-V enhanced session detected (ID: 0x1062) - RDP acceleration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1063:
 				IOLog("VMQemuVGA: VirtIO GPU with Windows Container support detected (ID: 0x1063) - WSL integration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1064:
 				IOLog("VMQemuVGA: VirtIO GPU with Hyper-V nested virtualization detected (ID: 0x1064) - L2 hypervisor\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for experimental or newer VirtIO GPU device IDs beyond the documented range
 				if (deviceID >= 0x1050 && deviceID <= 0x10FF) {
 					IOLog("VMQemuVGA: Future/Experimental VirtIO GPU variant detected (ID: 0x%04X) - Extended range support\n", deviceID);
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
@@ -1581,30 +1607,30 @@ bool CLASS::scanForVirtIOGPUDevices()
 		switch (deviceID) {
 			case 0x1111:
 				IOLog("VMQemuVGA: QEMU Standard VGA detected (ID: 0x1111) - Probing VirtIO GPU extensions\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1001:
 				IOLog("VMQemuVGA: QEMU Cirrus VGA detected (ID: 0x1001) - Legacy support with VirtIO GPU overlay\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x0001:
 				IOLog("VMQemuVGA: QEMU Basic VGA detected (ID: 0x0001) - Scanning for VirtIO GPU coprocessor\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x4000:
 				IOLog("VMQemuVGA: QEMU QXL detected (ID: 0x4000) - Spice protocol with VirtIO GPU acceleration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x0100:
 				IOLog("VMQemuVGA: QEMU VMware SVGA emulation detected (ID: 0x0100) - VirtIO GPU passthrough mode\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x0002:
 				IOLog("VMQemuVGA: QEMU Bochs VGA detected (ID: 0x0002) - VBE extensions with VirtIO GPU compatibility\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x1234:
 				IOLog("VMQemuVGA: QEMU Generic VGA detected (ID: 0x1234) - Adaptive VirtIO GPU detection\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for future QEMU graphics device variants
 				if ((deviceID >= 0x0001 && deviceID <= 0x00FF) || (deviceID >= 0x1000 && deviceID <= 0x1FFF) || (deviceID >= 0x4000 && deviceID <= 0x4FFF)) {
 					IOLog("VMQemuVGA: QEMU Graphics variant detected (ID: 0x%04X) - Extended device support\n", deviceID);
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
@@ -1621,21 +1647,21 @@ bool CLASS::scanForVirtIOGPUDevices()
 		switch (deviceID) {
 			case 0x0405:
 				IOLog("VMQemuVGA: VMware SVGA II detected (ID: 0x0405) - VirtIO GPU passthrough capability\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x0710:
 				IOLog("VMQemuVGA: VMware SVGA 3D detected (ID: 0x0710) - Hardware 3D with VirtIO GPU integration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x0801:
 				IOLog("VMQemuVGA: VMware VGPU detected (ID: 0x0801) - Virtual GPU partitioning with VirtIO GPU\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x0720:
 				IOLog("VMQemuVGA: VMware eGPU detected (ID: 0x0720) - External GPU with VirtIO GPU bridging\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for other VMware graphics devices
 				if ((deviceID >= 0x0400 && deviceID <= 0x04FF) || (deviceID >= 0x0700 && deviceID <= 0x07FF) || (deviceID >= 0x0800 && deviceID <= 0x08FF)) {
 					IOLog("VMQemuVGA: VMware Graphics device detected (ID: 0x%04X) - Checking VirtIO GPU compatibility\n", deviceID);
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
@@ -1653,26 +1679,26 @@ bool CLASS::scanForVirtIOGPUDevices()
 		switch (deviceID) {
 			case 0x5A85:
 				IOLog("VMQemuVGA: Intel HD Graphics (virtualized) detected (ID: 0x5A85) - VirtIO GPU extensions\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x3E92:
 				IOLog("VMQemuVGA: Intel UHD Graphics 630 (virtual) detected (ID: 0x3E92) - VirtIO GPU acceleration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x9BC4:
 				IOLog("VMQemuVGA: Intel Iris Xe Graphics (cloud) detected (ID: 0x9BC4) - VirtIO GPU integration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x4680:
 				IOLog("VMQemuVGA: Intel Arc Graphics (virtualized) detected (ID: 0x4680) - VirtIO GPU support\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x56A0:
 				IOLog("VMQemuVGA: Intel Data Center GPU detected (ID: 0x56A0) - Server VirtIO GPU compatibility\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for other Intel graphics devices that may support virtualization
 				if ((deviceID >= 0x5A80 && deviceID <= 0x5AFF) || (deviceID >= 0x3E90 && deviceID <= 0x3EFF) || 
 				    (deviceID >= 0x9BC0 && deviceID <= 0x9BFF) || (deviceID >= 0x4680 && deviceID <= 0x46FF) ||
 				    (deviceID >= 0x56A0 && deviceID <= 0x56FF)) {
 					IOLog("VMQemuVGA: Intel Graphics (virtualized) detected (ID: 0x%04X) - Probing VirtIO GPU support\n", deviceID);
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
@@ -1688,19 +1714,19 @@ bool CLASS::scanForVirtIOGPUDevices()
 		switch (deviceID) {
 			case 0x15DD:
 				IOLog("VMQemuVGA: AMD Radeon Vega (virtualized) detected (ID: 0x15DD) - VirtIO GPU integration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x7340:
 				IOLog("VMQemuVGA: AMD Radeon RX 6000 (GPU-V) detected (ID: 0x7340) - VirtIO GPU compatibility\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x164C:
 				IOLog("VMQemuVGA: AMD Radeon Pro (virtualized) detected (ID: 0x164C) - VirtIO GPU extensions\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for other AMD graphics devices with virtualization support
 				if ((deviceID >= 0x15D0 && deviceID <= 0x15FF) || (deviceID >= 0x7340 && deviceID <= 0x73FF) ||
 				    (deviceID >= 0x1640 && deviceID <= 0x16FF)) {
 					IOLog("VMQemuVGA: AMD Graphics (virtualized) detected (ID: 0x%04X) - Checking VirtIO GPU support\n", deviceID);
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
@@ -1716,19 +1742,19 @@ bool CLASS::scanForVirtIOGPUDevices()
 		switch (deviceID) {
 			case 0x1B38:
 				IOLog("VMQemuVGA: NVIDIA Tesla V100 (virtualized) detected (ID: 0x1B38) - VirtIO GPU integration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x20B0:
 				IOLog("VMQemuVGA: NVIDIA A100 (cloud) detected (ID: 0x20B0) - VirtIO GPU acceleration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x2204:
 				IOLog("VMQemuVGA: NVIDIA RTX A6000 (virtualized) detected (ID: 0x2204) - VirtIO GPU support\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for other NVIDIA graphics devices with virtualization capabilities
 				if ((deviceID >= 0x1B30 && deviceID <= 0x1BFF) || (deviceID >= 0x20B0 && deviceID <= 0x20FF) ||
 				    (deviceID >= 0x2200 && deviceID <= 0x22FF)) {
 					IOLog("VMQemuVGA: NVIDIA Graphics (virtualized) detected (ID: 0x%04X) - Probing VirtIO GPU support\n", deviceID);
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
@@ -1747,27 +1773,27 @@ bool CLASS::scanForVirtIOGPUDevices()
 		switch (deviceID) {
 			case 0x5353:
 				IOLog("VMQemuVGA: Hyper-V Synthetic GPU detected (ID: 0x5353) - Basic framebuffer with VirtIO GPU overlay\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x5354:
 				IOLog("VMQemuVGA: Hyper-V Enhanced Graphics detected (ID: 0x5354) - Performance mode with VirtIO GPU\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x5355:
 				IOLog("VMQemuVGA: Hyper-V RemoteFX vGPU detected (ID: 0x5355) - Legacy RemoteFX with VirtIO GPU bridge\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x5356:
 				IOLog("VMQemuVGA: Hyper-V DDA GPU Bridge detected (ID: 0x5356) - Discrete Device Assignment integration\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x5357:
 				IOLog("VMQemuVGA: Hyper-V Container Graphics detected (ID: 0x5357) - Windows Container VirtIO GPU support\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0x5358:
 				IOLog("VMQemuVGA: Hyper-V Nested Virtualization GPU detected (ID: 0x5358) - L2 hypervisor VirtIO GPU\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for other Microsoft/Hyper-V graphics devices
 				if (deviceID >= 0x5350 && deviceID <= 0x535F) {
 					IOLog("VMQemuVGA: Hyper-V Graphics variant detected (ID: 0x%04X) - Checking VirtIO GPU compatibility\n", deviceID);
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
@@ -1789,36 +1815,36 @@ bool CLASS::scanForVirtIOGPUDevices()
 				IOLog("VMQemuVGA: Hyper-V DDA GPU (generic) detected - VirtIO GPU acceleration layer available\n");
 				IOLog("VMQemuVGA: Original GPU - Vendor: 0x%04X, Device: 0x%04X\n", vendorID, deviceID);
 				IOLog("VMQemuVGA: Addressing Lilu Issue #2299 - Early device registration for MacHyperVSupport\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0xDDA1:
 				IOLog("VMQemuVGA: Hyper-V DDA GPU (enhanced memory) detected - VirtIO GPU memory management\n");
 				IOLog("VMQemuVGA: Original GPU - Vendor: 0x%04X, Device: 0x%04X\n", vendorID, deviceID);
 				IOLog("VMQemuVGA: Addressing Lilu Issue #2299 - Early device registration for MacHyperVSupport\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0xDDA2:
 				IOLog("VMQemuVGA: Hyper-V DDA GPU (3D acceleration) detected - VirtIO GPU 3D bridge\n");
 				IOLog("VMQemuVGA: Original GPU - Vendor: 0x%04X, Device: 0x%04X\n", vendorID, deviceID);
 				IOLog("VMQemuVGA: Addressing Lilu Issue #2299 - Early device registration for MacHyperVSupport\n");
-				return true;
+				return kIOReturnSuccess;
 			case 0xDDA3:
 				IOLog("VMQemuVGA: Hyper-V DDA GPU (compute shaders) detected - VirtIO GPU compute support\n");
 				IOLog("VMQemuVGA: Original GPU - Vendor: 0x%04X, Device: 0x%04X\n", vendorID, deviceID);
 				IOLog("VMQemuVGA: Addressing Lilu Issue #2299 - Early device registration for MacHyperVSupport\n");
-				return true;
+				return kIOReturnSuccess;
 			default:
 				// Check for other DDA subsystem IDs
 				if (subsystemID >= 0xDDA0 && subsystemID <= 0xDDAF) {
 					IOLog("VMQemuVGA: Hyper-V DDA GPU variant detected (Subsystem: 0x%04X) - VirtIO GPU integration\n", subsystemID);
 					IOLog("VMQemuVGA: Original GPU - Vendor: 0x%04X, Device: 0x%04X\n", vendorID, deviceID);
 					IOLog("VMQemuVGA: Addressing Lilu Issue #2299 - Early device registration for MacHyperVSupport\n");
-					return true;
+					return kIOReturnSuccess;
 				}
 				break;
 		}
 	}
 	
 	IOLog("VMQemuVGA: No VirtIO GPU device found, using fallback compatibility mode\n");
-	return false;
+	return kIOReturnNotFound;
 }
 
 VMVirtIOGPU* CLASS::createMockVirtIOGPUDevice()
@@ -1845,11 +1871,11 @@ VMVirtIOGPU* CLASS::createMockVirtIOGPUDevice()
 	return mockDevice;
 }
 
-bool CLASS::initializeDetectedVirtIOGPU()
+IOReturn CLASS::initializeDetectedVirtIOGPU()
 {
 	if (!m_gpu_device) {
 		IOLog("VMQemuVGA: Error - No VirtIO GPU device to initialize\n");
-		return false;
+		return kIOReturnNotFound;
 	}
 	
 	IOLog("VMQemuVGA: Initializing detected VirtIO GPU device\n");
@@ -1871,14 +1897,14 @@ bool CLASS::initializeDetectedVirtIOGPU()
 	}
 	
 	IOLog("VMQemuVGA: VirtIO GPU device initialization complete\n");
-	return true;
+	return kIOReturnSuccess;
 }
 
-bool CLASS::queryVirtIOGPUCapabilities()
+IOReturn CLASS::queryVirtIOGPUCapabilities()
 {
 	if (!m_gpu_device) {
 		IOLog("VMQemuVGA: Error - No VirtIO GPU device to query\n");
-		return false;
+		return kIOReturnNotFound;
 	}
 	
 	IOLog("VMQemuVGA: Querying VirtIO GPU capabilities\n");
@@ -1906,14 +1932,14 @@ bool CLASS::queryVirtIOGPUCapabilities()
 	m_supports_virgl = supportsVirgl;
 	m_max_displays = maxDisplays;
 	
-	return true;
+	return kIOReturnSuccess;
 }
 
-bool CLASS::configureVirtIOGPUOptimalSettings()
+IOReturn CLASS::configureVirtIOGPUOptimalSettings()
 {
 	if (!m_gpu_device) {
 		IOLog("VMQemuVGA: Error - No VirtIO GPU device to configure\n");
-		return false;
+		return kIOReturnNotFound;
 	}
 	
 	IOLog("VMQemuVGA: Configuring VirtIO GPU optimal performance settings\n");
@@ -1945,7 +1971,7 @@ bool CLASS::configureVirtIOGPUOptimalSettings()
 	m_gpu_device->enableVSync(true);
 	
 	IOLog("VMQemuVGA: VirtIO GPU performance configuration complete\n");
-	return true;
+	return kIOReturnSuccess;
 }
 
 // Lilu Issue #2299 workaround: Early device registration for framework compatibility
@@ -1964,8 +1990,8 @@ void VMQemuVGA::publishDeviceForLiluFrameworks()
 	OSNumber* subVendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-vendor-id"));
 	OSNumber* subDeviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-id"));
 	
-	UInt16 vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x1AF4;  // Default VirtIO
-	UInt16 deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x1050;  // Default VirtIO GPU  
+	UInt16 vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x1B36;  // Default QXL Red Hat
+	UInt16 deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x0100;  // Default QXL VGA  
 	UInt16 subsystemVendorID = subVendorProp ? subVendorProp->unsigned16BitValue() : 0x1414;  // Microsoft Hyper-V
 	UInt16 subsystemID = subDeviceProp ? subDeviceProp->unsigned16BitValue() : 0x5353;  // Hyper-V DDA
 	
