@@ -8,6 +8,7 @@
 
 #include "VMIOSurfaceManager.h"
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IOLib.h>
 
 #define CLASS VMIOSurfaceManager
 
@@ -30,16 +31,7 @@
  * 4. Real-time Analytics and Statistics System
  */
 
-typedef struct {
-    uint32_t cache_hits;
-    uint32_t cache_misses;
-    uint32_t total_lookups;
-    uint32_t prefetch_hits;
-    uint32_t fast_path_hits;
-    uint64_t total_discovery_time_ns;
-    uint32_t sequential_access_count;
-    uint32_t random_access_count;
-} VMSurfaceDiscoveryStats;
+// VMSurfaceDiscoveryStats already defined in header file
 
 typedef struct {
     uint32_t surface_id;

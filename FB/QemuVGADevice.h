@@ -63,11 +63,6 @@ public:
 	uint32_t getVRAMSize() const { return static_cast<uint32_t>(m_vram_size); }
 	IOPCIDevice* getProvider() const { return m_provider; } // Getter for PCI device
 	
-	// Hardware detection methods
-	bool isVirtIOGPU() const;  // Detect if this is a VirtIO GPU device
-	bool hasFixedVRAM() const; // True for QXL (BAR0), false for VirtIO GPU (dynamic)
-	
 
 };
 #endif /* __QemuVGADevice_H__ */
-
