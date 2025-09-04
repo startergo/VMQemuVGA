@@ -115,14 +115,7 @@ bool CLASS::Start(IOPCIDevice* provider)
 	DLOG("%s Starting with mode : w:%d h:%d bpp:%d\n", __FUNCTION__, m_width, m_height, m_bpp );
 
 	//Cosmetic
-	#include <IOKit/pci/IOPCIDevice.h>
-#include <IOKit/IOMemoryDescriptor.h>
-#include <IOKit/IOLib.h>
-#include "QemuVGADevice.h"
-#include "common_fb.h"
-
-
-#define SVGA_DEBUG
+	provider->setProperty("model", "Qemu VBE/VGA Std");
 	
 	return true;
 }
@@ -143,6 +136,3 @@ void CLASS::SetMode(uint32_t width, uint32_t height, uint32_t bpp)
 	WriteRegVBE(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED);
 	
 }
-
-
-

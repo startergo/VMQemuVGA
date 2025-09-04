@@ -242,7 +242,7 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     memory_config.high_resolution_memory_pool = 512 * 1024 * 1024; // 512MB high-res pool
     memory_config.compressed_texture_memory_pool = 64 * 1024 * 1024; // 64MB compressed pool
     memory_config.cache_memory_allocation = 32 * 1024 * 1024; // 32MB cache
-    memory_config.scratch_memory_allocation = 128 * 1024 * 1024; // 128MB scratch space (proportional to 512MB VRAM)
+    memory_config.scratch_memory_allocation = 16 * 1024 * 1024; // 16MB scratch space
     memory_config.memory_alignment_requirement = 256; // 256-byte alignment
     memory_config.memory_page_size = 4096; // 4KB page size
     memory_config.supports_memory_pooling = true;
@@ -1702,7 +1702,7 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
                     cache_opt.l3_cache_optimization = (adaptive_opt.optimization_method == 3);
                     cache_opt.cache_prefetch_enabled = adaptive_opt.cache_prefetch_enabled;
                     cache_opt.cache_bypass_for_large_transfers = (adaptive_opt.optimization_method == 3) && 
-                                                                (data_processing.data_size > (128 * 1024 * 1024)); // >128MB
+                                                                (data_processing.data_size > (16 * 1024 * 1024)); // >16MB
                     cache_opt.prefetch_distance = (adaptive_opt.optimization_method == 3) ? 8 : ((adaptive_opt.optimization_method == 2) ? 4 : 2);
                     cache_opt.prefetch_stride = memory_layout_opt.cache_line_optimization; // Cache line sized strides
                     cache_opt.write_combining_enabled = (adaptive_opt.optimization_method >= 2);

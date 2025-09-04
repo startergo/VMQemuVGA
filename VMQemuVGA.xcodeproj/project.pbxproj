@@ -38,6 +38,7 @@
 		PH3B08 /* VMCoreAnimationAccelerator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3020 /* VMCoreAnimationAccelerator.cpp */; };
 		PH3B09 /* VMPhase3Manager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3021 /* VMPhase3Manager.cpp */; };
 		PH3B10 /* VMCommandBuffer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3022 /* VMCommandBuffer.cpp */; };
+		PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3023 /* VMIOSurfaceManager_Helpers.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,6 +89,7 @@
 		PH3020 /* VMCoreAnimationAccelerator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMCoreAnimationAccelerator.cpp; sourceTree = "<group>"; };
 		PH3021 /* VMPhase3Manager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMPhase3Manager.cpp; sourceTree = "<group>"; };
 		PH3022 /* VMCommandBuffer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMCommandBuffer.cpp; sourceTree = "<group>"; };
+		PH3023 /* VMIOSurfaceManager_Helpers.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMIOSurfaceManager_Helpers.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -131,6 +133,7 @@
 				PH3020 /* VMCoreAnimationAccelerator.cpp */,
 				PH3021 /* VMPhase3Manager.cpp */,
 				PH3022 /* VMCommandBuffer.cpp */,
+				PH3023 /* VMIOSurfaceManager_Helpers.cpp */,
 			);
 			name = Source;
 			sourceTree = "<group>";
@@ -252,6 +255,7 @@
 				PH3B08 /* VMCoreAnimationAccelerator.cpp in Sources */,
 				PH3B09 /* VMPhase3Manager.cpp in Sources */,
 				PH3B10 /* VMCommandBuffer.cpp in Sources */,
+				PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -266,7 +270,33 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		1DEB91DB08733DB10010E9CD /* Release */ = {
+		1DEB91DB08733DB10010E9CD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"LOGGING_LEVEL=3",
+					VLOG_LOCAL,
+					VECTORIZE,
+					DEBUG,
+				);
+				GCC_VERSION = "";
+				INFOPLIST_FILE = "Info-FB.plist";
+				MODULE_NAME = puredarwin.driver.VMQemuVGA;
+				PRODUCT_NAME = VMQemuVGA;
+				SKIP_INSTALL = NO;
+				STRIP_STYLE = "debugging";
+				WRAPPER_EXTENSION = kext;
+				CONTENTS_FOLDER_PATH = "$(WRAPPER_NAME)/Contents";
+				EXECUTABLE_FOLDER_PATH = "$(CONTENTS_FOLDER_PATH)/MacOS";
+				INFOPLIST_PATH = "$(CONTENTS_FOLDER_PATH)/Info.plist";
+				UNLOCALIZED_RESOURCES_FOLDER_PATH = "$(CONTENTS_FOLDER_PATH)/Resources";
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+			};
+			name = Debug;
+		};
+		1DEB91DC08733DB10010E9CD /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -281,6 +311,10 @@
 				SKIP_INSTALL = NO;
 				STRIP_STYLE = "non-global";
 				WRAPPER_EXTENSION = kext;
+				CONTENTS_FOLDER_PATH = "$(WRAPPER_NAME)/Contents";
+				EXECUTABLE_FOLDER_PATH = "$(CONTENTS_FOLDER_PATH)/MacOS";
+				INFOPLIST_PATH = "$(CONTENTS_FOLDER_PATH)/Info.plist";
+				UNLOCALIZED_RESOURCES_FOLDER_PATH = "$(CONTENTS_FOLDER_PATH)/Resources";
 			};
 			name = Release;
 		};
@@ -301,6 +335,11 @@
 				CODE_SIGN_IDENTITY = "${CODE_SIGN_IDENTITY}";
 				CODE_SIGN_ENTITLEMENTS = "VMQemuVGA.entitlements";
 				CODE_SIGNING_REQUIRED = YES;
+				INFOPLIST_FILE = "Info-FB.plist";
+				CONTENTS_FOLDER_PATH = "$(WRAPPER_NAME)/Contents";
+				EXECUTABLE_FOLDER_PATH = "$(CONTENTS_FOLDER_PATH)/MacOS";
+				INFOPLIST_PATH = "$(CONTENTS_FOLDER_PATH)/Info.plist";
+				UNLOCALIZED_RESOURCES_FOLDER_PATH = "$(CONTENTS_FOLDER_PATH)/Resources";
 			};
 			name = Release;
 		};
@@ -353,6 +392,7 @@
 				CODE_SIGN_IDENTITY = "${CODE_SIGN_IDENTITY}";
 				CODE_SIGN_ENTITLEMENTS = "VMQemuVGA.entitlements";
 				CODE_SIGNING_REQUIRED = YES;
+				INFOPLIST_FILE = "Info-FB.plist";
 			};
 			name = Debug;
 		};
