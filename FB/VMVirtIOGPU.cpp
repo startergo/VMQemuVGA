@@ -54,21 +54,27 @@ void CLASS::free()
 
 bool CLASS::start(IOService* provider)
 {
-    IOLog("VMVirtIOGPU::start\n");
+    IOLog("VMVirtIOGPU::start with provider %s\n", provider->getMetaClass()->getClassName());
     
     if (!super::start(provider))
         return false;
     
-    m_pci_device = OSDynamicCast(IOPCIDevice, provider);
+    // Provider is AppleVirtIOPCITransport, not IOPCIDevice
+    m_virtio_device = provider;
+    
+    // Get the underlying PCI device from the VirtIO transport
+    m_pci_device = OSDynamicCast(IOPCIDevice, provider->getProvider());
     if (!m_pci_device) {
-        IOLog("VMVirtIOGPU: Provider is not a PCI device\n");
+        IOLog("VMVirtIOGPU: Cannot get PCI device from VirtIO transport\n");
         return false;
     }
     
-    // Store VirtIO device reference
-    m_virtio_device = provider;
+    IOLog("VMVirtIOGPU: Found PCI device %04x:%04x via VirtIO transport\n",
+          m_pci_device->configRead16(kIOPCIConfigVendorID),
+          m_pci_device->configRead16(kIOPCIConfigDeviceID));
     
-    // Enable PCI device
+    // VirtIO transport should have already enabled the PCI device
+    // but ensure it's properly configured
     m_pci_device->setMemoryEnable(true);
     m_pci_device->setIOEnable(true);
     m_pci_device->setBusMasterEnable(true);

@@ -83,13 +83,13 @@
 			<key>IOClass</key>
 			<string>VMVirtIOGPU</string>
 			<key>IOMatchCategory</key>
-			<string>IODefaultMatchCategory</string>
-			<key>IOPCIMatch</key>
-			<string>0x10091af4 0x10501af4 0x11001af4 0x10511af4 0x10521af4 0x10531af4 0x10541af4 0x10551af4 0x10561af4 0x10571af4 0x10581af4 0x10591af4 0x105a1af4 0x105b1af4 0x105c1af4 0x105d1af4 0x105e1af4 0x105f1af4</string>
+			<string>VMVirtIOGPUCategory</string>
 			<key>IOProbeScore</key>
 			<integer>95000</integer>
 			<key>IOProviderClass</key>
-			<string>IOPCIDevice</string>
+			<string>AppleVirtIOPCITransport</string>
+			<key>VirtIODeviceID</key>
+			<integer>16</integer>
 			<key>IOSourceVersion</key>
 			<string>1.0.0.0</string>
 			<key>IOHardwareModel</key>
