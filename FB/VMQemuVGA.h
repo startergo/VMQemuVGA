@@ -37,7 +37,7 @@ private:
 	// Device type detection and multi-path architecture
 	VMDeviceType m_device_type;			//Detected device type for proper code path selection
 	bool m_is_virtio_gpu;				//Quick check for VirtIO GPU devices
-	bool m_is_qxl_device;				//Quick check for QXL devices
+	bool m_is_qxl_device;				//Track if we're actually QXL hardware with VirtIO mock
 	
 	// 3D acceleration support
 	VMVirtIOGPU* m_gpu_device;			//VirtIO GPU device for 3D acceleration
@@ -77,12 +77,15 @@ private:
 	DisplayModeEntry const* GetDisplayMode(IODisplayModeID displayMode);
 	static void IOSelectToString(IOSelect io_select, char* output);
 	
+	// PCI configuration space helper methods
+	bool readPCIConfigSpace(IOPCIDevice* pciDevice, uint16_t* vendorID, uint16_t* deviceID);
+	
 	// VirtIO GPU detection and initialization helper methods
-	bool scanForVirtIOGPUDevices();
+	IOReturn scanForVirtIOGPUDevices();
 	VMVirtIOGPU* createMockVirtIOGPUDevice();
-	bool initializeDetectedVirtIOGPU();
-	bool queryVirtIOGPUCapabilities();
-	bool configureVirtIOGPUOptimalSettings();
+	IOReturn initializeDetectedVirtIOGPU();
+	IOReturn queryVirtIOGPUCapabilities();
+	IOReturn configureVirtIOGPUOptimalSettings();
 	
 	// Lilu Issue #2299 workaround: Early device registration for framework compatibility
 	void publishDeviceForLiluFrameworks();
@@ -182,22 +185,6 @@ public:
 	void lockDevice();
 	void unlockDevice();
 	void useAccelUpdates(bool state);
-	
-	
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #endif /* __VMSVGA2_H__ */
