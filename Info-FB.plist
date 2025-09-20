@@ -65,7 +65,11 @@
 			<key>IOPrimaryDisplay</key>
 			<true/>
 			<key>IOAcceleratorFamily</key>
-			<string>IOGraphicsFamily</string>
+			<true/>
+			<key>IOAccelerator3D</key>
+			<true/>
+			<key>VirtIOGPUAccelerator</key>
+			<true/>
 			<!-- Hyper-V and Lilu compatibility properties -->
 			<key>VMQemuVGA-Hyper-V-Compatible</key>
 			<true/>
@@ -83,23 +87,59 @@
 			<key>IOClass</key>
 			<string>VMVirtIOGPU</string>
 			<key>IOMatchCategory</key>
-			<string>VMVirtIOGPUCategory</string>
+			<string>VMVirtIOGPU</string>
 			<key>IOProbeScore</key>
-			<integer>95000</integer>
+			<integer>100000</integer>
 			<key>IOProviderClass</key>
-			<string>AppleVirtIOPCITransport</string>
-			<key>VirtIODeviceID</key>
-			<integer>16</integer>
-			<key>IOSourceVersion</key>
-			<string>1.0.0.0</string>
+			<string>IOPCIDevice</string>
+			<key>IOPCIMatch</key>
+			<string>0x10501af4 0x10511af4 0x10521af4</string>
+			<key>IONameMatch</key>
+			<string>display</string>
+			<key>IOUserClientClass</key>
+			<string>VMQemuVGAClient</string>
 			<key>IOHardwareModel</key>
-			<string>VirtIO GPU Acceleration Service</string>
-			<key>3D Acceleration</key>
-			<string>VirtIO GPU</string>
-			<key>Vendor</key>
-			<string>Red Hat, Inc.</string>
-			<key>Device</key>
-			<string>VirtIO GPU</string>
+			<string>VirtIO GPU / VirtIO VGA</string>
+			<key>IOGraphicsAccelerator</key>
+			<true/>
+			<key>IOAcceleratorTypes</key>
+			<array>
+				<string>Framebuffer</string>
+				<string>3D</string>
+				<string>VirtIO-GPU</string>
+			</array>
+			<key>IODisplayClass</key>
+			<string>IOFramebuffer</string>
+			<key>IOGraphicsDevice</key>
+			<true/>
+			<key>IOPrimaryDisplay</key>
+			<true/>
+			<key>IOAcceleratorFamily</key>
+			<true/>
+			<key>IOAccelerator3D</key>
+			<true/>
+			<key>VirtIOGPUAccelerator</key>
+			<true/>
+			<!-- CRITICAL: Disable IONDRVFramebuffer for VirtIO GPU -->
+			<key>IONDRV</key>
+			<false/>
+			<key>IONDRVFramebuffer</key>
+			<false/>
+			<key>IOAccelDisplayMachineInfo</key>
+			<false/>
+		</dict>
+		<key>VMVirtIOFramebuffer</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>${MODULE_NAME}</string>
+			<key>IOClass</key>
+			<string>VMVirtIOFramebuffer</string>
+			<key>IOMatchCategory</key>
+			<string>VMVirtIOFramebuffer</string>
+			<key>IOProviderClass</key>
+			<string>VMVirtIOGPU</string>
+			<key>IOProbeScore</key>
+			<integer>250000</integer>
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>

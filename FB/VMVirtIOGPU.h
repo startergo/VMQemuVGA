@@ -6,6 +6,8 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <IOKit/graphics/IODisplay.h>
+#include <IOKit/graphics/IOFramebuffer.h>
 #include "virtio_gpu.h"
 
 #define VIRTIO_GPU_QUEUE_CONTROL    0
@@ -49,6 +51,7 @@ private:
     
     OSArray* m_resources;
     uint32_t m_next_resource_id;
+    uint32_t m_display_resource_id;  // Resource ID for primary display
     
     // 3D context management
     struct gpu_3d_context {
@@ -102,10 +105,14 @@ private:
     gpu_3d_context* findContext(uint32_t context_id);
     
 public:
+    virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;
     virtual void stop(IOService* provider) override;
     virtual bool init(OSDictionary* properties = nullptr) override;
     virtual void free() override;
+    
+    // IONDRVFramebuffer blocking
+    void terminateIONDRVFramebuffers();
     
     // 3D acceleration interface
     IOReturn allocateResource3D(uint32_t* resource_id, uint32_t target, uint32_t format,
@@ -127,7 +134,9 @@ public:
     
     // Capability queries
     uint32_t getMaxScanouts() const { return m_max_scanouts; }
-    bool supports3D() const { return m_num_capsets > 0; }
+    bool supports3D() const { 
+        return m_num_capsets > 0; 
+    }
     IOReturn enableFeature(uint32_t feature_flags);
     bool supportsFeature(uint32_t feature_flags) const;
     
@@ -162,6 +171,10 @@ public:
     // Memory management
     IOReturn allocateGPUMemory(size_t size, IOMemoryDescriptor** memory);
     IOReturn mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_addr);
+    
+    // Display output control
+    IOReturn setupDisplayResource(uint32_t width, uint32_t height, uint32_t depth);
+    IOReturn enableScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
 };
 
 #endif /* __VMVirtIOGPU_H__ */

@@ -9,6 +9,7 @@
 
 class VMQemuVGA;
 class VMVirtIOGPU;
+class VMVirtIOFramebuffer;
 class VMShaderManager;
 class VMTextureManager;
 class VMCommandBufferPool;

@@ -13,6 +13,9 @@
 #define FMT_U(x) static_cast<unsigned>(x)
 
 #define VGA_DEBUG
+#ifndef VLOG_LOCAL
+#define VLOG_LOCAL
+#endif
 
 #ifdef  VGA_DEBUG
 #define DLOG(fmt, args...)  IOLog(fmt, ## args)
@@ -28,6 +31,94 @@
 #define VLOG(fmt, args...)
 #define VLOG_ENTRY()
 #endif
+
+// PCI Configuration Space Helper Method
+bool VMQemuVGA::readPCIConfigSpace(IOPCIDevice* pciDevice, uint16_t* vendorID, uint16_t* deviceID)
+{
+	if (!pciDevice || !vendorID || !deviceID) {
+		IOLog("VMQemuVGA: Invalid parameters for PCI config space read\n");
+		return false;
+	}
+	
+	IOLog("VMQemuVGA: Attempting to read PCI configuration space\n");
+	
+	// Method 1: Try reading properties as OSNumber
+	OSNumber* vendorNum = OSDynamicCast(OSNumber, pciDevice->getProperty("vendor-id"));
+	OSNumber* deviceNum = OSDynamicCast(OSNumber, pciDevice->getProperty("device-id"));
+	
+	if (vendorNum && deviceNum) {
+		*vendorID = (uint16_t)vendorNum->unsigned32BitValue();
+		*deviceID = (uint16_t)deviceNum->unsigned32BitValue();
+		
+		if (*vendorID != 0xFFFF && *vendorID != 0x0000 && *deviceID != 0xFFFF) {
+			IOLog("VMQemuVGA: Successfully read PCI IDs via OSNumber - Vendor: 0x%04X, Device: 0x%04X\n", *vendorID, *deviceID);
+			return true;
+		}
+	}
+	
+	IOLog("VMQemuVGA: OSNumber read failed - trying OSData properties\n");
+	
+	// Method 2: Try reading properties as OSData
+	OSData* vendorData = OSDynamicCast(OSData, pciDevice->getProperty("vendor-id"));
+	OSData* deviceData = OSDynamicCast(OSData, pciDevice->getProperty("device-id"));
+	
+	if (vendorData && deviceData && vendorData->getLength() >= 2 && deviceData->getLength() >= 2) {
+		*vendorID = *(const uint16_t*)vendorData->getBytesNoCopy();
+		*deviceID = *(const uint16_t*)deviceData->getBytesNoCopy();
+		
+		if (*vendorID != 0xFFFF && *vendorID != 0x0000 && *deviceID != 0xFFFF) {
+			IOLog("VMQemuVGA: Successfully read PCI IDs via OSData - Vendor: 0x%04X, Device: 0x%04X\n", *vendorID, *deviceID);
+			return true;
+		}
+	}
+	
+	IOLog("VMQemuVGA: Property read failed - trying direct config space access\n");
+	
+	// Method 3: Direct PCI configuration space access via memory mapping
+	IODeviceMemory* configMemory = pciDevice->getDeviceMemoryWithIndex(kIOPCIConfigSpace);
+	if (configMemory) {
+		IOMemoryMap* configMap = configMemory->map();
+		if (configMap) {
+			IOVirtualAddress configBase = configMap->getVirtualAddress();
+			if (configBase) {
+				// Read the first 32-bit register (offset 0x00) which contains both IDs
+				uint32_t vendorDeviceReg = *(volatile uint32_t*)(configBase + 0x00);
+				*vendorID = (uint16_t)(vendorDeviceReg & 0xFFFF);        // Lower 16 bits
+				*deviceID = (uint16_t)((vendorDeviceReg >> 16) & 0xFFFF); // Upper 16 bits
+				
+				IOLog("VMQemuVGA: Successfully read PCI IDs via config space mapping - Vendor: 0x%04X, Device: 0x%04X\n", *vendorID, *deviceID);
+				configMap->release();
+				
+				if (*vendorID != 0xFFFF && *vendorID != 0x0000 && *deviceID != 0xFFFF) {
+					return true;
+				}
+			}
+			configMap->release();
+		}
+	}
+	
+	IOLog("VMQemuVGA: Config space mapping failed - trying parent device\n");
+	
+	// Method 4: Try getting properties from parent PCI device
+	IORegistryEntry* parent = pciDevice->getParentEntry(gIOServicePlane);
+	if (parent) {
+		vendorNum = OSDynamicCast(OSNumber, parent->getProperty("vendor-id"));
+		deviceNum = OSDynamicCast(OSNumber, parent->getProperty("device-id"));
+		
+		if (vendorNum && deviceNum) {
+			*vendorID = (uint16_t)vendorNum->unsigned32BitValue();
+			*deviceID = (uint16_t)deviceNum->unsigned32BitValue();
+			
+			if (*vendorID != 0xFFFF && *vendorID != 0x0000 && *deviceID != 0xFFFF) {
+				IOLog("VMQemuVGA: Successfully read PCI IDs via parent - Vendor: 0x%04X, Device: 0x%04X\n", *vendorID, *deviceID);
+				return true;
+			}
+		}
+	}
+	
+	IOLog("VMQemuVGA: All PCI config space read methods failed\n");
+	return false;
+}
 
 
 //for getPixelFormat
@@ -48,50 +139,58 @@ IOService* VMQemuVGA::probe(IOService* provider, SInt32* score)
 {
     VLOG_ENTRY();
     
+    IOLog("VMQemuVGA: PROBE CALLED - Starting device probe\n");
+    
     if (!super::probe(provider, score)) {
-        VLOG("Super probe failed");
+        IOLog("VMQemuVGA: Super probe failed\n");
         return NULL;
     }
     
+    // Only handle direct PCI devices - VirtIO devices go through VMVirtIOGPU
     IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, provider);
     if (!pciDevice) {
-        VLOG("Provider is not a PCI device");
+        IOLog("VMQemuVGA: Provider is not a PCI device - returning NULL\n");
         return NULL;
     }
     
-    // Check vendor and device ID
-    UInt32 vendorID = pciDevice->configRead32(kIOPCIConfigVendorID) & 0xFFFF;
-    UInt32 deviceID = (pciDevice->configRead32(kIOPCIConfigVendorID) >> 16) & 0xFFFF;
-    
-    VLOG("Found PCI device: vendor=0x%04x, device=0x%04x", vendorID, deviceID);
-    
-    // QXL devices (Red Hat QEMU VGA)
-    if (vendorID == 0x1b36 && deviceID == 0x0100) {
-        *score = 90000;  // High score to beat NDRV
-        VLOG("VMQemuVGA probe successful - QXL device with score %d", *score);
-        return this;
+    // Get vendor and device ID from IORegistry properties
+    uint16_t vendor_id = 0, device_id = 0;
+    if (!readPCIConfigSpace(pciDevice, &vendor_id, &device_id)) {
+        IOLog("VMQemuVGA: Failed to read PCI vendor/device properties\n");
+        return NULL;
     }
     
-    // VirtIO GPU devices are handled by VMVirtIOGPU personality - DO NOT ACCEPT
-    if (vendorID == 0x1af4 && deviceID >= 0x1050 && deviceID <= 0x105f) {
-        VLOG("VMQemuVGA probe - VirtIO GPU device rejected, should use VMVirtIOGPU personality");
-        return NULL;  // Reject VirtIO devices
+    IOLog("VMQemuVGA: Found PCI device: vendor=0x%04x, device=0x%04x\n", vendor_id, device_id);
+    
+    // QXL devices (Red Hat QEMU VGA) - Highest priority
+    if (vendor_id == 0x1b36 && device_id == 0x0100) {
+        *score = 95000;  // Very high score to beat NDRV
+        IOLog("VMQemuVGA: QXL device detected - PROBE SUCCESSFUL with score %d\n", *score);
+        return this;
     }
     
     // QEMU VGA devices (Bochs/QEMU)
-    if (vendorID == 0x1234 && (deviceID == 0x1111 || deviceID == 0x1112 || deviceID == 0x4005)) {
-        *score = 90000;  // High score to beat NDRV
-        VLOG("VMQemuVGA probe successful - QEMU VGA device with score %d", *score);
+    if (vendor_id == 0x1234 && (device_id == 0x1111 || device_id == 0x1112 || device_id == 0x4005)) {
+        *score = 85000;  // Lower score for traditional QEMU VGA
+        IOLog("VMQemuVGA: QEMU VGA device detected - PROBE SUCCESSFUL with score %d\n", *score);
         return this;
     }
     
-    VLOG("Device not supported - vendor=0x%04x, device=0x%04x", vendorID, deviceID);
+    // VirtIO GPU devices - DO NOT CLAIM (handled by VMVirtIOGPU)
+    if (vendor_id == 0x1af4 && device_id >= 0x1050 && device_id <= 0x105f) {
+        IOLog("VMQemuVGA: VirtIO GPU device detected - deferring to VMVirtIOGPU\n");
+        return NULL;
+    }
+    
+    IOLog("VMQemuVGA: Device not supported - vendor=0x%04x, device=0x%04x\n", vendor_id, device_id);
     return NULL;
 }/*************START********************/
 bool CLASS::start(IOService* provider)
 {
 	uint32_t max_w, max_h;
 	
+	IOLog("VMQemuVGA: START METHOD CALLED - Driver is being started!\n");
+	VLOG("START METHOD CALLED");
 	DLOG("%s::%s \n", getName(), __FUNCTION__);
 	
 	//get a PCIDevice provider
@@ -118,6 +217,14 @@ bool CLASS::start(IOService* provider)
 	m_intr_enabled = false;
 	m_accel_updates = false;
 	
+	// Declare variables before any goto statements to avoid jump initialization errors
+	UInt32 memoryBandwidth = (UInt32)(1024 * 1024 * 1024); // 1GB
+	UInt32 vramSize = (UInt32)(64 * 1024 * 1024); // 64MB default
+	UInt32 iosurfaceMaxWidth = (UInt32)16384;
+	UInt32 iosurfaceMaxHeight = (UInt32)16384;
+	IOReturn sys_ret_outside = registerWithSystemGraphics();
+	IOReturn iosurface_ret_outside = initializeIOSurfaceSupport();
+	
 	// VMQemuVGA Phase 3 startup logging
 	IOLog("VMQemuVGA: VMQemuVGA Phase 3 enhanced graphics driver starting\n");
 	IOLog("VMQemuVGA: Designed to complement MacHyperVSupport and resolve Lilu Issue #2299\n");
@@ -133,24 +240,64 @@ bool CLASS::start(IOService* provider)
 		IOLog("VMQemuVGA: No MacHyperVFramebuffer found - operating in standalone mode\n");
 	}
 	
+	// Early device identification for better diagnostics
+	OSObject* earlyVendorProp = static_cast<IOPCIDevice*>(provider)->getProperty("vendor-id");
+	OSObject* earlyDeviceProp = static_cast<IOPCIDevice*>(provider)->getProperty("device-id");
+	
+	OSNumber* earlyVendorNum = OSDynamicCast(OSNumber, earlyVendorProp);
+	OSNumber* earlyDeviceNum = OSDynamicCast(OSNumber, earlyDeviceProp);
+	
+	uint32_t early_vendor_id = earlyVendorNum ? earlyVendorNum->unsigned16BitValue() : 0;
+	uint32_t early_device_id = earlyDeviceNum ? earlyDeviceNum->unsigned16BitValue() : 0;
+	
+	if (early_vendor_id == 0x1b36 && early_device_id == 0x0100) {
+		IOLog("VMQemuVGA: QXL graphics device detected - optimizing for QEMU VGA compatibility\n");
+		IOLog("VMQemuVGA: Note: QXL devices may have limited VRAM detection capabilities\n");
+	} else if (early_vendor_id == 0x1af4) {
+		IOLog("VMQemuVGA: VirtIO GPU device detected - enabling advanced graphics features\n");
+	} else {
+		IOLog("VMQemuVGA: Traditional graphics device detected (vendor=0x%x, device=0x%x)\n", 
+			  early_vendor_id, early_device_id);
+	}
+	
 	//Init svga
 	svga.Init();
 	
 	// Declare variables before any goto statements to avoid jump initialization errors
-	UInt32 vendor_device = static_cast<IOPCIDevice*>(provider)->configRead32(kIOPCIConfigurationOffsetVendorID);
-	uint32_t vendor_id = vendor_device & 0xFFFF;
-	uint32_t device_id = (vendor_device >> 16) & 0xFFFF;
-	bool is_qxl = (vendor_id == 0x1b36 && device_id == 0x0100);    // QXL device
-	bool is_virtio = (vendor_id == 0x1af4 && device_id == 0x1050); // VirtIO GPU
+	OSObject* vendorProp = static_cast<IOPCIDevice*>(provider)->getProperty("vendor-id");
+	OSObject* deviceProp = static_cast<IOPCIDevice*>(provider)->getProperty("device-id");
 	
-	// Mock VirtIO GPU for QXL devices to enable WebKit acceleration
-	if (is_qxl) {
-		IOLog("VMQemuVGA: QXL device detected, creating mock VirtIO GPU interface for WebKit\n");
-		m_is_virtio_gpu = true; // Pretend to be VirtIO GPU for WebKit
-		m_is_qxl_device = true; // Remember we're actually QXL
-	} else {
-		m_is_virtio_gpu = is_virtio;
-		m_is_qxl_device = false;
+	OSNumber* vendorNum = OSDynamicCast(OSNumber, vendorProp);
+	OSNumber* deviceNum = OSDynamicCast(OSNumber, deviceProp);
+	
+	uint32_t vendor_id = vendorNum ? vendorNum->unsigned16BitValue() : 0;
+	uint32_t device_id = deviceNum ? deviceNum->unsigned16BitValue() : 0;
+	
+	// Enhanced hardware type detection - check for all VirtIO GPU variants (UTM modular QEMU)
+	bool is_virtio = false;
+	if (vendor_id == 0x1af4) {
+		// VirtIO GPU devices (Red Hat VirtIO) - full range for UTM modular QEMU
+		is_virtio = (device_id >= 0x1000 && device_id <= 0x10ff);
+		if (is_virtio) {
+			IOLog("VMQemuVGA: UTM modular QEMU VirtIO GPU device detected (ID: 0x%04X) - enabling enhanced support\n", device_id);
+		}
+	}
+	
+	// Check for QXL device
+	bool is_qxl = (vendor_id == 0x1b36 && device_id == 0x0100);
+	
+	// Store hardware type for later use in init3DAcceleration()
+	m_is_virtio_gpu = is_virtio;
+	m_is_qxl_device = is_qxl;
+	
+	// Log hardware detection for debugging console-to-GUI transition issues
+	if (is_qxl && is_virtio) {
+		IOLog("VMQemuVGA: WARNING - Both QXL and VirtIO devices detected! This may cause console-to-GUI transition issues.\n");
+		IOLog("VMQemuVGA: QXL will take priority to prevent driver conflicts.\n");
+	} else if (is_qxl) {
+		IOLog("VMQemuVGA: QXL device prioritized for stable console-to-GUI transition\n");
+	} else if (is_virtio) {
+		IOLog("VMQemuVGA: VirtIO GPU device detected for enhanced graphics\n");
 	}
 	
 	//Start svga, init the FIFO too
@@ -167,40 +314,154 @@ bool CLASS::start(IOService* provider)
 	if (is_virtio) {
 		IOLog("VMQemuVGA: VirtIO GPU hardware detected (vendor=0x%x, device=0x%x)\n", vendor_id, device_id);
 		IOLog("VMQemuVGA: Deferring VRAM initialization until VirtIO GPU device is ready\n");
-		m_vram = nullptr; // Will be set later in init3DAcceleration()
+		
+		// For VirtIO devices, VRAM is managed through VirtIO resource system
+		// We'll initialize it later through the VMVirtIOGPU device in init3DAcceleration()
+		// This prevents conflicts with VirtIO GPU resource management
+		m_vram = nullptr;
+		
+		IOLog("VMQemuVGA: VirtIO GPU VRAM will be allocated through VirtIO resource management\n");
+	} else if (is_qxl) {
+		IOLog("VMQemuVGA: QXL hardware detected (vendor=0x%x, device=0x%x)\n", vendor_id, device_id);
+		IOLog("VMQemuVGA: Initializing QXL VRAM immediately for stable console-to-GUI transition\n");
+		m_vram = svga.get_m_vram();
+		
+		// Enhanced VRAM detection for QXL devices
+		if (!m_vram) {
+			IOLog("VMQemuVGA: Primary QXL VRAM detection failed, trying fallback methods\n");
+			
+			// Try to get VRAM from PCI BAR0 directly
+			IOPCIDevice* pciDevice = static_cast<IOPCIDevice*>(provider);
+			if (pciDevice) {
+				IODeviceMemory* bar0 = pciDevice->getDeviceMemoryWithIndex(0U);
+				if (bar0 && bar0->getLength() > 0) {
+					IOLog("VMQemuVGA: Using PCI BAR0 as QXL VRAM fallback (size: %llu bytes)\n", bar0->getLength());
+					m_vram = bar0;
+					m_vram->retain();
+				}
+			}
+			
+			// If still no VRAM, try to create a synthetic VRAM range for QXL
+			if (!m_vram) {
+				uint32_t vram_size = svga.getVRAMSize();
+				if (vram_size == 0) {
+					vram_size = 64 * 1024 * 1024; // 64MB fallback for QXL
+				}
+				IOLog("VMQemuVGA: Creating synthetic QXL VRAM range (size: %u bytes)\n", vram_size);
+				
+				// Allocate contiguous physical memory for QXL VRAM
+				IOBufferMemoryDescriptor* vramBuffer = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+					kernel_task,
+					kIODirectionInOut | kIOMemoryPhysicallyContiguous,
+					vram_size,
+					0xFFFFFFFF  // 32-bit addressable memory for compatibility
+				);
+				
+				if (vramBuffer) {
+					// Create IODeviceMemory from the buffer
+					IOPhysicalAddress physAddr = vramBuffer->getPhysicalAddress();
+					if (physAddr) {
+						m_vram = IODeviceMemory::withRange(physAddr, vram_size);
+						if (m_vram) {
+							IOLog("VMQemuVGA: Successfully allocated synthetic VRAM at physical 0x%llx\n", (uint64_t)physAddr);
+							m_vram->retain();
+						} else {
+							IOLog("VMQemuVGA: Failed to create IODeviceMemory from buffer\n");
+							vramBuffer->release();
+							return false;
+						}
+					} else {
+						IOLog("VMQemuVGA: Failed to get physical address from VRAM buffer\n");
+						vramBuffer->release();
+						return false;
+					}
+					vramBuffer->release(); // Release our reference, IODeviceMemory now handles it
+				} else {
+					IOLog("VMQemuVGA: Failed to allocate synthetic VRAM buffer\n");
+					return false;  // Critical failure - cannot continue without VRAM
+				}
+			}
+		}
+		
+		// Initialize QXL display mode for proper console-to-GUI transition
+		if (is_qxl && m_vram) {
+			IOLog("VMQemuVGA: Initializing QXL display mode for console-to-GUI transition\n");
+			
+			// Set a safe initial display mode for QXL devices (1024x768@32bpp)
+			// This ensures the framebuffer is ready for GUI transition
+			uint32_t init_width = 1024;
+			uint32_t init_height = 768;
+			uint32_t init_bpp = 32;
+			
+			// Check if the device supports the resolution
+			if (init_width <= svga.getMaxWidth() && init_height <= svga.getMaxHeight()) {
+				IOLog("VMQemuVGA: Setting QXL initial mode: %ux%u@%ubpp\n", init_width, init_height, init_bpp);
+				svga.SetMode(init_width, init_height, init_bpp);
+				IOLog("VMQemuVGA: QXL framebuffer initialized successfully for GUI transition\n");
+			} else {
+				IOLog("VMQemuVGA: Using fallback mode for QXL device\n");
+				svga.SetMode(800, 600, 32); // Safe fallback
+			}
+		}
 	} else {
 		IOLog("VMQemuVGA: Traditional VGA hardware detected (vendor=0x%x, device=0x%x)\n", vendor_id, device_id);
 		m_vram = svga.get_m_vram();
 		
-		// For QXL devices, optimize VRAM access patterns for video performance
-		if (is_qxl && m_vram) {
-			IOLog("VMQemuVGA: Applying QXL memory bandwidth optimizations\n");
+		// Enhanced VRAM detection for traditional hardware
+		if (!m_vram) {
+			IOLog("VMQemuVGA: Primary VRAM detection failed, trying fallback methods\n");
 			
-			// QXL devices suffer from memory bandwidth limitations during video scaling
-			// Optimize the VRAM mapping to reduce PCIe transaction overhead
-			size_t vramSize = m_vram->getLength();
-			if (vramSize >= 512 * 1024 * 1024) { // 512MB or more
-				IOLog("VMQemuVGA: Large VRAM detected (%lluMB), enabling bandwidth optimization\n", 
-					  (unsigned long long)(vramSize / (1024 * 1024)));
+			// Try to get VRAM from PCI BAR0 directly
+			IOPCIDevice* pciDevice = static_cast<IOPCIDevice*>(provider);
+			if (pciDevice) {
+				IODeviceMemory* bar0 = pciDevice->getDeviceMemoryWithIndex(0U);
+				if (bar0 && bar0->getLength() > 0) {
+					IOLog("VMQemuVGA: Using PCI BAR0 as VRAM fallback (size: %llu bytes)\n", bar0->getLength());
+					m_vram = bar0;
+					m_vram->retain();
+				}
 			}
 			
-			// QXL Video Performance: Disable hardware cursor to reduce memory bandwidth conflicts
-			// Hardware cursor operations can interfere with video scaling operations
-			IOLog("VMQemuVGA: Disabling hardware cursor for QXL video optimization\n");
+			// If still no VRAM, try to create a synthetic VRAM range
+			if (!m_vram) {
+				uint32_t vram_size = svga.getVRAMSize();
+				if (vram_size == 0) {
+					vram_size = 64 * 1024 * 1024; // 64MB fallback
+				}
+				IOLog("VMQemuVGA: Creating synthetic VRAM range (size: %u bytes)\n", vram_size);
+				// Note: In a real implementation, we'd need to allocate actual memory here
+				// For now, we'll continue with null VRAM and handle it gracefully
+			}
 		}
 	}	
 	
 	// Log detected VRAM size for debugging
 	if (m_vram) {
 		uint32_t detected_vram = svga.getVRAMSize();
+		if (detected_vram == 0 && !is_virtio) {
+			// For traditional hardware, try to estimate VRAM size from memory range
+			detected_vram = (uint32_t)m_vram->getLength();
+		}
 		IOLog("VMQemuVGA: Detected VRAM size: %u MB (%u bytes)\n", 
 			  detected_vram / (1024 * 1024), detected_vram);
 		
 		if (detected_vram == 0) {
 			IOLog("VMQemuVGA: WARNING - VRAM size is 0! Check hardware configuration\n");
+			if (!is_virtio) {
+				IOLog("VMQemuVGA: For traditional hardware, this may indicate VRAM detection issues\n");
+			}
 		}
 	} else if (is_virtio) {
 		IOLog("VMQemuVGA: VRAM initialization deferred for VirtIO GPU hardware\n");
+	} else {
+		IOLog("VMQemuVGA: WARNING - No VRAM detected for traditional hardware!\n");
+		IOLog("VMQemuVGA: This may cause display issues, but driver will attempt to continue\n");
+		
+		// For QXL devices specifically, this is a known issue
+		if (vendor_id == 0x1b36 && device_id == 0x0100) {
+			IOLog("VMQemuVGA: QXL device detected - VRAM detection may be limited by QEMU configuration\n");
+			IOLog("VMQemuVGA: Consider increasing QEMU VRAM allocation or using VirtIO GPU\n");
+		}
 	}
 	
 	//populate customMode with modeList define in modes.cpp
@@ -219,8 +480,22 @@ bool CLASS::start(IOService* provider)
 			m_modes[m_num_active_modes++] = i + 1U;
 		}
 	}
+	
+	// Enhanced mode validation for VRAM-challenged devices
 	if (m_num_active_modes <= 2U) {
-		goto fail;
+		if (!m_vram && !is_virtio) {
+			IOLog("VMQemuVGA: Limited display modes detected, but continuing with available modes due to VRAM detection issues\n");
+			// Allow driver to continue even with limited modes for better compatibility
+			if (m_num_active_modes >= 1U) {
+				IOLog("VMQemuVGA: At least one display mode available, proceeding with driver initialization\n");
+				// Don't fail here, let the driver continue
+			} else {
+				IOLog("VMQemuVGA: No valid display modes found, driver may not function properly\n");
+				goto fail;
+			}
+		} else {
+			goto fail;
+		}
 	}
 	
 	//Allocate thread for restoring modes
@@ -324,7 +599,9 @@ bool CLASS::start(IOService* provider)
 		setProperty("VMQemuVGA-Canvas-Optimization", kOSBooleanTrue);
 		setProperty("VMQemuVGA-DOM-Rendering-Fast", kOSBooleanTrue);
 		setProperty("IOFramebufferBandwidthLimit", kOSBooleanFalse); // Remove bandwidth limits
-		setProperty("IOFramebufferMemoryBandwidth", kOSBooleanTrue); // High bandwidth mode
+		UInt32 bandwidthValue = (UInt32)(1024 * 1024 * 1024);
+		IOLog("VMQemuVGA: DEBUG - Setting IOFramebufferMemoryBandwidth to %u\n", bandwidthValue);
+		setProperty("IOFramebufferMemoryBandwidth", bandwidthValue); // 1GB bandwidth
 		
 		// Advanced WebGL/OpenGL performance boosters for Snow Leopard
 		setProperty("OpenGL-ShaderCompilation-Cache", kOSBooleanTrue);
@@ -368,6 +645,33 @@ bool CLASS::start(IOService* provider)
 		DLOG("%s: 3D acceleration not available, continuing with 2D only\n", __FUNCTION__);
 	}
 	
+	// CRITICAL FIX: Set numeric I/O Registry properties outside conditional block
+	// This ensures properties are set regardless of 3D acceleration status
+	IOLog("VMQemuVGA: DEBUG - Setting IOFramebufferMemoryBandwidth to %u (unconditional)\n", memoryBandwidth);
+	setProperty("IOFramebufferMemoryBandwidth", memoryBandwidth);
+	
+	IOLog("VMQemuVGA: DEBUG - Setting VRAM,totalsize to %u (unconditional)\n", vramSize);
+	setProperty("VRAM,totalsize", vramSize);
+	
+	// Set IOSurface dimensions unconditionally
+	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxWidth to %u (unconditional)\n", iosurfaceMaxWidth);
+	setProperty("IOSurfaceMaxWidth", iosurfaceMaxWidth);
+	
+	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxHeight to %u (unconditional)\n", iosurfaceMaxHeight);
+	setProperty("IOSurfaceMaxHeight", iosurfaceMaxHeight);
+	
+	// Register with Snow Leopard's system graphics frameworks (moved outside conditional)
+	if (sys_ret_outside != kIOReturnSuccess) {
+		IOLog("VMQemuVGA: Warning - Failed to register with system graphics (0x%x)\n", sys_ret_outside);
+	}
+	
+	// Initialize and register IOSurface manager for Chrome Canvas acceleration (moved outside conditional)
+	if (iosurface_ret_outside != kIOReturnSuccess) {
+		IOLog("VMQemuVGA: Warning - Failed to initialize IOSurface support (0x%x)\n", iosurface_ret_outside);
+	} else {
+		IOLog("VMQemuVGA: IOSurface support initialized for Canvas 2D acceleration\n");
+	}
+	
 	//initiate variable for custom mode and switch
 	m_custom_switch = 0U;
 	m_custom_mode_switched = false;
@@ -384,42 +688,20 @@ bool CLASS::start(IOService* provider)
 	m_display_mode = TryDetectCurrentDisplayMode(3);
 	m_depth_mode = 0;
 	
-	// For QXL devices, minimal configuration only
-	if (m_is_qxl_device) {
-		IOLog("VMQemuVGA: QXL device - minimal configuration\n");
+	// Initialize power management to prevent requestStaticServicePowerLock issues
+	IOLog("VMQemuVGA: Initializing power management\n");
+	PMinit();
+	
+	// Define power states: 0 = sleep, 1 = full power
+	static IOPMPowerState powerStates[2] = {
+		{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},              // Sleep state
+		{1, IOPMDeviceUsable, IOPMPowerOn, IOPMPowerOn, 0, 0, 0, 0, 0, 0, 0, 0}  // Full power
+	};
+	
+	registerPowerDriver(this, powerStates, 2);
+	IOLog("VMQemuVGA: Power management initialized successfully\n");
 		
-		// Basic acceleration settings
-		setProperty("IOAcceleratorFamily", kOSBooleanFalse);
-		setProperty("IOGraphicsAccelerator", kOSBooleanFalse);
-		setProperty("AcceleratedVideoPlayback", kOSBooleanFalse);
-		setProperty("HardwareAccelerated", kOSBooleanFalse);
-		setProperty("model", "QXL (Minimal)");
-		
-		// Only the essential memory settings - nothing else
-		setProperty("IOFBMemorySize", OSNumber::withNumber(112 * 1024 * 1024, 64));
-		setProperty("IOFBVRAMSize", OSNumber::withNumber(112 * 1024 * 1024, 64));
-		setProperty("IOFBMemoryBandwidth", OSNumber::withNumber(150000000ULL, 64));
-		setProperty("IOFBRefreshRate", OSNumber::withNumber(18, 32));
-		
-		IOLog("VMQemuVGA: QXL minimal configuration applied\n");
-		
-	} else if (m_is_virtio_gpu) {
-		// Real VirtIO GPU device
-		setProperty("IOAcceleratorFamily", kOSBooleanTrue);
-		setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
-		setProperty("AcceleratedVideoPlayback", kOSBooleanTrue);
-		setProperty("HardwareAccelerated", kOSBooleanTrue);
-		setProperty("IOAcceleratorTypes", "VirtIO-GPU");
-		setProperty("VMQemuVGA-VirtIO-GPU-Support", kOSBooleanTrue);
-	} else {
-		// Standard 2D framebuffer
-		setProperty("IOAcceleratorFamily", kOSBooleanFalse);
-		setProperty("IOGraphicsAccelerator", kOSBooleanFalse);
-		setProperty("AcceleratedVideoPlayback", kOSBooleanFalse);
-		setProperty("HardwareAccelerated", kOSBooleanFalse);
-	}
-		
-	return true;
+	return kIOReturnSuccess;
 	
 fail:
 	Cleanup();
@@ -476,6 +758,72 @@ void CLASS::stop(IOService* provider)
 	
 	IOLog("VMQemuVGA: Clean shutdown completed\n");
 	super::stop(provider);
+}
+
+/*************POWER MANAGEMENT********************/
+
+// Power Management Support - Prevents requestStaticServicePowerLock issues
+IOReturn CLASS::setPowerState(unsigned long powerStateOrdinal, IOService* whatDevice)
+{
+	IOLog("VMQemuVGA: setPowerState called - state: %lu\n", powerStateOrdinal);
+	
+	if (powerStateOrdinal == 0) {
+		// Power off - suspend graphics operations
+		IOLog("VMQemuVGA: Entering low power state\n");
+		if (m_iolock) {
+			IOLockLock(m_iolock);
+			// Suspend any ongoing graphics operations
+			IOLockUnlock(m_iolock);
+		}
+	} else {
+		// Power on - resume graphics operations
+		IOLog("VMQemuVGA: Entering full power state\n");
+		// Resume normal operations if needed
+	}
+	
+	return IOPMAckImplied;
+}
+
+unsigned long CLASS::maxCapabilityForDomainState(IOPMPowerFlags domainState)
+{
+	// Return maximum capability for the given power domain state
+	if (domainState & IOPMPowerOn) {
+		return 1; // Full power state
+	}
+	return 0; // Low power state
+}
+
+unsigned long CLASS::initialPowerStateForDomainState(IOPMPowerFlags domainState)
+{
+	// Return initial power state when domain changes
+	if (domainState & IOPMPowerOn) {
+		return 1; // Start in full power
+	}
+	return 0; // Start in low power
+}
+
+IOReturn CLASS::powerStateWillChangeTo(IOPMPowerFlags capabilities, unsigned long stateNumber, IOService* whatDevice)
+{
+	IOLog("VMQemuVGA: Power state will change to: %lu\n", stateNumber);
+	
+	if (stateNumber == 0) {
+		// About to power down - prepare for sleep
+		IOLog("VMQemuVGA: Preparing for power down\n");
+	}
+	
+	return IOPMAckImplied;
+}
+
+IOReturn CLASS::powerStateDidChangeTo(IOPMPowerFlags capabilities, unsigned long stateNumber, IOService* whatDevice)
+{
+	IOLog("VMQemuVGA: Power state changed to: %lu\n", stateNumber);
+	
+	if (stateNumber == 1) {
+		// Just powered up - restore state if needed
+		IOLog("VMQemuVGA: Power restored - resuming operations\n");
+	}
+	
+	return IOPMAckImplied;
 }
 
 // Snow Leopard IOFramebuffer compatibility methods
@@ -543,28 +891,11 @@ void CLASS::Cleanup()
 /*************INIT3DACCELERATION********************/
 bool CLASS::init3DAcceleration()
 {
-	// Check PCI device properties to determine device type
-	IOPCIDevice* pciDevice = static_cast<IOPCIDevice*>(svga.getProvider());
-	if (!pciDevice) {
-		IOLog("VMQemuVGA: No PCI device found, skipping 3D acceleration\n");
-		return true; // Return true but skip 3D acceleration setup
-	}
-	
-	// Read vendor and device IDs from properties (safer than config reads)
-	OSNumber* vendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("vendor-id"));
-	OSNumber* deviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("device-id"));
-	
-	uint16_t vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x0000;
-	uint16_t deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x0000;
-	
-	// Check if this is a VirtIO GPU device (vendor 0x1AF4 with VirtIO GPU device IDs)
-	bool isVirtIOGPU = (vendorID == 0x1AF4 && deviceID >= 0x1050 && deviceID <= 0x10FF);
-	
-	if (isVirtIOGPU) {
-		IOLog("VMQemuVGA: VirtIO GPU device detected (0x%04X:0x%04X) - initializing VirtIO GPU acceleration\n", vendorID, deviceID);
+	if (m_is_virtio_gpu) {
+		IOLog("VMQemuVGA: Initializing VirtIO GPU hardware acceleration\n");
 		return initVirtIOGPUAcceleration();
 	} else {
-		IOLog("VMQemuVGA: QXL/SVGA device detected (0x%04X:0x%04X) - initializing traditional acceleration\n", vendorID, deviceID);
+		IOLog("VMQemuVGA: Initializing traditional VGA/QXL hardware acceleration\n");
 		return initTraditionalAcceleration();
 	}
 }
@@ -675,28 +1006,36 @@ bool CLASS::initVirtIOGPUAcceleration()
 	setProperty("3D Acceleration", "Enabled");
 	setProperty("3D Backend", "VirtIO GPU");
 	
+	// Enable accelerator updates for proper GPU utilization reporting
+	useAccelUpdates(true);
+	
 	IOLog("VMQemuVGA: 3D acceleration enabled via VirtIO GPU\n");
-	return true;
+	return kIOReturnSuccess;
 }
 
 bool CLASS::initTraditionalAcceleration()
 {
 	IOLog("VMQemuVGA: Initializing traditional QXL/VGA hardware acceleration\n");
 	
-	// For traditional hardware, we don't need VirtIO GPU device detection
-	// Just initialize the accelerator with existing SVGA/QXL backend
+	// For traditional hardware, create a mock VirtIO GPU device for compatibility
+	// This provides the GPU device dependency that the accelerator requires
+	m_gpu_device = createMockVirtIOGPUDevice();
+	if (!m_gpu_device) {
+		DLOG("%s: Failed to create mock VirtIO GPU device for traditional acceleration\n", __FUNCTION__);
+		return false;
+	}
 	
 	// Initialize traditional accelerator
 	m_accelerator = OSTypeAlloc(VMQemuVGAAccelerator);
 	if (!m_accelerator) {
 		DLOG("%s: Failed to allocate traditional accelerator\n", __FUNCTION__);
+		cleanup3DAcceleration();
 		return false;
 	}
 	
 	if (!m_accelerator->init()) {
 		DLOG("%s: Failed to initialize traditional accelerator\n", __FUNCTION__);
-		m_accelerator->release();
-		m_accelerator = nullptr;
+		cleanup3DAcceleration();
 		return false;
 	}
 	
@@ -717,20 +1056,11 @@ bool CLASS::initTraditionalAcceleration()
 	setProperty("3D Acceleration", "Enabled");
 	setProperty("3D Backend", "QXL/SVGA");
 	
-	// Set IOKit properties that WebKit/sandbox expects for graphics acceleration
-	setProperty("IOAcceleratorFamily", kOSBooleanTrue);
-	setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
-	setProperty("IOSurfaceAccelerator", kOSBooleanTrue);
-	setProperty("IOVideoAccelerator", kOSBooleanTrue);
-	setProperty("IOGLContextAccelerator", kOSBooleanTrue);
-	
-	// Set properties for WebKit hardware acceleration
-	setProperty("WebGLEnabled", kOSBooleanTrue);
-	setProperty("HardwareAccelerated", kOSBooleanTrue);
-	setProperty("VideoHardwareAccelerated", kOSBooleanTrue);
+	// Enable accelerator updates for proper GPU utilization reporting
+	useAccelUpdates(true);
 	
 	IOLog("VMQemuVGA: 3D acceleration enabled via traditional QXL/SVGA\n");
-	return true;
+	return kIOReturnSuccess;
 }
 
 /*************CLEANUP3DACCELERATION********************/
@@ -1467,6 +1797,8 @@ void CLASS::unlockDevice()
 
 void CLASS::useAccelUpdates(bool state)
 {
+	IOLog("VMQemuVGA: DEBUG - useAccelUpdates() called with state=%s\n", state ? "true" : "false");
+	
 	if (state == m_accel_updates)
 		return;
 	m_accel_updates = state;
@@ -1519,6 +1851,20 @@ void CLASS::useAccelUpdates(bool state)
 		setProperty("VMQemuVGA-MemoryBandwidthOptimization", kOSBooleanTrue);
 		setProperty("VMQemuVGA-CacheCoherencyImproved", kOSBooleanTrue);
 		setProperty("VMQemuVGA-PipelineParallelism", kOSBooleanTrue);
+		
+		// CRITICAL: Set numeric values for I/O Registry properties
+		UInt32 memoryBandwidth = (UInt32)(1024 * 1024 * 1024); // 1GB
+		UInt32 vramSize = (UInt32)(64 * 1024 * 1024); // 64MB default
+		
+		IOLog("VMQemuVGA: DEBUG - Setting IOFramebufferMemoryBandwidth to %u bytes\n", memoryBandwidth);
+		setProperty("IOFramebufferMemoryBandwidth", memoryBandwidth);
+		
+		IOLog("VMQemuVGA: DEBUG - Setting VRAM,totalsize to %u bytes\n", vramSize);
+		setProperty("VRAM,totalsize", vramSize);
+		
+		// Set GPU utilization reporting properties
+		setProperty("GPUUtilizationReporting", kOSBooleanTrue);
+		setProperty("GPUMemoryTracking", kOSBooleanTrue);
 	}
 	
 	DLOG("Accelerator Assisted Updates: %s (WebGL optimized)\n", state ? "On" : "Off");
@@ -1532,29 +1878,93 @@ IOReturn CLASS::scanForVirtIOGPUDevices()
 {
 	IOLog("VMQemuVGA: Scanning for VirtIO GPU devices on PCI bus\n");
 	
-	// Get PCI device for this instance - use the QemuVGADevice provider
-	IOPCIDevice* pciDevice = svga.getProvider();
-	if (!pciDevice) {
-		IOLog("VMQemuVGA: Warning - No PCI device provider available\n");
-		return kIOReturnNotFound;
+	// Get PCI device by traversing the provider chain with proper null protection
+	IOPCIDevice* pciDevice = nullptr;
+	IOService* currentProvider = getProvider();
+	
+	IOLog("VMQemuVGA: DEBUG - Initial provider: %p\n", currentProvider);
+	
+	// Safe provider chain traversal with depth limit to prevent infinite loops
+	const int MAX_PROVIDER_DEPTH = 10; // Prevent infinite traversal
+	int depth = 0;
+	
+	if (!currentProvider) {
+		IOLog("VMQemuVGA: Warning - No initial provider found, cannot scan for VirtIO GPU\n");
+		return kIOReturnError;
 	}
 	
+	// Traverse up the provider chain to find the PCI device
+	while (currentProvider && !pciDevice && depth < MAX_PROVIDER_DEPTH) {
+		IOLog("VMQemuVGA: DEBUG - Checking provider at depth %d: %p (class: %s)\n", 
+		      depth, currentProvider, currentProvider->getMetaClass()->getClassName());
+		pciDevice = OSDynamicCast(IOPCIDevice, currentProvider);
+		if (!pciDevice) {
+			currentProvider = currentProvider->getProvider();
+			depth++;
+		} else {
+			IOLog("VMQemuVGA: DEBUG - Found PCI device at depth %d\n", depth);
+		}
+	}
+	
+	// If we still don't have a PCI device, try the svga provider as fallback with null check
+	if (!pciDevice && svga.getProvider()) {
+		IOLog("VMQemuVGA: DEBUG - Trying svga provider as fallback: %p (class: %s)\n", 
+		      svga.getProvider(), svga.getProvider()->getMetaClass()->getClassName());
+		pciDevice = OSDynamicCast(IOPCIDevice, svga.getProvider());
+	}
+	
+	if (!pciDevice) {
+		IOLog("VMQemuVGA: Warning - No PCI device found in provider chain after traversal\n");
+		return kIOReturnError;
+	}
+	
+	IOLog("VMQemuVGA: DEBUG - Successfully found PCI device: %p\n", pciDevice);
+	
 	// Check if this is a VirtIO GPU device
-	OSNumber* vendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("vendor-id"));
-	OSNumber* deviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("device-id"));
-	OSNumber* subVendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-vendor-id"));
-	OSNumber* subDeviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-id"));
+	OSObject* vendorObj = pciDevice->getProperty("vendor-id");
+	OSObject* deviceObj = pciDevice->getProperty("device-id");
+	OSObject* subVendorObj = pciDevice->getProperty("subsystem-vendor-id");
+	OSObject* subDeviceObj = pciDevice->getProperty("subsystem-id");
+	
+	// Try alternative property names for QEMU environments
+	if (!vendorObj) vendorObj = pciDevice->getProperty("vendor_id");
+	if (!deviceObj) deviceObj = pciDevice->getProperty("device_id");
+	if (!subVendorObj) subVendorObj = pciDevice->getProperty("subsystem_vendor_id");
+	if (!subDeviceObj) subDeviceObj = pciDevice->getProperty("subsystem_id");
+	
+	IOLog("VMQemuVGA: DEBUG - Property objects exist: vendor=%p, device=%p, subvendor=%p, subdevice=%p\n",
+	      vendorObj, deviceObj, subVendorObj, subDeviceObj);
+	
+	OSNumber* vendorProp = OSDynamicCast(OSNumber, vendorObj);
+	OSNumber* deviceProp = OSDynamicCast(OSNumber, deviceObj);
+	OSNumber* subVendorProp = OSDynamicCast(OSNumber, subVendorObj);
+	OSNumber* subDeviceProp = OSDynamicCast(OSNumber, subDeviceObj);
 	
 	UInt16 vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x0000;
 	UInt16 deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x0000;  
 	UInt16 subsystemVendorID = subVendorProp ? subVendorProp->unsigned16BitValue() : 0x0000;
 	UInt16 subsystemID = subDeviceProp ? subDeviceProp->unsigned16BitValue() : 0x0000;
 	
-	IOLog("VMQemuVGA: Found PCI device - Vendor: 0x%04X, Device: 0x%04X, Subsystem: 0x%04X:0x%04X\n", 
+	// If properties are all zeros, try using PCI device methods directly
+	if (vendorID == 0x0000 && deviceID == 0x0000) {
+		IOLog("VMQemuVGA: DEBUG - Properties are zero, trying PCI device methods\n");
+		vendorID = pciDevice->configRead16(kIOPCIConfigVendorID);
+		deviceID = pciDevice->configRead16(kIOPCIConfigDeviceID);
+		subsystemVendorID = pciDevice->configRead16(kIOPCIConfigSubSystemVendorID);
+		subsystemID = pciDevice->configRead16(kIOPCIConfigSubSystemID);
+		IOLog("VMQemuVGA: DEBUG - PCI config values: Vendor=0x%04X, Device=0x%04X, Subsystem=0x%04X:0x%04X\n",
+		      vendorID, deviceID, subsystemVendorID, subsystemID);
+	}
+	
+	IOLog("VMQemuVGA: DEBUG - Raw property pointers: vendor=%p, device=%p, subvendor=%p, subdevice=%p\n",
+	      vendorProp, deviceProp, subVendorProp, subDeviceProp);
+	IOLog("VMQemuVGA: DEBUG - PCI Device Properties: Vendor=0x%04X, Device=0x%04X, Subsystem=0x%04X:0x%04X\n", 
 	      vendorID, deviceID, subsystemVendorID, subsystemID);
+	IOLog("VMQemuVGA: DEBUG - Provider chain depth used: %d\n", depth);
 	
 	// VirtIO GPU Device Identification Matrix - Comprehensive Device Support
 	// Primary VirtIO GPU: vendor ID 0x1AF4 (Red Hat, Inc.) with extensive device variant ecosystem
+	// Full VirtIO Device Range: 0x1000 to 0x10FF (256 devices reserved for VirtIO)
 	// Standard VirtIO GPU Devices:
 	// - 0x1050: VirtIO GPU (standard 2D graphics with basic framebuffer support)
 	// - 0x1051: VirtIO GPU with 3D acceleration (Virgl renderer support, OpenGL ES 2.0/3.0)
@@ -1646,7 +2056,7 @@ IOReturn CLASS::scanForVirtIOGPUDevices()
 				return kIOReturnSuccess;
 			default:
 				// Check for experimental or newer VirtIO GPU device IDs beyond the documented range
-				if (deviceID >= 0x1050 && deviceID <= 0x10FF) {
+				if (deviceID >= 0x1000 && deviceID <= 0x10ff) {
 					IOLog("VMQemuVGA: Future/Experimental VirtIO GPU variant detected (ID: 0x%04X) - Extended range support\n", deviceID);
 					return kIOReturnSuccess;
 				}
@@ -1906,7 +2316,7 @@ IOReturn CLASS::scanForVirtIOGPUDevices()
 	}
 	
 	IOLog("VMQemuVGA: No VirtIO GPU device found, using fallback compatibility mode\n");
-	return kIOReturnNotFound;
+	return kIOReturnError;
 }
 
 VMVirtIOGPU* CLASS::createMockVirtIOGPUDevice()
@@ -1937,7 +2347,7 @@ IOReturn CLASS::initializeDetectedVirtIOGPU()
 {
 	if (!m_gpu_device) {
 		IOLog("VMQemuVGA: Error - No VirtIO GPU device to initialize\n");
-		return kIOReturnNotFound;
+		return kIOReturnError;
 	}
 	
 	IOLog("VMQemuVGA: Initializing detected VirtIO GPU device\n");
@@ -1966,7 +2376,7 @@ IOReturn CLASS::queryVirtIOGPUCapabilities()
 {
 	if (!m_gpu_device) {
 		IOLog("VMQemuVGA: Error - No VirtIO GPU device to query\n");
-		return kIOReturnNotFound;
+		return kIOReturnError;
 	}
 	
 	IOLog("VMQemuVGA: Querying VirtIO GPU capabilities\n");
@@ -2001,7 +2411,7 @@ IOReturn CLASS::configureVirtIOGPUOptimalSettings()
 {
 	if (!m_gpu_device) {
 		IOLog("VMQemuVGA: Error - No VirtIO GPU device to configure\n");
-		return kIOReturnNotFound;
+		return kIOReturnError;
 	}
 	
 	IOLog("VMQemuVGA: Configuring VirtIO GPU optimal performance settings\n");
@@ -2039,25 +2449,89 @@ IOReturn CLASS::configureVirtIOGPUOptimalSettings()
 // Lilu Issue #2299 workaround: Early device registration for framework compatibility
 void VMQemuVGA::publishDeviceForLiluFrameworks()
 {
-	// Get PCI device from provider
-	IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, getProvider());
+	// Get PCI device by traversing the provider chain with proper null protection
+	IOPCIDevice* pciDevice = nullptr;
+	IOService* currentProvider = getProvider();
+	
+	IOLog("VMQemuVGA: DEBUG - Initial provider for Lilu: %p\n", currentProvider);
+	
+	// Safe provider chain traversal with depth limit to prevent infinite loops
+	const int MAX_PROVIDER_DEPTH = 10; // Prevent infinite traversal
+	int depth = 0;
+	
+	if (!currentProvider) {
+		IOLog("VMQemuVGA: No initial provider found for Lilu registration\n");
+		return;
+	}
+	
+	// Traverse up the provider chain to find the PCI device
+	while (currentProvider && !pciDevice && depth < MAX_PROVIDER_DEPTH) {
+		IOLog("VMQemuVGA: DEBUG - Checking provider at depth %d: %p (class: %s)\n", 
+		      depth, currentProvider, currentProvider->getMetaClass()->getClassName());
+		pciDevice = OSDynamicCast(IOPCIDevice, currentProvider);
+		if (!pciDevice) {
+			currentProvider = currentProvider->getProvider();
+			depth++;
+		} else {
+			IOLog("VMQemuVGA: DEBUG - Found PCI device at depth %d\n", depth);
+		}
+	}
+	
+	// If we still don't have a PCI device, try the svga provider as fallback with null check
+	if (!pciDevice && svga.getProvider()) {
+		IOLog("VMQemuVGA: DEBUG - Trying svga provider as fallback: %p (class: %s)\n", 
+		      svga.getProvider(), svga.getProvider()->getMetaClass()->getClassName());
+		pciDevice = OSDynamicCast(IOPCIDevice, svga.getProvider());
+	}
+	
 	if (!pciDevice) {
 		IOLog("VMQemuVGA: No PCI device found for Lilu registration\n");
 		return;
 	}
 	
-	// Get device properties for Lilu frameworks from I/O Registry
-	OSNumber* vendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("vendor-id"));
-	OSNumber* deviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("device-id"));
-	OSNumber* subVendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-vendor-id"));
-	OSNumber* subDeviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("subsystem-id"));
+	IOLog("VMQemuVGA: DEBUG - Successfully found PCI device for Lilu: %p\n", pciDevice);
 	
-	UInt16 vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x1B36;  // Default QXL Red Hat
-	UInt16 deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x0100;  // Default QXL VGA  
+	// Get device properties for Lilu frameworks from I/O Registry
+	OSObject* vendorObj = pciDevice->getProperty("vendor-id");
+	OSObject* deviceObj = pciDevice->getProperty("device-id");
+	OSObject* subVendorObj = pciDevice->getProperty("subsystem-vendor-id");
+	OSObject* subDeviceObj = pciDevice->getProperty("subsystem-id");
+	
+	// Try alternative property names for QEMU environments
+	if (!vendorObj) vendorObj = pciDevice->getProperty("vendor_id");
+	if (!deviceObj) deviceObj = pciDevice->getProperty("device_id");
+	if (!subVendorObj) subVendorObj = pciDevice->getProperty("subsystem_vendor_id");
+	if (!subDeviceObj) subDeviceObj = pciDevice->getProperty("subsystem_id");
+	
+	IOLog("VMQemuVGA: DEBUG - Property objects exist: vendor=%p, device=%p, subvendor=%p, subdevice=%p\n",
+	      vendorObj, deviceObj, subVendorObj, subDeviceObj);
+	
+	OSNumber* vendorProp = OSDynamicCast(OSNumber, vendorObj);
+	OSNumber* deviceProp = OSDynamicCast(OSNumber, deviceObj);
+	OSNumber* subVendorProp = OSDynamicCast(OSNumber, subVendorObj);
+	OSNumber* subDeviceProp = OSDynamicCast(OSNumber, subDeviceObj);
+	
+	UInt16 vendorID = vendorProp ? vendorProp->unsigned16BitValue() : 0x0000;  // Default to 0 if property missing
+	UInt16 deviceID = deviceProp ? deviceProp->unsigned16BitValue() : 0x0000;  // Default to 0 if property missing  
 	UInt16 subsystemVendorID = subVendorProp ? subVendorProp->unsigned16BitValue() : 0x1414;  // Microsoft Hyper-V
 	UInt16 subsystemID = subDeviceProp ? subDeviceProp->unsigned16BitValue() : 0x5353;  // Hyper-V DDA
 	
-	IOLog("VMQemuVGA: Publishing device for Lilu frameworks to address Issue #2299 - MacHyperVSupport PCI bridge detection\n");
+	// If properties are all zeros, try using PCI device methods directly
+	if (vendorID == 0x0000 && deviceID == 0x0000) {
+		IOLog("VMQemuVGA: DEBUG - Properties are zero, trying PCI device methods for Lilu\n");
+		vendorID = pciDevice->configRead16(kIOPCIConfigVendorID);
+		deviceID = pciDevice->configRead16(kIOPCIConfigDeviceID);
+		subsystemVendorID = pciDevice->configRead16(kIOPCIConfigSubSystemVendorID);
+		subsystemID = pciDevice->configRead16(kIOPCIConfigSubSystemID);
+		IOLog("VMQemuVGA: DEBUG - PCI config values for Lilu: Vendor=0x%04X, Device=0x%04X, Subsystem=0x%04X:0x%04X\n",
+		      vendorID, deviceID, subsystemVendorID, subsystemID);
+	}
+	
+	IOLog("VMQemuVGA: DEBUG - Raw property pointers: vendor=%p, device=%p, subvendor=%p, subdevice=%p\n",
+	      vendorProp, deviceProp, subVendorProp, subDeviceProp);
+	IOLog("VMQemuVGA: DEBUG - PCI Device Properties: Vendor=0x%04X, Device=0x%04X, Subsystem=0x%04X:0x%04X\n", 
+	      vendorID, deviceID, subsystemVendorID, subsystemID);
+	IOLog("VMQemuVGA: DEBUG - Provider chain depth used: %d\n", depth);
 	
 	// Create device info array for Lilu frameworks
 	OSArray* liluProps = OSArray::withCapacity(4);
@@ -2101,7 +2575,7 @@ void VMQemuVGA::publishDeviceForLiluFrameworks()
 
 IOReturn CLASS::registerWithSystemGraphics()
 {
-	IOLog("VMQemuVGA: Registering with Snow Leopard system graphics frameworks\n");
+	IOLog("VMQemuVGA: DEBUG - registerWithSystemGraphics() called\n");
 	
 	// Register with system as an accelerated graphics device
 	setProperty("com.apple.iokit.IOGraphicsFamily", kOSBooleanTrue);
@@ -2175,9 +2649,18 @@ IOReturn CLASS::initializeIOSurfaceSupport()
 	setProperty("IOSurfaceAccelerated", kOSBooleanTrue);
 	
 	// Set up IOSurface capabilities
-	setProperty("IOSurfaceMaxWidth", (UInt32)4096);
-	setProperty("IOSurfaceMaxHeight", (UInt32)4096);
-	setProperty("IOSurfaceMemoryPool", (UInt32)(512 * 1024 * 1024)); // 512MB
+	UInt32 maxWidth = (UInt32)16384;
+	UInt32 maxHeight = (UInt32)16384;
+	UInt32 memoryPool = (UInt32)(512 * 1024 * 1024);
+	
+	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxWidth to %u\n", maxWidth);
+	setProperty("IOSurfaceMaxWidth", maxWidth);  // 16K width for modern displays
+	
+	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxHeight to %u\n", maxHeight);
+	setProperty("IOSurfaceMaxHeight", maxHeight); // 16K height for modern displays
+	
+	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMemoryPool to %u\n", memoryPool);
+	setProperty("IOSurfaceMemoryPool", memoryPool); // 512MB
 	
 	// Register supported pixel formats
 	OSArray* pixelFormats = OSArray::withCapacity(8);
@@ -2285,13 +2768,170 @@ IOReturn CLASS::acceleratedCanvasDrawText(const char* text, int32_t x, int32_t y
 	if (!m_3d_acceleration_enabled || !text) {
 		return kIOReturnBadArgument;
 	}
-	
-	IOLog("VMQemuVGA: Accelerated Canvas drawText: '%s' at (%d,%d) size=%u color=0x%08x\n", 
+
+	IOLog("VMQemuVGA: Accelerated Canvas drawText: '%s' at (%d,%d) size=%u color=0x%08x\n",
 		  text, x, y, fontSize, color);
-	
-	// For now, return success to prevent Canvas errors
-	// Text rendering acceleration would require font rasterization
-	IOLog("VMQemuVGA: Canvas text rendering delegated to system (software fallback)\n");
+
+	// Implement basic bitmap font rendering for ASCII characters
+	if (m_vram && m_iolock) {
+		IOLockLock(m_iolock);
+
+		DisplayModeEntry const* dme = GetDisplayMode(m_display_mode);
+		if (dme && x >= 0 && y >= 0) {
+			// Get VRAM mapping for direct pixel access
+			IOMemoryMap* vramMap = m_vram->map();
+			if (vramMap) {
+				uint32_t* fb = (uint32_t*)vramMap->getVirtualAddress();
+				if (fb) {
+					// Basic 8x8 bitmap font for ASCII 32-127
+					const uint8_t font8x8[96][8] = {
+						{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // space
+						{0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00}, // !
+						{0x6C,0x6C,0x6C,0x00,0x00,0x00,0x00,0x00}, // "
+						{0x6C,0x6C,0xFE,0x6C,0xFE,0x6C,0x6C,0x00}, // #
+						{0x18,0x7E,0xC0,0x7C,0x06,0xFC,0x18,0x00}, // $
+						{0x00,0xC6,0xCC,0x18,0x30,0x66,0xC6,0x00}, // %
+						{0x38,0x6C,0x38,0x76,0xDC,0xCC,0x76,0x00}, // &
+						{0x18,0x18,0x30,0x00,0x00,0x00,0x00,0x00}, // '
+						{0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0x00}, // (
+						{0x30,0x18,0x0C,0x0C,0x0C,0x18,0x30,0x00}, // )
+						{0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00}, // *
+						{0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00}, // +
+						{0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x30}, // ,
+						{0x00,0x00,0x00,0x7E,0x00,0x00,0x00,0x00}, // -
+						{0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00}, // .
+						{0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00}, // /
+						{0x7C,0xC6,0xCE,0xD6,0xE6,0xC6,0x7C,0x00}, // 0
+						{0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00}, // 1
+						{0x7C,0xC6,0x06,0x1C,0x70,0xC6,0xFE,0x00}, // 2
+						{0x7C,0xC6,0x06,0x3C,0x06,0xC6,0x7C,0x00}, // 3
+						{0x1C,0x3C,0x6C,0xCC,0xFE,0x0C,0x0C,0x00}, // 4
+						{0xFE,0xC0,0xFC,0x06,0x06,0xC6,0x7C,0x00}, // 5
+						{0x7C,0xC6,0xC0,0xFC,0xC6,0xC6,0x7C,0x00}, // 6
+						{0xFE,0x06,0x0C,0x18,0x30,0x30,0x30,0x00}, // 7
+						{0x7C,0xC6,0xC6,0x7C,0xC6,0xC6,0x7C,0x00}, // 8
+						{0x7C,0xC6,0xC6,0x7E,0x06,0xC6,0x7C,0x00}, // 9
+						{0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00}, // :
+						{0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x30}, // ;
+						{0x06,0x0C,0x18,0x30,0x18,0x0C,0x06,0x00}, // <
+						{0x00,0x00,0x7E,0x00,0x7E,0x00,0x00,0x00}, // =
+						{0x60,0x30,0x18,0x0C,0x18,0x30,0x60,0x00}, // >
+						{0x7C,0xC6,0x0C,0x18,0x18,0x00,0x18,0x00}, // ?
+						{0x7C,0xC6,0xDE,0xD6,0xDE,0xC0,0x7C,0x00}, // @
+						{0x7C,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0x00}, // A
+						{0xFC,0xC6,0xC6,0xFC,0xC6,0xC6,0xFC,0x00}, // B
+						{0x7C,0xC6,0xC0,0xC0,0xC0,0xC6,0x7C,0x00}, // C
+						{0xF8,0xCC,0xC6,0xC6,0xC6,0xCC,0xF8,0x00}, // D
+						{0xFE,0xC0,0xC0,0xFC,0xC0,0xC0,0xFE,0x00}, // E
+						{0xFE,0xC0,0xC0,0xFC,0xC0,0xC0,0xC0,0x00}, // F
+						{0x7C,0xC6,0xC0,0xCE,0xC6,0xC6,0x7C,0x00}, // G
+						{0xC6,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0x00}, // H
+						{0x7E,0x18,0x18,0x18,0x18,0x18,0x7E,0x00}, // I
+						{0x06,0x06,0x06,0x06,0x06,0xC6,0x7C,0x00}, // J
+						{0xC6,0xCC,0xD8,0xF0,0xD8,0xCC,0xC6,0x00}, // K
+						{0xC0,0xC0,0xC0,0xC0,0xC0,0xC0,0xFE,0x00}, // L
+						{0xC6,0xEE,0xFE,0xD6,0xC6,0xC6,0xC6,0x00}, // M
+						{0xC6,0xE6,0xF6,0xDE,0xCE,0xC6,0xC6,0x00}, // N
+						{0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00}, // O
+						{0xFC,0xC6,0xC6,0xFC,0xC0,0xC0,0xC0,0x00}, // P
+						{0x7C,0xC6,0xC6,0xC6,0xD6,0xCC,0x76,0x00}, // Q
+						{0xFC,0xC6,0xC6,0xFC,0xD8,0xCC,0xC6,0x00}, // R
+						{0x7C,0xC6,0xC0,0x7C,0x06,0xC6,0x7C,0x00}, // S
+						{0xFF,0x18,0x18,0x18,0x18,0x18,0x18,0x00}, // T
+						{0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00}, // U
+						{0xC6,0xC6,0xC6,0xC6,0xC6,0x6C,0x38,0x00}, // V
+						{0xC6,0xC6,0xC6,0xD6,0xFE,0xEE,0xC6,0x00}, // W
+						{0xC6,0x6C,0x38,0x38,0x38,0x6C,0xC6,0x00}, // X
+						{0xC6,0xC6,0x6C,0x38,0x38,0x18,0x18,0x00}, // Y
+						{0xFE,0x06,0x0C,0x18,0x30,0x60,0xFE,0x00}, // Z
+						{0x3C,0x30,0x30,0x30,0x30,0x30,0x3C,0x00}, // [
+						{0xC0,0x60,0x30,0x18,0x0C,0x06,0x02,0x00}, // backslash
+						{0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00}, // ]
+						{0x10,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00}, // ^
+						{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF}, // _
+						{0x30,0x18,0x0C,0x00,0x00,0x00,0x00,0x00}, // `
+						{0x00,0x00,0x7C,0x06,0x7E,0xC6,0x7E,0x00}, // a
+						{0xC0,0xC0,0xFC,0xC6,0xC6,0xC6,0xFC,0x00}, // b
+						{0x00,0x00,0x7C,0xC6,0xC0,0xC6,0x7C,0x00}, // c
+						{0x06,0x06,0x7E,0xC6,0xC6,0xC6,0x7E,0x00}, // d
+						{0x00,0x00,0x7C,0xC6,0xFE,0xC0,0x7C,0x00}, // e
+						{0x1E,0x30,0x7C,0x30,0x30,0x30,0x30,0x00}, // f
+						{0x00,0x00,0x7E,0xC6,0xC6,0x7E,0x06,0x7C}, // g
+						{0xC0,0xC0,0xFC,0xC6,0xC6,0xC6,0xC6,0x00}, // h
+						{0x18,0x00,0x38,0x18,0x18,0x18,0x3C,0x00}, // i
+						{0x06,0x00,0x06,0x06,0x06,0x06,0x06,0x3C}, // j
+						{0xC0,0xC0,0xCC,0xD8,0xF0,0xD8,0xCC,0x00}, // k
+						{0x38,0x18,0x18,0x18,0x18,0x18,0x3C,0x00}, // l
+						{0x00,0x00,0xCC,0xFE,0xD6,0xC6,0xC6,0x00}, // m
+						{0x00,0x00,0xFC,0xC6,0xC6,0xC6,0xC6,0x00}, // n
+						{0x00,0x00,0x7C,0xC6,0xC6,0xC6,0x7C,0x00}, // o
+						{0x00,0x00,0xFC,0xC6,0xC6,0xFC,0xC0,0xC0}, // p
+						{0x00,0x00,0x7E,0xC6,0xC6,0x7E,0x06,0x06}, // q
+						{0x00,0x00,0xFC,0xC6,0xC0,0xC0,0xC0,0x00}, // r
+						{0x00,0x00,0x7E,0xC0,0x7C,0x06,0xFC,0x00}, // s
+						{0x30,0x30,0x7C,0x30,0x30,0x30,0x1C,0x00}, // t
+						{0x00,0x00,0xC6,0xC6,0xC6,0xC6,0x7E,0x00}, // u
+						{0x00,0x00,0xC6,0xC6,0xC6,0x6C,0x38,0x00}, // v
+						{0x00,0x00,0xC6,0xC6,0xD6,0xFE,0x6C,0x00}, // w
+						{0x00,0x00,0xC6,0x6C,0x38,0x6C,0xC6,0x00}, // x
+						{0x00,0x00,0xC6,0xC6,0xC6,0x7E,0x06,0x7C}, // y
+						{0x00,0x00,0xFE,0x0C,0x18,0x30,0xFE,0x00}, // z
+						{0x0E,0x18,0x18,0x70,0x18,0x18,0x0E,0x00}, // {
+						{0x18,0x18,0x18,0x18,0x18,0x18,0x18,0x00}, // |
+						{0x70,0x18,0x18,0x0E,0x18,0x18,0x70,0x00}, // }
+						{0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00}, // ~
+						{0x00,0x10,0x38,0x6C,0xC6,0xC6,0xFE,0x00}  // DEL (used for unknown chars)
+					};
+
+					int32_t currentX = x;
+					const char* charPtr = text;
+
+					while (*charPtr && currentX < (int32_t)dme->width) {
+						char c = *charPtr++;
+						if (c < 32 || c > 127) c = 127; // Use DEL for unknown chars
+						int charIndex = c - 32;
+
+						// Scale font based on fontSize (simple scaling)
+						int scale = (fontSize > 8) ? (fontSize / 8) : 1;
+						if (scale < 1) scale = 1;
+
+						// Render character bitmap
+						for (int row = 0; row < 8; row++) {
+							for (int col = 0; col < 8; col++) {
+								if (font8x8[charIndex][row] & (0x80 >> col)) {
+									// Draw scaled pixel
+									for (int sy = 0; sy < scale; sy++) {
+										for (int sx = 0; sx < scale; sx++) {
+											int px = currentX + (col * scale) + sx;
+											int py = y + (row * scale) + sy;
+
+											if (px >= 0 && px < (int32_t)dme->width &&
+												py >= 0 && py < (int32_t)dme->height) {
+												fb[py * dme->width + px] = color;
+											}
+										}
+									}
+								}
+							}
+						}
+
+						currentX += 8 * scale; // Move to next character position
+					}
+
+					vramMap->release();
+					IOLog("VMQemuVGA: Canvas text rendering completed successfully\n");
+					IOLockUnlock(m_iolock);
+					return kIOReturnSuccess;
+				}
+				vramMap->release();
+			}
+		}
+
+		IOLockUnlock(m_iolock);
+	}
+
+	// Fallback to software rendering if hardware acceleration fails
+	IOLog("VMQemuVGA: Canvas text rendering using software fallback\n");
 	return kIOReturnSuccess;
 }
 

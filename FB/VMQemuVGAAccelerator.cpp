@@ -1,5 +1,6 @@
 #include "VMQemuVGAAccelerator.h"
 #include "VMQemuVGA.h"
+#include "VMVirtIOFramebuffer.h"
 #include "VMShaderManager.h"
 #include "VMTextureManager.h"
 #include "VMCommandBuffer.h"
@@ -82,13 +83,24 @@ bool CLASS::start(IOService* provider)
     if (!super::start(provider))
         return false;
     
+    // Try VMQemuVGA first (legacy support)
     m_framebuffer = OSDynamicCast(VMQemuVGA, provider);
-    if (!m_framebuffer) {
-        IOLog("VMQemuVGAAccelerator: Provider is not VMQemuVGA\n");
-        return false;
+    if (m_framebuffer) {
+        IOLog("VMQemuVGAAccelerator: Using VMQemuVGA provider\n");
+        m_gpu_device = m_framebuffer->getGPUDevice();
+    } else {
+        // Try VMVirtIOFramebuffer (new VirtIO GPU support)
+        VMVirtIOFramebuffer* virtio_framebuffer = OSDynamicCast(VMVirtIOFramebuffer, provider);
+        if (virtio_framebuffer) {
+            IOLog("VMQemuVGAAccelerator: Using VMVirtIOFramebuffer provider\n");
+            m_framebuffer = nullptr;  // VirtIO doesn't use VMQemuVGA
+            m_gpu_device = OSDynamicCast(VMVirtIOGPU, virtio_framebuffer->getProvider());
+        } else {
+            IOLog("VMQemuVGAAccelerator: Provider is not VMQemuVGA or VMVirtIOFramebuffer\n");
+            return false;
+        }
     }
     
-    m_gpu_device = m_framebuffer->getGPUDevice();
     if (!m_gpu_device) {
         IOLog("VMQemuVGAAccelerator: No GPU device available\n");
         return false;
