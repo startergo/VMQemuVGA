@@ -1,0 +1,307 @@
+#!/bin/bash
+
+# VMQemuVGA Intelligent Installer
+# Chooses correct installation location based on macOS version
+
+set -e
+
+# Get macOS version
+MACOS_VERSION=$(sw_vers -productVersion)
+MACOS_MAJOR=$(echo "$MACOS_VERSION" | cut -d. -f1)
+MACOS_MINOR=$(echo "$MACOS_VERSION" | cut -d. -f2)
+
+# Determine correct installation path
+# macOS 10.11+ (El Capitan and later) use /Library/Extensions for 3rd party kexts
+# macOS 10.10 and earlier use /System/Library/Extensions
+if [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -le 10 ]]; then
+    # Install to System/Library/Extensions (Snow Leopard through Yosemite)
+    INSTALL_PATH="/System/Library/Extensions"
+    REMOVE_PATH="/Library/Extensions"
+    echo "macOS $MACOS_VERSION detected - Installing to System/Library/Extensions"
+else
+    # Install to Library/Extensions (El Capitan and later)
+    INSTALL_PATH="/Library/Extensions"
+    REMOVE_PATH="/System/Library/Extensions" 
+    echo "macOS $MACOS_VERSION detected - Installing to Library/Extensions"
+fi
+
+# Remove existing installations from both locations
+echo "Removing existing VMQemuVGA installations..."
+rm -rf "/System/Library/Extensions/VMQemuVGA.kext"
+rm -rf "/Library/Extensions/VMQemuVGA.kext"
+
+# Copy from the appropriate payload location to the target
+echo "Installing VMQemuVGA to $INSTALL_PATH..."
+if [[ "$INSTALL_PATH" == "/System/Library/Extensions" ]]; then
+    cp -R "$2/System/Library/Extensions/VMQemuVGA.kext" "$INSTALL_PATH/"
+else
+    cp -R "$2/Library/Extensions/VMQemuVGA.kext" "$INSTALL_PATH/"
+fi
+
+# Set correct permissions
+chown -R root:wheel "$INSTALL_PATH/VMQemuVGA.kext"
+chmod -R 755 "$INSTALL_PATH/VMQemuVGA.kext"
+
+# Handle Catalina+ read-only filesystem and permission requirements
+if [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -ge 15 ]]; then
+    echo "Catalina+ detected - handling read-only filesystem..."
+    
+    # Disable Gatekeeper temporarily for kext installation
+    echo "Temporarily disabling Gatekeeper..."
+    spctl --master-disable 2>/dev/null || echo "Note: Gatekeeper disable failed (may already be disabled)"
+    
+    # Mount filesystem in read/write mode
+    echo "Mounting filesystem in read/write mode..."
+    mount -uw / 2>/dev/null || echo "Note: Filesystem may already be writable"
+    
+    # Fix permissions for both extension directories
+    echo "Repairing permissions for extension directories..."
+    chown -v -R root:wheel /System/Library/Extensions 2>/dev/null || true
+    chown -v -R root:wheel /Library/Extensions 2>/dev/null || true
+    chmod -v -R 755 /Library/Extensions 2>/dev/null || true
+    touch /System/Library/Extensions 2>/dev/null || true
+    touch /Library/Extensions 2>/dev/null || true
+    
+    # Kill Finder to refresh filesystem state
+    killall Finder 2>/dev/null || true
+    
+    echo "Catalina+ filesystem preparation complete"
+fi
+
+# Rebuild kernel cache for the appropriate macOS version
+echo "Rebuilding kernel cache..."
+if [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -le 9 ]]; then
+    # Mavericks and earlier
+    echo "Running kextcache -system-prelinked-kernel..."
+    if ! kextcache -system-prelinked-kernel; then
+        echo "WARNING: kextcache -system-prelinked-kernel failed"
+    fi
+    echo "Running kextcache -system-caches..."
+    if ! kextcache -system-caches; then
+        echo "WARNING: kextcache -system-caches failed"
+    fi
+elif [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -le 15 ]]; then
+    # Yosemite through Catalina
+    echo "Running kextcache -i / (this may take a few minutes)..."
+    
+    # For Catalina, rebuild prelinked kernel cache first (critical for version persistence)
+    if [[ $MACOS_MINOR -eq 15 ]]; then
+        echo "Catalina detected - rebuilding prelinked kernel cache first..."
+        
+        # Sync filesystem before cache rebuild
+        sync
+        
+        # Rebuild prelinked kernel cache first (this prevents version regression)
+        echo "Rebuilding prelinked kernel cache..."
+        if ! kextcache -prelinked-kernel /System/Library/PrelinkedKernels/prelinkedkernel /System/Library/Extensions; then
+            echo "WARNING: Prelinked kernel cache rebuild failed"
+        fi
+    fi
+    
+    # Standard cache rebuild
+    if ! kextcache -i /; then
+        echo "WARNING: kextcache -i / failed"
+        echo "Trying alternative cache rebuild methods..."
+        
+        # Try system prelinked kernel as fallback
+        if ! kextcache -system-prelinked-kernel; then
+            echo "WARNING: system prelinked kernel cache rebuild failed"
+        fi
+        
+        if ! kextcache -system-caches; then
+            echo "WARNING: system caches rebuild failed"
+        fi
+        
+        # For Catalina, try volume-specific rebuild as last resort
+        if [[ $MACOS_MINOR -eq 15 ]]; then
+            echo "Trying Catalina volume-specific cache rebuild..."
+            if ! kextcache -update-volume /; then
+                echo "ERROR: All Catalina cache rebuild attempts failed"
+                echo "Manual steps required:"
+                echo "1. sudo spctl --master-disable"
+                echo "2. sudo mount -uw /"
+                echo "3. sudo kextcache -prelinked-kernel /System/Library/PrelinkedKernels/prelinkedkernel /System/Library/Extensions"
+                echo "4. sudo kextcache -i /"
+                echo "5. Reboot and approve in Security & Privacy"
+            else
+                echo "Catalina volume cache rebuild succeeded"
+            fi
+        else
+            echo "ERROR: All cache rebuild attempts failed"
+            echo "You may need to manually run: sudo kextcache -i /"
+        fi
+    else
+        echo "Kernel cache rebuilt successfully"
+    fi
+else
+    # Big Sur and later
+    echo "Running kmutil install --volume-root / --update-all..."
+    if ! kmutil install --volume-root / --update-all; then
+        echo "WARNING: kmutil failed, trying kextcache fallback..."
+        if ! kextcache -i /; then
+            echo "ERROR: Both kmutil and kextcache failed"
+        fi
+    fi
+fi
+
+echo "VMQemuVGA installation completed successfully"
+
+# Verify the installation and cache state
+echo "Verifying installation..."
+if [[ -f "$INSTALL_PATH/VMQemuVGA.kext/Contents/Info.plist" ]]; then
+    INSTALLED_VERSION=$(defaults read "$INSTALL_PATH/VMQemuVGA.kext/Contents/Info.plist" CFBundleVersion 2>/dev/null || echo "unknown")
+    echo "✓ VMQemuVGA v$INSTALLED_VERSION installed to $INSTALL_PATH"
+    
+    # Check if kext is properly signed and cached
+    echo "Checking kext signature and cache status..."
+    if kextutil -print-diagnostics "$INSTALL_PATH/VMQemuVGA.kext" 2>/dev/null | grep -q "passes all tests"; then
+        echo "✓ Kext signature and dependencies validated"
+    else
+        echo "⚠ Kext validation issues detected - check kextutil output:"
+        kextutil -print-diagnostics "$INSTALL_PATH/VMQemuVGA.kext" 2>&1 | head -10
+    fi
+    
+    # For Catalina+, check if kext is approved in system policy
+    if [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -ge 15 ]]; then
+        if spctl kext-consent list 2>/dev/null | grep -q "VMQemuVGA"; then
+            echo "✓ Kext developer is approved in system policy"
+        else
+            echo "⚠ Kext developer approval pending - approval required after reboot"
+        fi
+    fi
+else
+    echo "✗ ERROR: VMQemuVGA.kext not found at $INSTALL_PATH"
+    exit 1
+fi
+
+# Re-enable Gatekeeper for security (Catalina+)
+if [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -ge 15 ]]; then
+    echo "Re-enabling Gatekeeper for security..."
+    spctl --master-enable 2>/dev/null || echo "Note: Gatekeeper re-enable failed"
+fi
+
+# Check if VMQemuVGA is currently loaded and get version info
+KEXT_LOADED=$(kextstat | grep -c "puredarwin.driver.VMQemuVGA" || echo "0")
+if [[ $KEXT_LOADED -gt 0 ]]; then
+    LOADED_VERSION=$(kextstat -b puredarwin.driver.VMQemuVGA | tail -1 | awk '{print $6}' | sed 's/[()]//' || echo "unknown")
+fi
+
+# Get the version of the kext being installed
+NEW_VERSION=$(defaults read "$INSTALL_PATH/VMQemuVGA.kext/Contents/Info.plist" CFBundleVersion 2>/dev/null || echo "unknown")
+
+# Provide state-aware guidance
+if [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -ge 15 ]]; then
+    # Catalina and later - require user approval for third-party kexts
+    echo ""
+    echo "=========================================="
+    echo "IMPORTANT: macOS $MACOS_VERSION detected"
+    echo "=========================================="
+    echo ""
+    
+    if [[ $KEXT_LOADED -gt 0 ]]; then
+        echo "VMQemuVGA v$LOADED_VERSION is currently loaded in memory."
+        echo "Installing VMQemuVGA v$NEW_VERSION to cache."
+        echo ""
+        if [[ "$LOADED_VERSION" != "$NEW_VERSION" ]]; then
+            echo "VERSION CHANGE: $LOADED_VERSION → $NEW_VERSION"
+        else
+            echo "REINSTALLING: Same version ($NEW_VERSION)"
+        fi
+        echo ""
+        echo "REBOOT REQUIRED to activate new version from cache."
+        echo ""
+        echo "After reboot on Catalina+, you may see:"
+        echo "1. A popup notification about blocked system software"
+        echo "2. A message in System Preferences > Security & Privacy > General"
+        echo ""
+        echo "Look for: 'System software from developer was blocked'"
+        echo "Click 'Allow' button to approve the VMQemuVGA driver"
+        echo ""
+        echo "If no popup appears after reboot, the driver may already be approved."
+    else
+        echo "VMQemuVGA is not currently loaded."
+        echo "Installing VMQemuVGA v$NEW_VERSION."
+        echo ""
+        echo "Third-party kernel extensions require user approval on Catalina+"
+        echo ""
+        echo "After reboot, you will see either:"
+        echo "1. A popup notification about blocked system software"
+        echo "2. A message in System Preferences > Security & Privacy > General"
+        echo ""
+        echo "Look for: 'System software from developer was blocked'"
+        echo "Click 'Allow' button to approve the VMQemuVGA driver"
+        echo ""
+        echo "If no popup appears after reboot, try:"
+        echo "  sudo kextload $INSTALL_PATH/VMQemuVGA.kext"
+        echo ""
+        echo "This should trigger the approval dialog."
+        echo ""
+        echo "After approval, reboot again for the driver to load."
+    fi
+    echo ""
+elif [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -ge 11 ]]; then
+    # El Capitan through Mojave - may require SIP configuration
+    echo ""
+    echo "=========================================="
+    echo "IMPORTANT: macOS $MACOS_VERSION detected" 
+    echo "=========================================="
+    echo ""
+    
+    if [[ $KEXT_LOADED -gt 0 ]]; then
+        echo "VMQemuVGA v$LOADED_VERSION is currently loaded in memory."
+        echo "Installing VMQemuVGA v$NEW_VERSION to cache."
+        echo ""
+        if [[ "$LOADED_VERSION" != "$NEW_VERSION" ]]; then
+            echo "VERSION CHANGE: $LOADED_VERSION → $NEW_VERSION"
+        else
+            echo "REINSTALLING: Same version ($NEW_VERSION)"
+        fi
+        echo ""
+        echo "REBOOT REQUIRED to activate new version from cache."
+    else
+        echo "VMQemuVGA is not currently loaded."
+        echo "Installing VMQemuVGA v$NEW_VERSION."
+        echo ""
+        echo "If VMQemuVGA fails to load after reboot, you may need to:"
+        echo "1. Disable System Integrity Protection (SIP)"
+        echo "2. Or boot with kext-dev-mode=1"
+        echo ""
+        echo "Check System Preferences > Security & Privacy for approval prompts"
+    fi
+    echo ""
+else
+    # Snow Leopard through Mavericks
+    echo ""
+    if [[ $KEXT_LOADED -gt 0 ]]; then
+        echo "VMQemuVGA v$LOADED_VERSION is currently loaded."
+        echo "Installing VMQemuVGA v$NEW_VERSION to cache for macOS $MACOS_VERSION"
+        echo ""
+        if [[ "$LOADED_VERSION" != "$NEW_VERSION" ]]; then
+            echo "VERSION CHANGE: $LOADED_VERSION → $NEW_VERSION"
+        else
+            echo "REINSTALLING: Same version ($NEW_VERSION)"
+        fi
+        echo ""
+        echo "REBOOT REQUIRED to activate new version from cache."
+    else
+        echo "Installing VMQemuVGA v$NEW_VERSION for macOS $MACOS_VERSION"
+        echo "REBOOT REQUIRED to load the kernel extension"
+    fi
+    echo ""
+fi
+
+# Final reboot message based on current state
+if [[ $KEXT_LOADED -gt 0 ]]; then
+    if [[ "$LOADED_VERSION" != "$NEW_VERSION" ]]; then
+        echo "SUMMARY: VMQemuVGA v$LOADED_VERSION is running, v$NEW_VERSION is cached."
+    else
+        echo "SUMMARY: VMQemuVGA v$LOADED_VERSION is running, same version reinstalled to cache."
+    fi
+    echo "Reboot to activate the newly installed version."
+else
+    echo "SUMMARY: VMQemuVGA v$NEW_VERSION installed."
+    echo "Reboot required to load kernel extension."
+fi
+echo ""
+
+exit 0

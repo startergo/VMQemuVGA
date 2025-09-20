@@ -138,6 +138,13 @@ public:
 										size_t inSize, size_t* outSize);
 	IOReturn 	setDisplayMode(IODisplayModeID displayMode, IOIndex depth) override;
 	
+	// Power management methods
+	IOReturn setPowerState(unsigned long powerStateOrdinal, IOService* whatDevice) override;
+	unsigned long maxCapabilityForDomainState(IOPMPowerFlags domainState) override;
+	unsigned long initialPowerStateForDomainState(IOPMPowerFlags domainState) override;
+	IOReturn powerStateWillChangeTo(IOPMPowerFlags capabilities, unsigned long stateNumber, IOService* whatDevice) override;
+	IOReturn powerStateDidChangeTo(IOPMPowerFlags capabilities, unsigned long stateNumber, IOService* whatDevice) override;
+	
 	// Canvas 2D hardware acceleration methods for YouTube/browser support
 	IOReturn acceleratedCanvasDrawImage(const void* imageData, size_t imageSize, 
 										int32_t srcX, int32_t srcY, int32_t srcW, int32_t srcH,
