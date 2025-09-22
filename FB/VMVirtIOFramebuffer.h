@@ -38,6 +38,7 @@ private:
     
 public:
     // IOService overrides
+    virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;
     virtual void stop(IOService* provider) override;
     virtual bool init(OSDictionary* properties = nullptr) override;
@@ -62,6 +63,9 @@ public:
     virtual IOReturn setDisplayMode(IODisplayModeID displayMode, IOIndex depth) override;
     virtual IOItemCount getConnectionCount(void) override;
     virtual bool isConsoleDevice(void) override;  // CRITICAL: Enable console device capability
+    
+    // CRITICAL: Safe open method override for WindowServer connection handling
+    virtual IOReturn open(void) override;
     
     // CRITICAL: Connection management for display activation
     virtual IOReturn getAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t* value) override;
