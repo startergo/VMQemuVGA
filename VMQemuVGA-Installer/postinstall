@@ -93,7 +93,7 @@ elif [[ $MACOS_MAJOR -eq 10 ]] && [[ $MACOS_MINOR -le 15 ]]; then
         
         # Rebuild prelinked kernel cache first (this prevents version regression)
         echo "Rebuilding prelinked kernel cache..."
-        if ! kextcache -prelinked-kernel /System/Library/PrelinkedKernels/prelinkedkernel /System/Library/Extensions; then
+        if ! kextcache -prelinked-kernel /System/Library/PrelinkedKernels/prelinkedkernel /System/Library/Extensions /Library/Extensions; then
             echo "WARNING: Prelinked kernel cache rebuild failed"
         fi
     fi

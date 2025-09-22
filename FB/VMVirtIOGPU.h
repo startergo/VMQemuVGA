@@ -77,24 +77,17 @@ private:
                           virtio_gpu_ctrl_hdr* resp, size_t resp_size);
     IOReturn processControlQueue();
     
-    // Resource management
-    IOReturn createResource2D(uint32_t resource_id, uint32_t format, 
-                             uint32_t width, uint32_t height);
-    IOReturn createResource3D(uint32_t resource_id, uint32_t target,
-                             uint32_t format, uint32_t bind,
-                             uint32_t width, uint32_t height, uint32_t depth);
+    // Internal resource management (private)
     IOReturn unrefResource(uint32_t resource_id);
     IOReturn attachBacking(uint32_t resource_id, IOMemoryDescriptor* memory);
     IOReturn detachBacking(uint32_t resource_id);
     
-    // 3D operations
+    // 3D operations (private)
     IOReturn create3DContext(uint32_t context_id);
     IOReturn destroy3DContext(uint32_t context_id);
     IOReturn submit3DCommand(uint32_t context_id, IOMemoryDescriptor* commands, size_t size);
     
-    // Display operations
-    IOReturn setscanout(uint32_t scanout_id, uint32_t resource_id,
-                       uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+    // Internal display operations (private)
     IOReturn flushResource(uint32_t resource_id, uint32_t x, uint32_t y,
                           uint32_t width, uint32_t height);
     IOReturn transferToHost2D(uint32_t resource_id, uint64_t offset,
@@ -113,6 +106,17 @@ public:
     
     // IONDRVFramebuffer blocking
     void terminateIONDRVFramebuffers();
+    
+    // Resource management (public interface for framebuffer)
+    IOReturn createResource2D(uint32_t resource_id, uint32_t format, 
+                             uint32_t width, uint32_t height);
+    IOReturn createResource3D(uint32_t resource_id, uint32_t target,
+                             uint32_t format, uint32_t bind,
+                             uint32_t width, uint32_t height, uint32_t depth);
+    
+    // Display scanout operations (public interface for framebuffer)
+    IOReturn setscanout(uint32_t scanout_id, uint32_t resource_id,
+                       uint32_t x, uint32_t y, uint32_t width, uint32_t height);
     
     // 3D acceleration interface
     IOReturn allocateResource3D(uint32_t* resource_id, uint32_t target, uint32_t format,

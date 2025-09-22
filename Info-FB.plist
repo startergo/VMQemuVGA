@@ -94,8 +94,6 @@
 			<string>IOPCIDevice</string>
 			<key>IOPCIMatch</key>
 			<string>0x10501af4 0x10511af4 0x10521af4</string>
-			<key>IONameMatch</key>
-			<string>display</string>
 			<key>IOUserClientClass</key>
 			<string>VMQemuVGAClient</string>
 			<key>IOHardwareModel</key>
@@ -140,6 +138,14 @@
 			<string>VMVirtIOGPU</string>
 			<key>IOProbeScore</key>
 			<integer>250000</integer>
+			<!-- CRITICAL: Force single instance per VMVirtIOGPU -->
+			<key>IOPropertyMatch</key>
+			<dict>
+				<key>IOClass</key>
+				<string>VMVirtIOGPU</string>
+			</dict>
+			<key>IOResourceMatch</key>
+			<string>VMVirtIOSingleFramebuffer</string>
 		</dict>
 	</dict>
 	<key>NSHumanReadableCopyright</key>
