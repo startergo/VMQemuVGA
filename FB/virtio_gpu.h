@@ -9,13 +9,25 @@
 #define VIRTIO_GPU_F_RESOURCE_UUID        2
 #define VIRTIO_GPU_F_RESOURCE_BLOB        3
 
-/* VirtIO GPU feature support */
-#define VIRTIO_GPU_FEATURE_3D             (1 << 0)
-#define VIRTIO_GPU_FEATURE_VIRGL          (1 << 1)
-#define VIRTIO_GPU_FEATURE_RESOURCE_BLOB  (1 << 2)
-#define VIRTIO_GPU_FEATURE_CONTEXT_INIT   (1 << 3)
-#define VIRTIO_GPU_FEATURE_CROSS_DEVICE   (1 << 4)
-#define VIRTIO_GPU_FEATURE_RESOURCE_SYNC  (1 << 5)
+/* VirtIO GPU feature support - corrected to match VirtIO specification */
+/* Note: In VirtIO GPU, 3D support IS Virgil 3D - there's no separate basic 3D feature */
+#define VIRTIO_GPU_FEATURE_VIRGL          (1 << 0)  /* Same as VIRTIO_GPU_F_VIRGL */
+#define VIRTIO_GPU_FEATURE_EDID           (1 << 1)  /* Same as VIRTIO_GPU_F_EDID */
+#define VIRTIO_GPU_FEATURE_RESOURCE_UUID  (1 << 2)  /* Same as VIRTIO_GPU_F_RESOURCE_UUID */
+#define VIRTIO_GPU_FEATURE_RESOURCE_BLOB  (1 << 3)  /* Same as VIRTIO_GPU_F_RESOURCE_BLOB */
+#define VIRTIO_GPU_FEATURE_CONTEXT_INIT   (1 << 4)  /* Custom extension */
+#define VIRTIO_GPU_FEATURE_CROSS_DEVICE   (1 << 5)  /* Custom extension */
+#define VIRTIO_GPU_FEATURE_RESOURCE_SYNC  (1 << 6)  /* Custom extension */
+
+/* For compatibility with existing code, define 3D as Virgl (the correct mapping) */
+#define VIRTIO_GPU_FEATURE_3D             VIRTIO_GPU_FEATURE_VIRGL
+
+/* VirtIO GPU capability set IDs (VirtIO GPU specification 5.7.3) */
+#define VIRTIO_GPU_CAPSET_VIRGL           1
+#define VIRTIO_GPU_CAPSET_VIRGL2          2
+#define VIRTIO_GPU_CAPSET_GFXSTREAM       3
+#define VIRTIO_GPU_CAPSET_VENUS           4
+#define VIRTIO_GPU_CAPSET_CROSS_DOMAIN    5
 
 /* OpenGL capability query parameters */
 #define VIRTIO_GPU_GL_VERSION             0x1001

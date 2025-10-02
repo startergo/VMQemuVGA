@@ -153,6 +153,26 @@ public:
 	IOReturn acceleratedCanvasDrawText(const char* text, int32_t x, int32_t y, uint32_t fontSize, uint32_t color);
 	IOReturn enableCanvasAcceleration(bool enable);
 	
+	// WebGL hardware acceleration methods for comprehensive 3D support
+	IOReturn createRenderContext(uint32_t* context_id);
+	IOReturn executeCommands(uint32_t context_id, IOMemoryDescriptor* commands);
+	IOReturn allocateResource3D(uint32_t* resource_id, uint32_t target, uint32_t format,
+								uint32_t width, uint32_t height, uint32_t depth);
+	IOReturn deallocateResource(uint32_t resource_id);
+	IOReturn destroyRenderContext(uint32_t context_id);
+	IOReturn allocateGPUMemory(size_t size, IOMemoryDescriptor** memory);
+	IOReturn updateDisplay(uint32_t scanout_id, uint32_t resource_id, uint32_t x, uint32_t y, 
+						   uint32_t width, uint32_t height);
+	IOReturn mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_addr);
+	void enableVSync(bool enabled);
+	void enableVirgl();
+	void setMockMode(bool enabled);
+	void setBasic3DSupport(bool enabled);
+	void enableResourceBlob();
+	bool supportsFeature(uint32_t feature_flags) const;
+	void initializeWebGLAcceleration();
+	void enable3DAcceleration();
+	
 	// Snow Leopard IOFramebuffer compatibility methods
 	// These methods exist in Snow Leopard's IOFramebuffer but may have different signatures
 #if defined(__MAC_OS_X_VERSION_MIN_REQUIRED) && (__MAC_OS_X_VERSION_MIN_REQUIRED < 1070)
