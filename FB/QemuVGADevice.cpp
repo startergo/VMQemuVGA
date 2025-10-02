@@ -75,10 +75,15 @@ bool CLASS::Start(IOPCIDevice* provider)
 	provider->setIOEnable(true);
 	
 	// Debug PCI device information
-	UInt32 vendor_id = provider->configRead32(kIOPCIConfigVendorID);
-	UInt32 device_id = provider->configRead32(kIOPCIConfigDeviceID);
-	IOLog("QemuVGADevice: PCI Vendor:Device = 0x%04x:0x%04x\n", 
-		  vendor_id & 0xFFFF, (device_id >> 16) & 0xFFFF);
+	UInt16 vendor_id = provider->configRead16(kIOPCIConfigVendorID);
+	UInt16 device_id = provider->configRead16(kIOPCIConfigDeviceID);
+	IOLog("QemuVGADevice: PCI Vendor:Device = 0x%04x:0x%04x\n", vendor_id, device_id);
+	
+	// Check if this is a QXL device
+	bool is_qxl = (vendor_id == 0x1b36 && device_id == 0x0100);
+	if (is_qxl) {
+		IOLog("QemuVGADevice: QXL device detected - using QXL-specific initialization\n");
+	}
 	
 	//get the MVRAM, bar0 for cirrus
 	m_vram = provider->getDeviceMemoryWithIndex(0U);
@@ -107,12 +112,23 @@ bool CLASS::Start(IOPCIDevice* provider)
 	m_fb_offset = 0;
 	m_fb_size   = static_cast<uint32_t>(m_vram_size);
 
-	//get initial value
-	m_width  = ReadRegVBE(VBE_DISPI_INDEX_XRES);
-	m_height = ReadRegVBE(VBE_DISPI_INDEX_YRES);
-	m_bpp	 = ReadRegVBE(VBE_DISPI_INDEX_BPP);
-
-	DLOG("%s Starting with mode : w:%d h:%d bpp:%d\n", __FUNCTION__, m_width, m_height, m_bpp );
+	//get initial value - QXL-safe approach
+	if (is_qxl) {
+		// QXL devices may not support VBE registers properly
+		// Use safe defaults to prevent boot hangs
+		IOLog("QemuVGADevice: Using QXL-safe defaults to prevent VBE register access hang\n");
+		m_width  = 1024;  // Safe default
+		m_height = 768;   // Safe default  
+		m_bpp    = 32;    // Safe default
+		IOLog("QemuVGADevice: QXL defaults - w:%d h:%d bpp:%d\n", m_width, m_height, m_bpp);
+	} else {
+		// Traditional VGA/VBE devices - safe to access VBE registers
+		IOLog("QemuVGADevice: Reading VBE registers for traditional VGA device\n");
+		m_width  = ReadRegVBE(VBE_DISPI_INDEX_XRES);
+		m_height = ReadRegVBE(VBE_DISPI_INDEX_YRES);
+		m_bpp    = ReadRegVBE(VBE_DISPI_INDEX_BPP);
+		IOLog("QemuVGADevice: VBE values - w:%d h:%d bpp:%d\n", m_width, m_height, m_bpp);
+	}
 
 	//Cosmetic
 	provider->setProperty("model", "Qemu VBE/VGA Std");

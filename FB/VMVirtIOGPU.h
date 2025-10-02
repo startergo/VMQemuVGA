@@ -72,6 +72,9 @@ private:
     void cleanupVirtIOGPU();
     void initHardwareDeferred();  // Deferred hardware init to prevent boot hang
     
+    // VirtIO PCI capability parsing
+    bool findVirtIOCapability(IOPCIDevice* pci_device, uint8_t cfg_type, uint8_t* bar_index, uint32_t* offset, uint32_t* length);
+    
     // Command processing
     IOReturn submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size, 
                           virtio_gpu_ctrl_hdr* resp, size_t resp_size);
@@ -86,6 +89,9 @@ private:
     IOReturn create3DContext(uint32_t context_id);
     IOReturn destroy3DContext(uint32_t context_id);
     IOReturn submit3DCommand(uint32_t context_id, IOMemoryDescriptor* commands, size_t size);
+    
+    // PCI configuration space reading (private)
+    IOReturn readPCIConfigSpace(IOPCIDevice* pciDevice, uint32_t* vendorID, uint32_t* deviceID);
     
     // Internal display operations (private)
     IOReturn flushResource(uint32_t resource_id, uint32_t x, uint32_t y,
@@ -142,6 +148,7 @@ public:
         return m_num_capsets > 0; 
     }
     IOReturn enableFeature(uint32_t feature_flags);
+    uint32_t readVirtIODeviceFeatures() const;
     bool supportsFeature(uint32_t feature_flags) const;
     
     // PCI device configuration and VRAM interface (for framebuffer compatibility)
@@ -163,6 +170,7 @@ public:
     bool initializeVirtIOQueues();
     bool setupGPUMemoryRegions();
     void enable3DAcceleration();
+    bool negotiateVirtIOFeatures();
     
     // Performance optimization
     bool setOptimalQueueSizes();

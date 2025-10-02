@@ -89,7 +89,7 @@
 			<key>IOMatchCategory</key>
 			<string>VMVirtIOGPU</string>
 			<key>IOProbeScore</key>
-			<integer>100000</integer>
+			<integer>80000</integer>
 			<key>IOProviderClass</key>
 			<string>IOPCIDevice</string>
 			<key>IOPCIMatch</key>
