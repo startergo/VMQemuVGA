@@ -6,10 +6,10 @@
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOCommandGate.h>
 #include <IOKit/IOWorkLoop.h>
+#include <IOKit/graphics/IOAccelerator.h>
 
 class VMQemuVGA;
 class VMVirtIOGPU;
-class VMVirtIOFramebuffer;
 class VMShaderManager;
 class VMTextureManager;
 class VMCommandBufferPool;
@@ -70,7 +70,7 @@ struct VM3DSurfaceInfo {
     uint32_t flags;
 };
 
-class VMQemuVGAAccelerator : public IOService
+class VMQemuVGAAccelerator : public IOAccelerator
 {
     OSDeclareDefaultStructors(VMQemuVGAAccelerator);
 
