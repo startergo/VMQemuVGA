@@ -5,9 +5,9 @@
 #include <libkern/OSByteOrder.h>
 
 #define CLASS VMVirtIOGPU
-#define super IOService
+#define super IOAccelerator
 
-OSDefineMetaClassAndStructors(VMVirtIOGPU, IOService);
+OSDefineMetaClassAndStructors(VMVirtIOGPU, IOAccelerator);
 
 bool CLASS::init(OSDictionary* properties)
 {
@@ -33,12 +33,19 @@ bool CLASS::init(OSDictionary* properties)
     
     m_resource_lock = IOLockAlloc();
     m_context_lock = IOLockAlloc();
+    m_accelerator_service = nullptr;
     
     return (m_resources && m_contexts && m_resource_lock && m_context_lock);
 }
 
 void CLASS::free()
 {
+    if (m_accelerator_service) {
+        m_accelerator_service->detach(this);
+        m_accelerator_service->release();
+        m_accelerator_service = nullptr;
+    }
+    
     if (m_resource_lock) {
         IOLockFree(m_resource_lock);
         m_resource_lock = nullptr;
@@ -276,6 +283,71 @@ bool CLASS::start(IOService* provider)
     setProperty("Vendor", "Red Hat, Inc.");
     setProperty("Device", "VirtIO GPU");
     
+    // CRITICAL: Set IOAccelerator properties for hardware OpenGL support
+    setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
+    setProperty("IOAccelerator3D", kOSBooleanTrue);
+    setProperty("IOAcceleratorFamily", "IOGraphicsFamily");
+    
+    // Publish accelerator types for OpenGL framework recognition
+    OSArray* accelTypes = OSArray::withCapacity(4);
+    if (accelTypes) {
+        accelTypes->setObject(OSString::withCString("Framebuffer"));
+        accelTypes->setObject(OSString::withCString("3D"));
+        accelTypes->setObject(OSString::withCString("VirtIO-GPU"));
+        accelTypes->setObject(OSString::withCString("Hardware"));
+        setProperty("IOAcceleratorTypes", accelTypes);
+        accelTypes->release();
+    }
+    
+    // Set accelerator ID for OpenGL framework
+    IOAccelID accelID = 0;
+    if (IOAccelerator::createAccelID(0, &accelID) == kIOReturnSuccess) {
+        setProperty("IOAccelIndex", accelID, 32);
+        setProperty("IOAccelRevision", (uint32_t)1, 32);
+        IOLog("VMVirtIOGPU: Created IOAccelerator ID: %u\n", accelID);
+    }
+    
+    // Create and register separate IOAccelerator service for OpenGL framework
+    VMVirtIOGPUAccelerator* acceleratorService = new VMVirtIOGPUAccelerator;
+    if (acceleratorService && acceleratorService->init()) {
+        // Copy relevant accelerator properties
+        acceleratorService->setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
+        acceleratorService->setProperty("IOAccelerator3D", kOSBooleanTrue);
+        acceleratorService->setProperty("IOAcceleratorFamily", "IOGraphicsFamily");
+        if (accelID > 0) {
+            acceleratorService->setProperty("IOAccelIndex", accelID, 32);
+            acceleratorService->setProperty("IOAccelRevision", (uint32_t)1, 32);
+        }
+        
+        // Create accelerator types array
+        OSArray* accelTypes = OSArray::withCapacity(4);
+        if (accelTypes) {
+            accelTypes->setObject(OSString::withCString("Framebuffer"));
+            accelTypes->setObject(OSString::withCString("3D"));
+            accelTypes->setObject(OSString::withCString("VirtIO-GPU"));
+            accelTypes->setObject(OSString::withCString("Hardware"));
+            acceleratorService->setProperty("IOAcceleratorTypes", accelTypes);
+            accelTypes->release();
+        }
+        
+        // Attach as child and register the accelerator service
+        if (acceleratorService->attach(this)) {
+            acceleratorService->registerService();
+            m_accelerator_service = acceleratorService;  // Store reference
+            IOLog("VMVirtIOGPU: Registered separate IOAccelerator service for OpenGL\n");
+        } else {
+            IOLog("VMVirtIOGPU: Failed to attach IOAccelerator service\n");
+            acceleratorService->release();
+            acceleratorService = NULL;
+        }
+    } else {
+        IOLog("VMVirtIOGPU: Failed to create IOAccelerator service\n");
+        if (acceleratorService) {
+            acceleratorService->release();
+            acceleratorService = NULL;
+        }
+    }
+    
     IOLog("VMVirtIOGPU: Started successfully with %d scanouts, 3D support: %s\n", 
           m_max_scanouts, supports3D() ? "Yes" : "No");
     
@@ -303,6 +375,14 @@ bool CLASS::start(IOService* provider)
 void CLASS::stop(IOService* provider)
 {
     IOLog("VMVirtIOGPU::stop\n");
+    
+    // Cleanup IOAccelerator ID if we created one
+    OSNumber* accelIndexProp = OSDynamicCast(OSNumber, getProperty("IOAccelIndex"));
+    if (accelIndexProp) {
+        IOAccelID accelID = accelIndexProp->unsigned32BitValue();
+        IOAccelerator::releaseAccelID(0, accelID);
+        IOLog("VMVirtIOGPU: Released IOAccelerator ID: %u\n", accelID);
+    }
     
     if (m_command_gate) {
         getWorkLoop()->removeEventSource(m_command_gate);
@@ -3896,5 +3976,92 @@ IOReturn CLASS::setscanout(uint32_t scanout_id, uint32_t resource_id,
     }
     
     IOLog("VMVirtIOGPU::setscanout: Scanout set successfully\n");
+    return kIOReturnSuccess;
+}
+
+/* ===================================
+ * Custom VMVirtIOGPUAccelerator Implementation  
+ * =================================== */
+
+OSDefineMetaClassAndStructors(VMVirtIOGPUAccelerator, IOAccelerator);
+
+bool VMVirtIOGPUAccelerator::start(IOService* provider)
+{
+    IOLog("VMVirtIOGPUAccelerator::start()\n");
+    
+    if (!super::start(provider)) {
+        IOLog("VMVirtIOGPUAccelerator: super::start() failed\n");
+        return false;
+    }
+    
+    IOLog("VMVirtIOGPUAccelerator: Started successfully\n");
+    return true;
+}
+
+IOReturn VMVirtIOGPUAccelerator::newUserClient(task_t owningTask, void* securityID, UInt32 type, IOUserClient** handler)
+{
+    IOLog("VMVirtIOGPUAccelerator::newUserClient() type=%u\n", type);
+    
+    // Support known client types: 0 (kIOAccelSurfaceClientType), 4 (unknown but commonly requested)
+    if (type != 0 && type != 4) {
+        IOLog("VMVirtIOGPUAccelerator: Invalid user client type %u\n", type);
+        return kIOReturnBadArgument;
+    }
+    
+    // Create IOAccelerationUserClient (defined in IOGraphics framework)
+    // We need to use the system's IOAccelerationUserClient class
+    IOUserClient* userClient = nullptr;
+    
+    // Create IOAccelerationUserClient directly using OSSymbol lookup
+    const OSSymbol* className = OSSymbol::withCString("IOAccelerationUserClient");
+    if (!className) {
+        IOLog("VMVirtIOGPUAccelerator: Failed to create class name symbol\n");
+        return kIOReturnNoMemory;
+    }
+    
+    const OSMetaClass* clientClass = OSMetaClass::getMetaClassWithName(className);
+    className->release();
+    
+    if (!clientClass) {
+        IOLog("VMVirtIOGPUAccelerator: IOAccelerationUserClient class not found\n");
+        return kIOReturnUnsupported;
+    }
+    
+    OSObject* clientObject = clientClass->alloc();
+    if (!clientObject) {
+        IOLog("VMVirtIOGPUAccelerator: Failed to allocate IOAccelerationUserClient\n");
+        return kIOReturnNoMemory;
+    }
+    
+    userClient = OSDynamicCast(IOUserClient, clientObject);
+    if (!userClient) {
+        IOLog("VMVirtIOGPUAccelerator: Object is not IOUserClient\n");
+        clientObject->release();
+        return kIOReturnError;
+    }
+    
+    // Initialize the user client with basic init
+    if (!userClient->init()) {
+        IOLog("VMVirtIOGPUAccelerator: Failed to initialize user client\n");
+        userClient->release();
+        return kIOReturnError;
+    }
+    
+    if (!userClient->attach(this)) {
+        IOLog("VMVirtIOGPUAccelerator: Failed to attach user client\n");
+        userClient->release();
+        return kIOReturnError;
+    }
+    
+    if (!userClient->start(this)) {
+        IOLog("VMVirtIOGPUAccelerator: Failed to start user client\n");
+        userClient->detach(this);
+        userClient->release();
+        return kIOReturnError;
+    }
+    
+    *handler = userClient;
+    IOLog("VMVirtIOGPUAccelerator: Successfully created IOAccelerationUserClient\n");
+    
     return kIOReturnSuccess;
 }

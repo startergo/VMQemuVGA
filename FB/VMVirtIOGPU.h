@@ -8,6 +8,7 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/graphics/IODisplay.h>
 #include <IOKit/graphics/IOFramebuffer.h>
+#include <IOKit/graphics/IOAccelerator.h>
 #include "virtio_gpu.h"
 
 #define VIRTIO_GPU_QUEUE_CONTROL    0
@@ -16,7 +17,10 @@
 // VirtIO GPU feature flags are defined in virtio_gpu.h
 // No need to redefine them here
 
-class VMVirtIOGPU : public IOService
+// Forward declaration for custom accelerator class
+class VMVirtIOGPUAccelerator;
+
+class VMVirtIOGPU : public IOAccelerator
 {
     OSDeclareDefaultStructors(VMVirtIOGPU);
 
@@ -66,6 +70,9 @@ private:
     
     IOLock* m_resource_lock;
     IOLock* m_context_lock;
+    
+    // OpenGL acceleration service
+    VMVirtIOGPUAccelerator* m_accelerator_service;
     
     // VirtIO operations
     bool initVirtIOGPU();
@@ -187,6 +194,16 @@ public:
     // Display output control
     IOReturn setupDisplayResource(uint32_t width, uint32_t height, uint32_t depth);
     IOReturn enableScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
+};
+
+// Custom IOAccelerator subclass with newUserClient support
+class VMVirtIOGPUAccelerator : public IOAccelerator
+{
+    OSDeclareDefaultStructors(VMVirtIOGPUAccelerator);
+    
+public:
+    virtual bool start(IOService* provider) override;
+    virtual IOReturn newUserClient(task_t owningTask, void* securityID, UInt32 type, IOUserClient** handler) override;
 };
 
 #endif /* __VMVirtIOGPU_H__ */
