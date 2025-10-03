@@ -9,6 +9,7 @@
 #include <IOKit/graphics/IODisplay.h>
 #include <IOKit/graphics/IOFramebuffer.h>
 #include <IOKit/graphics/IOAccelerator.h>
+#include <IOKit/IOUserClient.h>
 #include "virtio_gpu.h"
 
 #define VIRTIO_GPU_QUEUE_CONTROL    0
@@ -28,6 +29,7 @@ private:
     IOPCIDevice* m_pci_device;
     IOMemoryMap* m_config_map;
     IOMemoryMap* m_notify_map;
+    uint32_t m_notify_offset;  // Offset within notify BAR for VirtIO notifications
     IOCommandGate* m_command_gate;
     
     // VirtIO transport device handle
@@ -36,6 +38,7 @@ private:
     // VirtIO GPU configuration
     uint32_t m_max_scanouts;
     uint32_t m_num_capsets;
+    uint64_t m_fence_id;    // VirtIO 1.2: Fence ID counter for command synchronization
     
     // Command queue management
     IOBufferMemoryDescriptor* m_control_queue;
@@ -110,6 +113,9 @@ private:
     gpu_resource* findResource(uint32_t resource_id);
     gpu_3d_context* findContext(uint32_t context_id);
     
+    // Phase 4: Advanced Queue State Management
+    IOReturn advancedQueueStateManagement();
+    
 public:
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;
@@ -148,6 +154,13 @@ public:
     IOReturn updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y,
                          uint32_t scanout_id, uint32_t x, uint32_t y);
     IOReturn moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y);
+    
+    // VirtIO 1.2 command header initialization (per specification)
+    void initializeCommandHeader(virtio_gpu_ctrl_hdr* hdr, uint32_t cmd_type, 
+                                uint32_t ctx_id = 0, bool use_fence = false);
+    
+    // VirtIO hardware queue setup (critical for notifications)
+    bool setupVirtIOHardwareQueues();
     
     // Capability queries
     uint32_t getMaxScanouts() const { return m_max_scanouts; }
@@ -197,13 +210,72 @@ public:
 };
 
 // Custom IOAccelerator subclass with newUserClient support
+class VMVirtIOGPUUserClient;
+
 class VMVirtIOGPUAccelerator : public IOAccelerator
 {
     OSDeclareDefaultStructors(VMVirtIOGPUAccelerator);
     
+private:
+    VMVirtIOGPU* m_gpu_device;
+    
 public:
-    virtual bool start(IOService* provider) override;
-    virtual IOReturn newUserClient(task_t owningTask, void* securityID, UInt32 type, IOUserClient** handler) override;
+    virtual bool init(OSDictionary* properties = 0) APPLE_KEXT_OVERRIDE;
+    virtual bool start(IOService* provider) APPLE_KEXT_OVERRIDE;
+    virtual void stop(IOService* provider) APPLE_KEXT_OVERRIDE;
+    virtual void free() APPLE_KEXT_OVERRIDE;
+    virtual IOReturn newUserClient(task_t owningTask, void* securityID, UInt32 type, IOUserClient** handler) APPLE_KEXT_OVERRIDE;
+    
+    // GPU acceleration methods
+    VMVirtIOGPU* getGPUDevice() { return m_gpu_device; }
+};
+
+// Custom user client for VirtIO GPU acceleration
+class VMVirtIOGPUUserClient : public IOUserClient
+{
+    OSDeclareDefaultStructors(VMVirtIOGPUUserClient);
+    
+private:
+    VMVirtIOGPUAccelerator* m_accelerator;
+    VMVirtIOGPU* m_gpu_device;
+    task_t m_owning_task;
+    UInt32 m_client_type;
+    
+    // Surface and context management
+    OSArray* m_surfaces;
+    OSArray* m_contexts;
+    UInt32 m_next_surface_id;
+    UInt32 m_next_context_id;
+    
+public:
+    virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type, 
+                            OSDictionary* properties) APPLE_KEXT_OVERRIDE;
+    virtual bool start(IOService* provider) APPLE_KEXT_OVERRIDE;
+    virtual void stop(IOService* provider) APPLE_KEXT_OVERRIDE;
+    virtual void free() APPLE_KEXT_OVERRIDE;
+    
+    virtual IOReturn clientClose() APPLE_KEXT_OVERRIDE;
+    virtual IOReturn clientDied() APPLE_KEXT_OVERRIDE;
+    
+    // GPU acceleration interface methods
+    virtual IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments* args,
+                                  IOExternalMethodDispatch* dispatch = NULL, OSObject* target = NULL, void* reference = NULL) APPLE_KEXT_OVERRIDE;
+    
+    // Surface management
+    IOReturn createSurface(uint32_t width, uint32_t height, uint32_t format, uint32_t* surface_id);
+    IOReturn destroySurface(uint32_t surface_id);
+    IOReturn lockSurface(uint32_t surface_id, void** address);
+    IOReturn unlockSurface(uint32_t surface_id);
+    
+    // 3D context management  
+    IOReturn create3DContext(uint32_t* context_id);
+    IOReturn destroy3DContext(uint32_t context_id);
+    IOReturn bindSurface(uint32_t context_id, uint32_t surface_id);
+    
+    // Basic 2D operations
+    IOReturn clearSurface(uint32_t surface_id, uint32_t color);
+    IOReturn copySurface(uint32_t src_id, uint32_t dst_id);
+    IOReturn presentSurface(uint32_t surface_id);
 };
 
 #endif /* __VMVirtIOGPU_H__ */

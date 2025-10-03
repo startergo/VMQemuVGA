@@ -52,7 +52,7 @@ struct virtio_gpu_config {
     uint32_t num_capsets;
 };
 
-/* Control commands */
+/* Control commands - VirtIO 1.2 specification compliant */
 enum virtio_gpu_ctrl_type {
     /* 2D commands */
     VIRTIO_GPU_CMD_GET_DISPLAY_INFO = 0x0100,
@@ -66,6 +66,9 @@ enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_CMD_GET_CAPSET_INFO,
     VIRTIO_GPU_CMD_GET_CAPSET,
     VIRTIO_GPU_CMD_GET_EDID,
+    VIRTIO_GPU_CMD_RESOURCE_ASSIGN_UUID,
+    VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB,
+    VIRTIO_GPU_CMD_SET_SCANOUT_BLOB,
 
     /* 3D commands */
     VIRTIO_GPU_CMD_CTX_CREATE = 0x0200,
@@ -76,15 +79,11 @@ enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D,
     VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D,
     VIRTIO_GPU_CMD_SUBMIT_3D,
-    
-    /* Extended 3D commands for expanded functionality */
-    VIRTIO_GPU_CMD_BIND_TEXTURE,
-    VIRTIO_GPU_CMD_UPDATE_TEXTURE,
-    VIRTIO_GPU_CMD_DESTROY_SURFACE,
-    VIRTIO_GPU_CMD_CREATE_FRAMEBUFFER,
-    
+    VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB,
+    VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB,
+
     /* Cursor commands */
-    VIRTIO_GPU_CMD_UPDATE_CURSOR,
+    VIRTIO_GPU_CMD_UPDATE_CURSOR = 0x0300,
     VIRTIO_GPU_CMD_MOVE_CURSOR,
 
     /* Success responses */
@@ -93,6 +92,8 @@ enum virtio_gpu_ctrl_type {
     VIRTIO_GPU_RESP_OK_CAPSET_INFO,
     VIRTIO_GPU_RESP_OK_CAPSET,
     VIRTIO_GPU_RESP_OK_EDID,
+    VIRTIO_GPU_RESP_OK_RESOURCE_UUID,
+    VIRTIO_GPU_RESP_OK_MAP_INFO,
 
     /* Error responses */
     VIRTIO_GPU_RESP_ERR_UNSPEC = 0x1200,
@@ -128,13 +129,18 @@ enum virtio_gpu_formats {
 #define VIRTIO_GPU_RESOURCE_TARGET_2D_ARRAY 5
 #define VIRTIO_GPU_RESOURCE_TARGET_CUBE_ARRAY 6
 
-/* Common header for all commands */
+/* VirtIO GPU flags - VirtIO 1.2 specification */
+#define VIRTIO_GPU_FLAG_FENCE (1 << 0)
+#define VIRTIO_GPU_FLAG_INFO_RING_IDX (1 << 1)
+
+/* Common header for all commands - VirtIO 1.2 specification compliant */
 struct virtio_gpu_ctrl_hdr {
     uint32_t type;
     uint32_t flags;
     uint64_t fence_id;
     uint32_t ctx_id;
-    uint32_t padding;
+    uint8_t ring_idx;        /* VirtIO 1.2: Queue ring index */
+    uint8_t padding[3];      /* VirtIO 1.2: Proper padding alignment */
 };
 
 /* Display info structures */
@@ -242,7 +248,7 @@ struct virtio_gpu_resource_detach_backing {
 struct virtio_gpu_ctx_create {
     struct virtio_gpu_ctrl_hdr hdr;
     uint32_t nlen;
-    uint32_t padding;
+    uint32_t context_init;  // VirtIO 1.2: Context initialization parameters
     char debug_name[64];
 };
 
@@ -304,5 +310,77 @@ struct virtio_gpu_update_cursor {
     uint32_t hot_y;
     uint32_t padding;
 };
+
+/* VirtIO 1.2 missing structures */
+struct virtio_gpu_resource_assign_uuid {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+};
+
+struct virtio_gpu_resp_resource_uuid {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint8_t uuid[16];
+};
+
+/* Blob resource structures */
+#define VIRTIO_GPU_BLOB_MEM_GUEST             0x0001
+#define VIRTIO_GPU_BLOB_MEM_HOST3D            0x0002
+#define VIRTIO_GPU_BLOB_MEM_HOST3D_GUEST      0x0003
+
+#define VIRTIO_GPU_BLOB_FLAG_USE_MAPPABLE     0x0001
+#define VIRTIO_GPU_BLOB_FLAG_USE_SHAREABLE    0x0002
+#define VIRTIO_GPU_BLOB_FLAG_USE_CROSS_DEVICE 0x0004
+
+struct virtio_gpu_resource_create_blob {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t blob_mem;
+    uint32_t blob_flags;
+    uint32_t nr_entries;
+    uint64_t blob_id;
+    uint64_t size;
+};
+
+struct virtio_gpu_set_scanout_blob {
+    struct virtio_gpu_ctrl_hdr hdr;
+    struct virtio_gpu_rect r;
+    uint32_t scanout_id;
+    uint32_t resource_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t padding;
+    uint32_t strides[4];
+    uint32_t offsets[4];
+};
+
+struct virtio_gpu_resource_map_blob {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+    uint64_t offset;
+};
+
+#define VIRTIO_GPU_MAP_CACHE_MASK      0x0f
+#define VIRTIO_GPU_MAP_CACHE_NONE      0x00
+#define VIRTIO_GPU_MAP_CACHE_CACHED    0x01
+#define VIRTIO_GPU_MAP_CACHE_UNCACHED  0x02
+#define VIRTIO_GPU_MAP_CACHE_WC        0x03
+
+struct virtio_gpu_resp_map_info {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t map_info;
+    uint32_t padding;
+};
+
+struct virtio_gpu_resource_unmap_blob {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    uint32_t padding;
+};
+
+/* Context initialization with capset support */
+#define VIRTIO_GPU_CONTEXT_INIT_CAPSET_ID_MASK 0x000000ff
 
 #endif /* __VIRTIO_GPU_H__ */
