@@ -66,6 +66,7 @@ contents of the README, the contents of any key source files, the list of files 
 </WhatToAdd>
 
 <StepsToFollow>
+   
 - Perform a comprehensive inventory of the codebase. Search for and view:
 - README.md, CONTRIBUTING.md, and all other documentation files.
 - Search the codebase for build steps and indications of workarounds like 'HACK', 'TODO', etc.
@@ -92,5 +93,6 @@ If information is uncertain or unavailable, explicitly say "I cannot confirm thi
 Show calculations when giving numbers or statistica.
 - Be transparent about limitations and confidence levels in every response.
 </StepsToFollow>
+
    - Document any errors encountered as well as the steps taken to work-around them.
 
