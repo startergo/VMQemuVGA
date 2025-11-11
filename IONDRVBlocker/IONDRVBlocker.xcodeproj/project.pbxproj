@@ -1,0 +1,154 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 45;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		IOB001 /* IONDRVVirtIOGPUBlocker.cpp in Sources */ = {isa = PBXBuildFile; fileRef = IOF001 /* IONDRVVirtIOGPUBlocker.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		IOF001 /* IONDRVVirtIOGPUBlocker.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IONDRVVirtIOGPUBlocker.cpp; sourceTree = "<group>"; };
+		IOF002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		IOF003 /* IONDRVVirtIOGPUBlocker.kext */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = IONDRVVirtIOGPUBlocker.kext; sourceTree = BUILT_PRODUCTS_DIR; };
+		IOF004 /* IONDRVBlocker.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = IONDRVBlocker.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		IOT002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		IOG001 /* IONDRVBlocker */ = {
+			isa = PBXGroup;
+			children = (
+				IOF001 /* IONDRVVirtIOGPUBlocker.cpp */,
+				IOF002 /* Info.plist */,
+				IOF004 /* IONDRVBlocker.xcconfig */,
+				IOG002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		IOG002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				IOF003 /* IONDRVVirtIOGPUBlocker.kext */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		IOT001 /* IONDRVVirtIOGPUBlocker */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = IOL001 /* Build configuration list for PBXNativeTarget "IONDRVVirtIOGPUBlocker" */;
+			buildPhases = (
+				IOT003 /* Sources */,
+				IOT002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = IONDRVVirtIOGPUBlocker;
+			productName = IONDRVVirtIOGPUBlocker;
+			productReference = IOF003 /* IONDRVVirtIOGPUBlocker.kext */;
+			productType = "com.apple.product-type.kernel-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		IOP001 /* Project object */ = {
+			isa = PBXProject;
+			buildConfigurationList = IOL002 /* Build configuration list for PBXProject "IONDRVBlocker" */;
+			compatibilityVersion = "Xcode 3.1";
+			hasScannedForEncodings = 1;
+			mainGroup = IOG001 /* IONDRVBlocker */;
+			productRefGroup = IOG002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				IOT001 /* IONDRVVirtIOGPUBlocker */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		IOT003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				IOB001 /* IONDRVVirtIOGPUBlocker.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		IOC001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = IOF004 /* IONDRVBlocker.xcconfig */;
+			buildSettings = {
+				INFOPLIST_FILE = Info.plist;
+				PRODUCT_NAME = IONDRVVirtIOGPUBlocker;
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Debug;
+		};
+		IOC002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = IOF004 /* IONDRVBlocker.xcconfig */;
+			buildSettings = {
+				INFOPLIST_FILE = Info.plist;
+				PRODUCT_NAME = IONDRVVirtIOGPUBlocker;
+				WRAPPER_EXTENSION = kext;
+			};
+			name = Release;
+		};
+		IOC003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		IOC004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		IOL001 /* Build configuration list for PBXNativeTarget "IONDRVVirtIOGPUBlocker" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				IOC001 /* Debug */,
+				IOC002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		IOL002 /* Build configuration list for PBXProject "IONDRVBlocker" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				IOC003 /* Debug */,
+				IOC004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = IOP001 /* Project object */;
+}

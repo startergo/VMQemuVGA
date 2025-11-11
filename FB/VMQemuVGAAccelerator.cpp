@@ -3,6 +3,7 @@
 #include "VMShaderManager.h"
 #include "VMTextureManager.h"
 #include "VMCommandBuffer.h"
+#include "VMMetalPlugin.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <mach/mach_time.h>
@@ -126,6 +127,25 @@ bool CLASS::start(IOService* provider)
     if (!m_command_pool) {
         IOLog("VMQemuVGAAccelerator: Failed to create command buffer pool\n");
         return false;
+    }
+    
+    // d65: Create and start Metal plugin for WindowServer compatibility
+    IOLog("VMQemuVGAAccelerator: Creating Metal plugin for WindowServer support\n");
+    m_metal_plugin = new VMMetalPlugin();
+    if (m_metal_plugin) {
+        if (m_metal_plugin->init() && m_metal_plugin->attach(this)) {
+            m_metal_plugin->start(this);
+            IOLog("VMQemuVGAAccelerator: Metal plugin started successfully\n");
+            m_metal_compatible = true;
+        } else {
+            IOLog("VMQemuVGAAccelerator: WARNING - Metal plugin failed to start\n");
+            m_metal_plugin->release();
+            m_metal_plugin = nullptr;
+            m_metal_compatible = false;
+        }
+    } else {
+        IOLog("VMQemuVGAAccelerator: WARNING - Failed to create Metal plugin\n");
+        m_metal_compatible = false;
     }
     
     // Set device properties
