@@ -15,6 +15,7 @@ class VMTextureManager;
 class VMCommandBufferPool;
 class VMPhase3Manager;
 class VMMetalBridge;
+class VMMetalPlugin;
 class IOPixelInformation;
 
 // 3D command types for user space communication
@@ -74,7 +75,9 @@ class VMQemuVGAAccelerator : public IOAccelerator
 {
     OSDeclareDefaultStructors(VMQemuVGAAccelerator);
 
-private:
+protected:
+    // Protected so subclasses (e.g. VMVirtIOGPUAccelerator) can access core
+    // accelerator state (GPU device, workloop, command gate, etc.).
     VMQemuVGA* m_framebuffer;
     VMVirtIOGPU* m_gpu_device;
     IOWorkLoop* m_workloop;
@@ -86,6 +89,7 @@ private:
     VMTextureManager* m_texture_manager;
     VMCommandBufferPool* m_command_pool;
     VMMetalBridge* m_metal_bridge;
+    VMMetalPlugin* m_metal_plugin;
     
     // Phase 3 Integration Manager
     VMPhase3Manager* m_phase3_manager;

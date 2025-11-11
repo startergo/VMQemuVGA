@@ -29,6 +29,7 @@
 		PH3B01 /* VMMetalBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3002 /* VMMetalBridge.cpp */; };
 		PH3B01B /* VMOpenGLBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3003B /* VMOpenGLBridge.cpp */; };
 		PH3B02 /* VMQemuVGAAccelerator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3008 /* VMQemuVGAAccelerator.cpp */; };
+		PH3B02M /* VMMetalPlugin.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3008M /* VMMetalPlugin.cpp */; };
 		PH3B03 /* VMVirtIOGPU.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3010 /* VMVirtIOGPU.cpp */; };
 		PH3B03B /* VMVirtIOFramebuffer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3010B /* VMVirtIOFramebuffer.cpp */; };
 		PH3B04 /* VMShaderManager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3012 /* VMShaderManager.cpp */; };
@@ -40,6 +41,7 @@
 		PH3B09 /* VMPhase3Manager.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3021 /* VMPhase3Manager.cpp */; };
 		PH3B10 /* VMCommandBuffer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3022 /* VMCommandBuffer.cpp */; };
 		PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3023 /* VMIOSurfaceManager_Helpers.cpp */; };
+		PH3B12 /* VMVirtIOAGDC.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3024 /* VMVirtIOAGDC.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +77,8 @@
 		PH3006 /* VMPhase3Manager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMPhase3Manager.h; sourceTree = "<group>"; };
 		PH3007 /* VMQemuVGAAccelerator.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMQemuVGAAccelerator.h; sourceTree = "<group>"; };
 		PH3008 /* VMQemuVGAAccelerator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMQemuVGAAccelerator.cpp; sourceTree = "<group>"; };
+		PH3007M /* VMMetalPlugin.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMMetalPlugin.h; sourceTree = "<group>"; };
+		PH3008M /* VMMetalPlugin.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMMetalPlugin.cpp; sourceTree = "<group>"; };
 		PH3009 /* VMVirtIOGPU.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMVirtIOGPU.h; sourceTree = "<group>"; };
 		PH3010 /* VMVirtIOGPU.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMVirtIOGPU.cpp; sourceTree = "<group>"; };
 		PH3010B /* VMVirtIOFramebuffer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = VMVirtIOFramebuffer.cpp; path = VMVirtIOFramebuffer.cpp; sourceTree = "<group>"; };
@@ -92,6 +96,8 @@
 		PH3021 /* VMPhase3Manager.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMPhase3Manager.cpp; sourceTree = "<group>"; };
 		PH3022 /* VMCommandBuffer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMCommandBuffer.cpp; sourceTree = "<group>"; };
 		PH3023 /* VMIOSurfaceManager_Helpers.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMIOSurfaceManager_Helpers.cpp; sourceTree = "<group>"; };
+		PH3024 /* VMVirtIOAGDC.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMVirtIOAGDC.cpp; sourceTree = "<group>"; };
+		PH3025 /* VMVirtIOAGDC.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMVirtIOAGDC.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -126,6 +132,7 @@
 				PH3002 /* VMMetalBridge.cpp */,
 				PH3003B /* VMOpenGLBridge.cpp */,
 				PH3008 /* VMQemuVGAAccelerator.cpp */,
+				PH3008M /* VMMetalPlugin.cpp */,
 				PH3010 /* VMVirtIOGPU.cpp */,
 				PH3010B /* VMVirtIOFramebuffer.cpp */,
 				PH3012 /* VMShaderManager.cpp */,
@@ -137,6 +144,7 @@
 				PH3021 /* VMPhase3Manager.cpp */,
 				PH3022 /* VMCommandBuffer.cpp */,
 				PH3023 /* VMIOSurfaceManager_Helpers.cpp */,
+				PH3024 /* VMVirtIOAGDC.cpp */,
 			);
 			name = Source;
 			sourceTree = "<group>";
@@ -180,12 +188,14 @@
 				PH3005 /* VMCoreAnimationAccelerator.h */,
 				PH3006 /* VMPhase3Manager.h */,
 				PH3007 /* VMQemuVGAAccelerator.h */,
+				PH3007M /* VMMetalPlugin.h */,
 				PH3009 /* VMVirtIOGPU.h */,
 				PH3011 /* VMShaderManager.h */,
 				PH3013 /* VMQemuVGAMetal.h */,
 				PH3014 /* VMTextureManager.h */,
 				PH3015 /* VMCommandBuffer.h */,
 				PH3017 /* virtio_gpu.h */,
+				PH3025 /* VMVirtIOAGDC.h */,
 			);
 			name = Headers;
 			sourceTree = "<group>";
@@ -249,6 +259,7 @@
 				PH3B01 /* VMMetalBridge.cpp in Sources */,
 				PH3B01B /* VMOpenGLBridge.cpp in Sources */,
 				PH3B02 /* VMQemuVGAAccelerator.cpp in Sources */,
+				PH3B02M /* VMMetalPlugin.cpp in Sources */,
 				PH3B03 /* VMVirtIOGPU.cpp in Sources */,
 				PH3B03B /* VMVirtIOFramebuffer.cpp in Sources */,
 				PH3B04 /* VMShaderManager.cpp in Sources */,
@@ -260,6 +271,7 @@
 				PH3B09 /* VMPhase3Manager.cpp in Sources */,
 				PH3B10 /* VMCommandBuffer.cpp in Sources */,
 				PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */,
+				PH3B12 /* VMVirtIOAGDC.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -328,8 +340,8 @@
 			buildSettings = {
 				ARCHS = x86_64;
 				COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
-				CURRENT_PROJECT_VERSION = 8.0.0d35;
-				DYLIB_COMPATIBILITY_VERSION = 8.0.0d35;
+				CURRENT_PROJECT_VERSION = 8.0.0d81;
+				DYLIB_COMPATIBILITY_VERSION = 8.0.0d81;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MACOSX_DEPLOYMENT_TARGET = 10.6;
@@ -382,8 +394,8 @@
 			buildSettings = {
 				ARCHS = x86_64;
 				COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
-				CURRENT_PROJECT_VERSION = 8.0.0d35;
-				DYLIB_COMPATIBILITY_VERSION = 8.0.0d35;
+				CURRENT_PROJECT_VERSION = 8.0.0d81;
+				DYLIB_COMPATIBILITY_VERSION = 8.0.0d81;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MACOSX_DEPLOYMENT_TARGET = 10.6;

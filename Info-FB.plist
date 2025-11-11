@@ -50,14 +50,7 @@
 			<key>IOHardwareModel</key>
 			<string>VirtIO GPU / Hyper-V DDA / QEMU VGA</string>
 			<key>IOGraphicsAccelerator</key>
-			<true/>
-			<key>IOAcceleratorTypes</key>
-			<array>
-				<string>Framebuffer</string>
-				<string>3D</string>
-				<string>VirtIO-GPU</string>
-				<string>Hyper-V-DDA</string>
-			</array>
+			<false/>
 			<key>IODisplayClass</key>
 			<string>IOFramebuffer</string>
 			<key>IOGraphicsDevice</key>
@@ -65,9 +58,9 @@
 			<key>IOPrimaryDisplay</key>
 			<true/>
 			<key>IOAcceleratorFamily</key>
-			<true/>
+			<false/>
 			<key>IOAccelerator3D</key>
-			<true/>
+			<false/>
 			<key>VirtIOGPUAccelerator</key>
 			<true/>
 			<!-- Hyper-V and Lilu compatibility properties -->
@@ -98,14 +91,14 @@
 			<string>VMQemuVGAClient</string>
 			<key>IOHardwareModel</key>
 			<string>VirtIO GPU / VirtIO VGA</string>
-			<key>IOGraphicsAccelerator</key>
-			<true/>
+			<!-- IOAccelerator types that this driver supports -->
+			<!-- WindowServer requires this for creating IOAccelerationUserClient -->
 			<key>IOAcceleratorTypes</key>
 			<array>
-				<string>Framebuffer</string>
-				<string>3D</string>
-				<string>VirtIO-GPU</string>
+				<integer>2</integer>
 			</array>
+			<key>IOGraphicsAccelerator</key>
+			<false/>
 			<key>IODisplayClass</key>
 			<string>IOFramebuffer</string>
 			<key>IOGraphicsDevice</key>
@@ -113,9 +106,9 @@
 			<key>IOPrimaryDisplay</key>
 			<true/>
 			<key>IOAcceleratorFamily</key>
-			<true/>
+			<false/>
 			<key>IOAccelerator3D</key>
-			<true/>
+			<false/>
 			<key>VirtIOGPUAccelerator</key>
 			<true/>
 			<!-- CRITICAL: Disable IONDRVFramebuffer for VirtIO GPU -->
@@ -126,6 +119,10 @@
 			<key>IOAccelDisplayMachineInfo</key>
 			<false/>
 		</dict>
+		<!-- d74: VMVirtIOFramebuffer personality REMOVED
+		     IONDRV-ONLY MODE: IONDRVFramebuffer handles display output
+		     VMVirtIOGPUAccelerator handles Metal/3D acceleration
+		     Both share IOAccelIndex 0x1AF41050 for WindowServer linking
 		<key>VMVirtIOFramebuffer</key>
 		<dict>
 			<key>CFBundleIdentifier</key>
@@ -133,20 +130,29 @@
 			<key>IOClass</key>
 			<string>VMVirtIOFramebuffer</string>
 			<key>IOMatchCategory</key>
-			<string>VMVirtIOFramebuffer</string>
+			<string>IODefaultMatchCategory</string>
 			<key>IOProviderClass</key>
 			<string>VMVirtIOGPU</string>
 			<key>IOProbeScore</key>
-			<integer>250000</integer>
-			<!-- CRITICAL: Force single instance per VMVirtIOGPU -->
-			<key>IOPropertyMatch</key>
-			<dict>
-				<key>IOClass</key>
-				<string>VMVirtIOGPU</string>
-			</dict>
-			<key>IOResourceMatch</key>
-			<string>VMVirtIOSingleFramebuffer</string>
+			<integer>1000</integer>
+			<key>IOHardwareModel</key>
+			<string>VirtIO GPU Primary Framebuffer</string>
+			<key>IOGraphicsDevice</key>
+			<true/>
+			<key>IOPrimaryDisplay</key>
+			<true/>
+			<key>IOConsoleDevice</key>
+			<true/>
+			<key>IOBootDisplay</key>
+			<true/>
+			<key>IOFramebufferOpenGLIndex</key>
+			<integer>0</integer>
+			<key>IOAcceleratorFamily</key>
+			<false/>
+			<key>IOAccelerator3D</key>
+			<false/>
 		</dict>
+		END d74 COMMENT -->
 	</dict>
 	<key>NSHumanReadableCopyright</key>
 	<string>${COPYRIGHT_NOTICE}</string>
