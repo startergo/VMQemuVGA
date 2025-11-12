@@ -241,6 +241,12 @@ public:
     
     // GPU acceleration methods
     VMVirtIOGPU* getVirtIOGPUDevice() { return m_virtio_gpu_device; }
+    
+    // VirtIO GPU 3D command translation - virgl protocol
+    IOReturn submitClearCommand(uint32_t context_id, 
+                               float red, float green, float blue, float alpha,
+                               double depth, uint32_t stencil,
+                               uint32_t buffers);
 };
 
 // Custom user client for VirtIO GPU acceleration
