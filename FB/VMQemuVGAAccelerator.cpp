@@ -129,7 +129,9 @@ bool CLASS::start(IOService* provider)
         return false;
     }
     
-    // d65: Create and start Metal plugin for WindowServer compatibility
+    // d65: Create and start Metal plugin for WindowServer compatibility (macOS 10.11+)
+    // Metal framework not available on Snow Leopard 10.6 - skip Metal plugin on legacy systems
+    #if MAC_OS_X_VERSION_MIN_REQUIRED >= 101100  // Only enable on El Capitan 10.11 and later
     IOLog("VMQemuVGAAccelerator: Creating Metal plugin for WindowServer support\n");
     m_metal_plugin = new VMMetalPlugin();
     if (m_metal_plugin) {
@@ -147,6 +149,12 @@ bool CLASS::start(IOService* provider)
         IOLog("VMQemuVGAAccelerator: WARNING - Failed to create Metal plugin\n");
         m_metal_compatible = false;
     }
+    #else
+    // Metal not available on this macOS version - disable Metal plugin
+    IOLog("VMQemuVGAAccelerator: Metal framework not available (macOS < 10.11) - using legacy acceleration\n");
+    m_metal_plugin = nullptr;
+    m_metal_compatible = false;
+    #endif
     
     // Set device properties
     setProperty("IOClass", "VMQemuVGAAccelerator");
