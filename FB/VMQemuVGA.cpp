@@ -225,7 +225,7 @@ bool CLASS::start(IOService* provider)
 	
 	// Declare variables before any goto statements to avoid jump initialization errors
 	UInt32 memoryBandwidth = (UInt32)(1024 * 1024 * 1024); // 1GB
-	UInt32 vramSize = (UInt32)(64 * 1024 * 1024); // 64MB default
+	// UInt32 vramSize = (UInt32)(64 * 1024 * 1024); // 64MB default - unused
 	UInt32 iosurfaceMaxWidth = (UInt32)16384;
 	UInt32 iosurfaceMaxHeight = (UInt32)16384;
 	IOReturn sys_ret_outside = registerWithSystemGraphics();
@@ -1440,8 +1440,12 @@ IODeviceMemory* CLASS::getApertureRange(IOPixelAperture aperture)
 /*************ISCONSOLEDEVICE********************/
 bool CLASS::isConsoleDevice()
 {
-	DLOG("%s: \n", __FUNCTION__);
-	return 0 != getProvider()->getProperty("AAPL,boot-display");
+	IOService* provider = getProvider();
+	OSObject* bootDisplayProp = provider ? provider->getProperty("AAPL,boot-display") : nullptr;
+	bool isConsole = (bootDisplayProp != nullptr);
+	IOLog("VMQemuVGA::isConsoleDevice() - provider=%p, AAPL,boot-display=%p, returning %s\n", 
+	      provider, bootDisplayProp, isConsole ? "TRUE" : "FALSE");
+	return isConsole;
 }
 
 /*************GETATTRIBUTE********************/

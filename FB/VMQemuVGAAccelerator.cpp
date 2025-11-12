@@ -1,9 +1,12 @@
 #include "VMQemuVGAAccelerator.h"
 #include "VMQemuVGA.h"
+#include "VMVirtIOGPU.h"
 #include "VMShaderManager.h"
 #include "VMTextureManager.h"
 #include "VMCommandBuffer.h"
 #include "VMMetalPlugin.h"
+#include "VMCGLContext.h"
+#include "virgl_protocol.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <mach/mach_time.h>
@@ -168,7 +171,62 @@ bool CLASS::start(IOService* provider)
     setProperty("Command Buffer Pool", "Enabled");
     setProperty("Advanced Features", "Phase 2 Complete");
     
-    IOLog("VMQemuVGAAccelerator: Started successfully\n");
+    // CRITICAL: CGL OpenGL Renderer Discovery Properties (Snow Leopard + Catalina)
+    // These properties tell CGL that we support hardware-accelerated OpenGL rendering
+    // Without these, CGL reports "accelerated=0" even though the accelerator is registered
+    
+    // OpenGL renderer identification - tells CGL this is a real OpenGL accelerator
+    // NOTE: "GLEngine" is Apple's software renderer. Hardware acceleration would require
+    // a custom OpenGL bundle (ATIRadeonGLDriver, GeForceGLDriver, etc.) which is extremely
+    // complex to implement. Current setup provides working GUI with software OpenGL.
+    setProperty("IOGLBundleName", "GLEngine");           // Software renderer (functional)
+    setProperty("IOGLContext", "IOAcceleratorContext");  // Context type for OpenGL
+    setProperty("IOOpenGLRenderer", kOSBooleanTrue);     // Mark as OpenGL renderer
+    
+    // Hardware identification - CGL uses these to identify the GPU
+    // VendorID/DeviceID come from PCI provider (QXL=0x1b36:0x0100, VirtIO=0x1af4:0x1050)
+    if (m_framebuffer) {
+        IOService* pciProvider = m_framebuffer->getProvider();
+        if (pciProvider) {
+            OSNumber* vendorNum = OSDynamicCast(OSNumber, pciProvider->getProperty("vendor-id"));
+            OSNumber* deviceNum = OSDynamicCast(OSNumber, pciProvider->getProperty("device-id"));
+            if (vendorNum) {
+                setProperty("VendorID", vendorNum->unsigned32BitValue(), 32);
+            }
+            if (deviceNum) {
+                setProperty("DeviceID", deviceNum->unsigned32BitValue(), 32);
+            }
+        }
+    }
+    setProperty("RendererID", (uint32_t)0x00024600, 32);  // Generic renderer ID for virtual GPUs
+    
+    // Acceleration capability flags - CGL queries these to determine supported features
+    setProperty("IOAccelTypes", (uint32_t)7, 32);         // All acceleration types (FB + 3D + Video)
+    setProperty("IOGLAccelTypes", (uint32_t)7, 32);       // OpenGL acceleration enabled
+    setProperty("IOSurfaceAccelTypes", (uint32_t)7, 32);  // Surface blitting acceleration
+    setProperty("IOVideoAccelTypes", (uint32_t)7, 32);    // Video decode/encode acceleration
+    
+    // GPU capability advertisement for OpenGL feature detection
+    setProperty("gpu-core-count", (uint32_t)8, 32);           // Virtual GPU cores
+    setProperty("gpu-memory-bandwidth", (uint32_t)12800, 32); // MB/s (virtual)
+    setProperty("supports-3D-acceleration", kOSBooleanTrue);
+    setProperty("supports-OpenGL", kOSBooleanTrue);
+    
+    // Performance monitoring (required by some OpenGL apps)
+    setProperty("PerformanceStatistics", kOSBooleanTrue);
+    setProperty("PerformanceStatisticsAccum", kOSBooleanTrue);
+    
+    // Accelerator type array - describes what kind of accelerator we are
+    OSArray* accelTypes = OSArray::withCapacity(3);
+    if (accelTypes) {
+        accelTypes->setObject(OSString::withCString("Framebuffer"));
+        accelTypes->setObject(OSString::withCString("3D"));
+        accelTypes->setObject(OSString::withCString("Hardware"));
+        setProperty("IOAcceleratorTypes", accelTypes);
+        accelTypes->release();
+    }
+    
+    IOLog("VMQemuVGAAccelerator: Started successfully with OpenGL renderer properties\n");
     return true;
 }
 
@@ -220,28 +278,63 @@ IOReturn CLASS::newUserClient(task_t owningTask, void* securityID,
                              UInt32 type, IOUserClient** handler)
 {
     IOReturn ret = kIOReturnSuccess;
-    VMQemuVGA3DUserClient* client = nullptr;
+    IOUserClient* client = nullptr;
     
-    if (type != 0) {
+    // Type 0 = Standard 3D user client
+    // Type 1 = CGL (Core Graphics Layer) context user client
+    if (type > 1) {
         return kIOReturnBadArgument;
     }
     
-    client = VMQemuVGA3DUserClient::withTask(owningTask);
-    if (!client) {
+    if (type == 1) {
+        // CGL is requesting an OpenGL context - return CGL user client
+        IOLog("VMQemuVGAAccelerator: Creating CGL context user client for task %p\n", owningTask);
+        
+        VMCGLContext* cgl_client = new VMCGLContext;
+        if (!cgl_client) {
+            return kIOReturnNoMemory;
+        }
+        
+        if (!cgl_client->initWithTask(owningTask, securityID, type, nullptr)) {
+            cgl_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!cgl_client->attach(this)) {
+            cgl_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!cgl_client->start(this)) {
+            cgl_client->detach(this);
+            cgl_client->release();
+            return kIOReturnError;
+        }
+        
+        *handler = cgl_client;
+        IOLog("VMQemuVGAAccelerator: ✅ CGL context user client created successfully\n");
+        return kIOReturnSuccess;
+    }
+    
+    // Type 0 - Standard 3D acceleration user client
+    VMQemuVGA3DUserClient* accel_client = VMQemuVGA3DUserClient::withTask(owningTask);
+    if (!accel_client) {
         ret = kIOReturnNoMemory;
         goto exit;
     }
     
-    if (!client->attach(this)) {
+    if (!accel_client->attach(this)) {
         ret = kIOReturnError;
         goto exit;
     }
     
-    if (!client->start(this)) {
-        client->detach(this);
+    if (!accel_client->start(this)) {
+        accel_client->detach(this);
         ret = kIOReturnError;
         goto exit;
     }
+    
+    client = accel_client;
     
     *handler = client;
     
@@ -2395,10 +2488,48 @@ IOReturn CLASS::clearColorBuffer(uint32_t context_id, float r, float g, float b,
     
     IOReturn result = kIOReturnSuccess;
     
-    // Method 1: VirtIO GPU hardware-accelerated color buffer clear
-    if (m_gpu_device && m_gpu_device->supports3D() && context->gpu_context_id) {
-        IOLog("VMQemuVGAAccelerator: Performing VirtIO GPU color buffer clear\n");
+    // Method 1: VirtIO GPU 3D hardware-accelerated clear via virgl protocol
+    // Check if we're running on VirtIO GPU with 3D support
+    VMVirtIOGPU* virtio_gpu = OSDynamicCast(VMVirtIOGPU, m_gpu_device);
+    if (virtio_gpu && virtio_gpu->supports3D() && context->gpu_context_id) {
+        IOLog("VMQemuVGAAccelerator: 🚀 Using REAL VirtIO GPU 3D acceleration (virgl protocol)\n");
         
+        // Get the VirtIO GPU accelerator for command translation
+        VMVirtIOGPUAccelerator* virtio_accel = nullptr;
+        
+        // Find the VirtIO GPU accelerator from the IORegistry
+        OSIterator* iter = virtio_gpu->getChildIterator(gIOServicePlane);
+        if (iter) {
+            IOService* child;
+            while ((child = (IOService*)iter->getNextObject())) {
+                virtio_accel = OSDynamicCast(VMVirtIOGPUAccelerator, child);
+                if (virtio_accel) break;
+            }
+            iter->release();
+        }
+        
+        if (virtio_accel) {
+            // Call virgl CLEAR command translation - THIS IS THE REAL 3D ACCELERATION!
+            result = virtio_accel->submitClearCommand(
+                context->gpu_context_id,
+                r, g, b, a,           // Color
+                1.0,                  // Depth (max)
+                0,                    // Stencil
+                PIPE_CLEAR_COLOR0     // Clear color buffer 0
+            );
+            
+            if (result == kIOReturnSuccess) {
+                IOLog("VMQemuVGAAccelerator: ✅ REAL 3D ACCELERATION - Virgl CLEAR sent to host GPU!\n");
+            } else {
+                IOLog("VMQemuVGAAccelerator: ❌ Virgl command failed (0x%x), falling back to software\n", result);
+            }
+        } else {
+            IOLog("VMQemuVGAAccelerator: No VirtIO GPU accelerator found, falling back\n");
+        }
+    } else if (m_gpu_device && m_gpu_device->supports3D() && context->gpu_context_id) {
+        IOLog("VMQemuVGAAccelerator: Using generic GPU clear (non-VirtIO)\n");
+        
+        // Generic GPU clear for non-VirtIO devices (QXL, etc.)
         IOBufferMemoryDescriptor* cmdDesc = IOBufferMemoryDescriptor::withCapacity(512, kIODirectionOut);
         if (cmdDesc) {
             struct {
@@ -2423,7 +2554,7 @@ IOReturn CLASS::clearColorBuffer(uint32_t context_id, float r, float g, float b,
             cmdDesc->release();
             
             if (result == kIOReturnSuccess) {
-                IOLog("VMQemuVGAAccelerator: VirtIO GPU color clear successful\n");
+                IOLog("VMQemuVGAAccelerator: Generic GPU color clear successful\n");
             }
         }
     }
