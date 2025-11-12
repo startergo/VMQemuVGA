@@ -50,7 +50,7 @@
 			<key>IOHardwareModel</key>
 			<string>VirtIO GPU / Hyper-V DDA / QEMU VGA</string>
 			<key>IOGraphicsAccelerator</key>
-			<false/>
+			<true/>
 			<key>IODisplayClass</key>
 			<string>IOFramebuffer</string>
 			<key>IOGraphicsDevice</key>
@@ -58,7 +58,7 @@
 			<key>IOPrimaryDisplay</key>
 			<true/>
 			<key>IOAcceleratorFamily</key>
-			<false/>
+			<string>IOGraphicsFamily</string>
 			<key>IOAccelerator3D</key>
 			<false/>
 			<key>VirtIOGPUAccelerator</key>

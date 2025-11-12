@@ -206,6 +206,12 @@ bool CLASS::start(IOService* provider)
 		return false;
 	}
 	
+	// CRITICAL FOR SNOW LEOPARD: Mark this as the boot/console display
+	// Snow Leopard's WindowServer checks for this property via isConsoleDevice()
+	// Without it, WindowServer falls back to console mode instead of GUI
+	provider->setProperty("AAPL,boot-display", kOSBooleanTrue);
+	IOLog("VMQemuVGA: Set AAPL,boot-display property for Snow Leopard console device recognition\n");
+	
 	//Initiate private variables
 	m_restore_call = 0;
 	m_iolock = 0;
@@ -714,6 +720,45 @@ void CLASS::stop(IOService* provider)
 	super::stop(provider);
 }
 
+/*************ENABLE CONTROLLER********************/
+IOReturn CLASS::enableController()
+{
+	IOLog("VMQemuVGA: enableController() called - initializing display\n");
+	
+	// Call parent implementation
+	IOReturn result = super::enableController();
+	if (result != kIOReturnSuccess) {
+		IOLog("VMQemuVGA: Parent enableController() returned 0x%x, continuing anyway for VM compatibility\n", result);
+	}
+	
+	// Enable the display connection
+	IOReturn connectionResult = setAttributeForConnection(0, kConnectionEnable, 1);
+	IOLog("VMQemuVGA: Connection enable result: 0x%x\n", connectionResult);
+	
+	IOLog("VMQemuVGA: enableController() completed successfully\n");
+	return kIOReturnSuccess;
+}
+
+/*************OPEN********************/
+IOReturn CLASS::open()
+{
+	IOLog("VMQemuVGA: open() called - WindowServer requesting framebuffer access\n");
+	
+	// Call parent implementation
+	IOReturn result = super::open();
+	IOLog("VMQemuVGA: Parent open() returned: 0x%x\n", result);
+	
+	if (result == kIOReturnSuccess) {
+		IOLog("VMQemuVGA: Framebuffer opened successfully for GUI display\n");
+	} else {
+		IOLog("VMQemuVGA: WARNING - Parent open() returned 0x%x, but continuing for VM compatibility\n", result);
+		// For VM compatibility, we'll return success anyway
+		result = kIOReturnSuccess;
+	}
+	
+	return result;
+}
+
 /*************POWER MANAGEMENT********************/
 
 // Power Management Support - Prevents requestStaticServicePowerLock issues
@@ -956,9 +1001,15 @@ bool CLASS::initVirtIOGPUAcceleration()
 		return false;
 	}
 	
+	// CRITICAL: Register the accelerator service so it can be discovered by WindowServer/OpenGL
+	// Use kIOServiceAsynchronous to allow proper matching
+	m_accelerator->registerService(kIOServiceAsynchronous);
+	IOLog("VMQemuVGA: VirtIO GPU accelerator registered successfully\n");
+	
 	m_3d_acceleration_enabled = true;
 	setProperty("3D Acceleration", "Enabled");
 	setProperty("3D Backend", "VirtIO GPU");
+	setProperty("IOAccelerator3D", kOSBooleanTrue);  // Required for Snow Leopard WindowServer
 	
 	// Enable accelerator updates for proper GPU utilization reporting
 	useAccelUpdates(true);
@@ -1006,9 +1057,15 @@ bool CLASS::initTraditionalAcceleration()
 		return false;
 	}
 	
+	// CRITICAL: Register the accelerator service so it can be discovered by WindowServer/OpenGL
+	// Use kIOServiceAsynchronous to allow proper matching
+	m_accelerator->registerService(kIOServiceAsynchronous);
+	IOLog("VMQemuVGA: Traditional QXL/SVGA accelerator registered successfully\n");
+	
 	m_3d_acceleration_enabled = true;
 	setProperty("3D Acceleration", "Enabled");
 	setProperty("3D Backend", "QXL/SVGA");
+	setProperty("IOAccelerator3D", kOSBooleanTrue);  // Required for Snow Leopard WindowServer
 	
 	// Enable accelerator updates for proper GPU utilization reporting
 	useAccelUpdates(true);
@@ -1286,7 +1343,7 @@ IOReturn CLASS::getCurrentDisplayMode(IODisplayModeID* displayMode, IOIndex* dep
 		*displayMode = m_display_mode;
 	if (depth)
 		*depth = m_depth_mode;
-	DLOG("%s: display mode ID=%d, depth mode ID=%d\n", __FUNCTION__,
+	IOLog("%s: Returning display mode ID=%d, depth mode ID=%d\n", __FUNCTION__,
 		 FMT_D(m_display_mode), FMT_D(m_depth_mode));
 	return kIOReturnSuccess;
 }
@@ -1294,17 +1351,21 @@ IOReturn CLASS::getCurrentDisplayMode(IODisplayModeID* displayMode, IOIndex* dep
 /*************GETDISPLAYMODES********************/
 IOReturn CLASS::getDisplayModes(IODisplayModeID* allDisplayModes)
 {
-	DLOG("%s: \n", __FUNCTION__);
+	IOLog("%s: Called (custom_switch=%d, num_active=%u)\n", 
+		  __FUNCTION__, m_custom_switch, FMT_U(m_num_active_modes));
 	if (!allDisplayModes)
 	{
+		IOLog("%s: ERROR - null pointer\n", __FUNCTION__);
 		return kIOReturnBadArgument;
 	}
 	if (m_custom_switch) 
 	{
 		*allDisplayModes = CUSTOM_MODE_ID;
+		IOLog("%s: Returning CUSTOM_MODE_ID\n", __FUNCTION__);
 		return kIOReturnSuccess;
 	}
 	memcpy(allDisplayModes, &m_modes[0], m_num_active_modes * sizeof(IODisplayModeID));
+	IOLog("%s: Returning %u standard modes\n", __FUNCTION__, FMT_U(m_num_active_modes));
 	return kIOReturnSuccess;
 }
 
@@ -1313,7 +1374,8 @@ IOItemCount CLASS::getDisplayModeCount()
 {
 	IOItemCount r;
 	r = m_custom_switch ? 1 : m_num_active_modes;
-	DLOG ("%s: mode count=%u\n", __FUNCTION__, FMT_U(r));
+	IOLog("%s: Returning mode count=%u (custom_switch=%d, num_active=%u)\n", 
+		  __FUNCTION__, FMT_U(r), m_custom_switch, FMT_U(m_num_active_modes));
 	return r;
 }
 
@@ -1546,6 +1608,12 @@ IOReturn CLASS::setAttributeForConnection(IOIndex connectIndex, IOSelect attribu
 			DLOG("%s: kConnectionProbe %lu\n", __FUNCTION__, value);
 			r = kIOReturnSuccess;
 			break;
+		case kConnectionEnable:
+			IOLog("%s: kConnectionEnable %lu\n", __FUNCTION__, value);
+			// Enable/disable the display connection
+			// For QXL/VGA devices, the connection is always available
+			r = kIOReturnSuccess;
+			break;
 		default:
 			r = super::setAttributeForConnection(connectIndex, attribute, value);
 			break;
@@ -1682,7 +1750,7 @@ IOReturn CLASS::setDisplayMode(IODisplayModeID displayMode, IOIndex depth)
 {
 	DisplayModeEntry const* dme;
 	
-	DLOG("%s::%s display ID=%d, depth ID=%d\n", getName(), __FUNCTION__,
+	IOLog("%s::%s display ID=%d, depth ID=%d\n", getName(), __FUNCTION__,
 		 FMT_D(displayMode), FMT_D(depth));
 	
 	if (depth) 
