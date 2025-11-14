@@ -8,8 +8,8 @@ MACOS = $(CONTENTS)/MacOS
 RESOURCES = $(CONTENTS)/Resources
 
 CC = g++
-CFLAGS = -arch x86_64 -mmacosx-version-min=10.6 -O2 -Wall
-LDFLAGS = -bundle -framework OpenGL -framework IOKit -framework CoreFoundation -framework ApplicationServices
+CFLAGS = -arch x86_64 -mmacosx-version-min=10.6 -O2 -Wall -mno-sse4 -mno-sse4.1 -mno-sse4.2
+LDFLAGS = -bundle -mmacosx-version-min=10.6 -Wl,-no_function_starts -Wl,-no_data_in_code_info -framework OpenGL -framework IOKit -framework CoreFoundation -framework ApplicationServices
 
 SOURCES = VMVirtIOGLEngine.cpp
 OBJECTS = $(SOURCES:.cpp=.o)
