@@ -43,6 +43,7 @@
 		PH3B10 /* VMCommandBuffer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3022 /* VMCommandBuffer.cpp */; };
 		PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3023 /* VMIOSurfaceManager_Helpers.cpp */; };
 		PH3B12 /* VMVirtIOAGDC.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3024 /* VMVirtIOAGDC.cpp */; };
+		VMOGLBDBB16 /* VMOpenGLTranslator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = VMOGL65DCAB /* VMOpenGLTranslator.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -101,6 +102,8 @@
 		PH3023 /* VMIOSurfaceManager_Helpers.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMIOSurfaceManager_Helpers.cpp; sourceTree = "<group>"; };
 		PH3024 /* VMVirtIOAGDC.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMVirtIOAGDC.cpp; sourceTree = "<group>"; };
 		PH3025 /* VMVirtIOAGDC.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMVirtIOAGDC.h; sourceTree = "<group>"; };
+		VMOGL17F0FB /* VMOpenGLTranslator.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VMOpenGLTranslator.h; sourceTree = "<group>"; };
+		VMOGL65DCAB /* VMOpenGLTranslator.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VMOpenGLTranslator.cpp; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -166,7 +169,9 @@
 			children = (
 				247142CAFF3F8F9811CA285C /* Source */,
 				79CD27F50FFD0EA4002D58FE /* Headers */,
-			);
+							VMOGL17F0FB /* VMOpenGLTranslator.h */,
+				VMOGL65DCAB /* VMOpenGLTranslator.cpp */,
+);
 			path = FB;
 			sourceTree = "<group>";
 		};
@@ -278,7 +283,8 @@
 				PH3B10 /* VMCommandBuffer.cpp in Sources */,
 				PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */,
 				PH3B12 /* VMVirtIOAGDC.cpp in Sources */,
-			);
+							VMOGLBDBB16 /* VMOpenGLTranslator.cpp in Sources */,
+);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
@@ -346,8 +352,8 @@
 			buildSettings = {
 				ARCHS = x86_64;
 				COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
-				CURRENT_PROJECT_VERSION = 8.0.0d81;
-				DYLIB_COMPATIBILITY_VERSION = 8.0.0d81;
+				CURRENT_PROJECT_VERSION = 8.0.0d82;
+				DYLIB_COMPATIBILITY_VERSION = 8.0.0d82;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MACOSX_DEPLOYMENT_TARGET = 10.6;
@@ -400,8 +406,8 @@
 			buildSettings = {
 				ARCHS = x86_64;
 				COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
-				CURRENT_PROJECT_VERSION = 8.0.0d81;
-				DYLIB_COMPATIBILITY_VERSION = 8.0.0d81;
+				CURRENT_PROJECT_VERSION = 8.0.0d82;
+				DYLIB_COMPATIBILITY_VERSION = 8.0.0d82;
 				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MACOSX_DEPLOYMENT_TARGET = 10.6;

@@ -57,21 +57,20 @@ bool CLASS::start(IOService* provider)
     if (!super::start(provider))
         return false;
     
-    // Accept either QXL (VMQemuVGAAccelerator) or VirtIO (VMVirtIOGPUAccelerator) as provider
-    m_accelerator = OSDynamicCast(VMQemuVGAAccelerator, provider);
-    if (!m_accelerator) {
-        // Try VirtIO GPU accelerator
-        IOAccelerator* virtioAccel = OSDynamicCast(IOAccelerator, provider);
-        if (virtioAccel) {
-            IOLog("VMMetalPlugin: Provider is VMVirtIOGPUAccelerator (VirtIO GPU)\n");
-            // Store as base IOAccelerator, we don't need QXL-specific methods
-            m_accelerator = (VMQemuVGAAccelerator*)virtioAccel;
+    // Accept either VirtIO (VMVirtIOGPUAccelerator) or QXL (VMQemuVGAAccelerator) as provider
+    // Check VirtIO FIRST since it inherits from VMQemuVGAAccelerator
+    VMVirtIOGPUAccelerator* virtioAccel = OSDynamicCast(VMVirtIOGPUAccelerator, provider);
+    if (virtioAccel) {
+        IOLog("VMMetalPlugin: Provider is VMVirtIOGPUAccelerator (VirtIO GPU)\n");
+        m_accelerator = virtioAccel;
+    } else {
+        m_accelerator = OSDynamicCast(VMQemuVGAAccelerator, provider);
+        if (m_accelerator) {
+            IOLog("VMMetalPlugin: Provider is VMQemuVGAAccelerator (QXL)\n");
         } else {
             IOLog("VMMetalPlugin: Provider is not a valid accelerator\n");
             return false;
         }
-    } else {
-        IOLog("VMMetalPlugin: Provider is VMQemuVGAAccelerator (QXL)\n");
     }
     
     // Register as Metal plugin

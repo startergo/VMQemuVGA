@@ -44,6 +44,11 @@
 #define VIRTIO_GPU_RESOURCE_TARGET_TEXTURE_2D  3
 #define VIRTIO_GPU_RESOURCE_TARGET_TEXTURE_3D  4
 
+/* Resource bind flags */
+#define VIRTIO_GPU_RESOURCE_BIND_RENDER_TARGET  (1 << 0)
+#define VIRTIO_GPU_RESOURCE_BIND_DEPTH_STENCIL  (1 << 1)
+#define VIRTIO_GPU_RESOURCE_BIND_SAMPLER_VIEW   (1 << 2)
+
 /* VirtIO GPU configuration space */
 struct virtio_gpu_config {
     uint32_t events_read;
