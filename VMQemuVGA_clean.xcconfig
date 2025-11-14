@@ -1,0 +1,60 @@
+//
+// VMQemuVGA.xcconfig - Clean Snow Leopard Build Configuration
+//
+
+// Deployment target - Snow Leopard compatibility
+MACOSX_DEPLOYMENT_TARGET = 10.6
+SDKROOT = macosx10.6
+
+// Architecture settings
+ARCHS = x86_64
+VALID_ARCHS = x86_64
+
+// Prevent newer load commands and disable code signing
+CODE_SIGNING_ALLOWED = NO
+CODE_SIGN_IDENTITY = ""
+
+// Compiler settings for 10.6 compatibility
+OTHER_CFLAGS = $(inherited) \
+    -target x86_64-apple-macos10.6 \
+    -mmacosx-version-min=10.6 \
+    -D__MAC_OS_X_VERSION_MIN_REQUIRED=1060 \
+    -static -nostdlib \
+    -fno-stack-protector \
+    -fno-jump-tables
+
+// Linker settings for direct ld invocation
+LD = /usr/bin/ld
+LDPLUSPLUS = /usr/bin/ld
+OTHER_LDFLAGS = $(inherited) \
+    -macosx_version_min 10.6 \
+    -no_build_version \
+    -no_source_version \
+    -static -lkmod
+
+// Bundle settings
+INFOPLIST_FILE = Info-FB.plist
+PRODUCT_NAME = VMQemuVGA
+PRODUCT_BUNDLE_IDENTIFIER = com.vmqemuvga.kext
+WRAPPER_EXTENSION = kext
+
+// Force proper kext bundle structure
+CONTENTS_FOLDER_PATH = Contents
+EXECUTABLE_FOLDER_PATH = Contents/MacOS
+UNLOCALIZED_RESOURCES_FOLDER_PATH = Contents/Resources
+
+// Header search paths
+HEADER_SEARCH_PATHS = $(SRCROOT)/MacKernelSDK/Headers $(SRCROOT)/FB
+
+// MacKernelSDK preprocessor definitions
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) \
+    __MAC_OS_X_VERSION_MIN_REQUIRED=1060 \
+    KERNEL KERNEL_PRIVATE MACH_KERNEL_PRIVATE PRIVATE
+
+// Warning settings
+WARNING_CFLAGS = -Wall -Wno-deprecated-declarations -Wno-unused-parameter -Wno-sign-compare
+ALWAYS_SEARCH_USER_PATHS = NO
+
+// Optimization and debug info
+GCC_OPTIMIZATION_LEVEL = 2
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym

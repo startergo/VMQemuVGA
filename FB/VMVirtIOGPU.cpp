@@ -438,6 +438,18 @@ bool CLASS::start(IOService* provider)
                 acceleratorService->registerService();
                 m_accelerator_service = acceleratorService;
                 IOLog("VMVirtIOGPU: Accelerator registered successfully - Metal plugin should be running\n");
+                
+                // CRITICAL: Link IONDRVFramebuffer to our accelerator for CGL discovery
+                // Direct property setting on our accelerator service
+                // CGL will look at IOAccelerator services to find matching framebuffer
+                IOLog("VMVirtIOGPU: Setting accelerator discovery properties...\n");
+                
+                // Set properties on OUR accelerator that CGL can use
+                m_accelerator_service->setProperty("IOAcceleratorClassName", "VMVirtIOGPUAccelerator");
+                m_accelerator_service->setProperty("IOGraphicsAcceleratorClass", "VMVirtIOGPUAccelerator");
+                m_accelerator_service->setProperty("IOFramebufferOpenGLIndex", (unsigned long long)0, 32);
+                
+                IOLog("VMVirtIOGPU: ✅ Accelerator properties configured for CGL discovery\n");
             } else {
                 IOLog("VMVirtIOGPU: Accelerator start() FAILED\n");
                 acceleratorService->detach(this);

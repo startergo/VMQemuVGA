@@ -1,0 +1,85 @@
+//
+// VMQemuVGA Snow Leopard (10.6) Compatibility Configuration
+//
+
+// Basic deployment settings for 10.6
+MACOSX_DEPLOYMENT_TARGET = 10.6
+SDKROOT = /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk
+ARCHS = x86_64
+VALID_ARCHS = x86_64
+
+// Code Signing Configuration - DISABLED for Snow Leopard compatibility
+// 
+// Modern code signing breaks Snow Leopard kernel compatibility for several reasons:
+//
+// 1. BINARY FORMAT INCOMPATIBILITY:
+//    - Code signing adds LC_CODE_SIGNATURE load commands to Mach-O binaries
+//    - Snow Leopard's kernel (Darwin 10.x) doesn't understand these load commands
+//    - The kernel loader fails to parse signed binaries, causing load failures
+//
+// 2. SYMBOL TABLE CORRUPTION:
+//    - Code signing modifies the symbol table structure
+//    - Adds __TEXT.__code_signature sections that confuse Snow Leopard's kernel linker
+//    - Results in unresolved symbol errors and kernel panics
+//
+// 3. DEPLOYMENT TARGET CONFLICTS:
+//    - Code signing tools require MACOSX_DEPLOYMENT_TARGET >= 10.9
+//    - This creates binaries with newer SDK dependencies incompatible with 10.6
+//    - Runtime checks fail on Snow Leopard systems
+//
+// 4. ENTITLEMENTS AND SECURITY FRAMEWORK:
+//    - Modern kexts expect Security.framework APIs not present in Snow Leopard
+//    - Entitlements plist format is incompatible with older IOKit
+//    - Causes immediate kernel extension rejection
+//
+// 5. HASH ALGORITHM INCOMPATIBILITY:
+//    - Modern signatures use SHA-256/SHA-512 hashing
+//    - Snow Leopard only supports MD5/SHA-1 for kernel validation
+//    - Signature verification fails at kernel load time
+//
+// SOLUTION: Completely disable code signing for Snow Leopard builds
+// The -67050 error on modern macOS is acceptable for legacy compatibility
+CODE_SIGNING_ALLOWED = NO
+CODE_SIGNING_REQUIRED = NO
+CODE_SIGN_IDENTITY = 
+
+// Compiler flags for 10.6 compatibility
+OTHER_CFLAGS = $(inherited) \
+    -mmacosx-version-min=10.6 \
+    -D__MAC_OS_X_VERSION_MIN_REQUIRED=1060 \
+    -D__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__=1060
+
+// Linker flags for 10.6 compatibility  
+OTHER_LDFLAGS = $(inherited) \
+    -mmacosx-version-min=10.6
+
+// Bundle settings
+INFOPLIST_FILE = Info-FB.plist
+PRODUCT_NAME = VMQemuVGA
+PRODUCT_BUNDLE_IDENTIFIER = com.vmqemuvga.kext
+WRAPPER_EXTENSION = kext
+
+// Force proper kext bundle structure
+CONTENTS_FOLDER_PATH = Contents
+EXECUTABLE_FOLDER_PATH = Contents/MacOS
+UNLOCALIZED_RESOURCES_FOLDER_PATH = Contents/Resources
+
+// Header search paths
+HEADER_SEARCH_PATHS = $(SRCROOT)/MacKernelSDK/Headers $(SRCROOT)/FB
+
+// MacKernelSDK Configuration
+GCC_PREPROCESSOR_DEFINITIONS = $(inherited) KERNEL KERNEL_PRIVATE MACH_KERNEL_PRIVATE PRIVATE
+
+// Disable newer features
+ALWAYS_SEARCH_USER_PATHS = NO
+GCC_ENABLE_CPP_EXCEPTIONS = NO
+GCC_ENABLE_CPP_RTTI = NO
+GCC_ENABLE_OBJC_EXCEPTIONS = NO
+
+// Optimization and debug
+GCC_OPTIMIZATION_LEVEL = 2
+DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+
+// Force direct linker to avoid clang++ issues
+LD = /usr/bin/ld
+LDPLUSPLUS = /usr/bin/ld

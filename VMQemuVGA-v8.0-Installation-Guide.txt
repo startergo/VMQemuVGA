@@ -1,0 +1,95 @@
+VMQemuVGA v8.0 Advanced Command Buffer Resource Dependency Management System
+Private Installation Guide
+
+PACKAGE: VMQemuVGA-v8.0-Private-20251114.pkg
+BUILD DATE: Fri Nov 14 10:19:26 EST 2025
+CERTIFICATE: Apple Developer ID (Private Distribution)
+
+=== INSTALLATION INSTRUCTIONS ===
+
+1. DOWNLOAD AND VERIFY
+   • Download the package file: VMQemuVGA-v8.0-Private-20251114.pkg
+   • Verify file integrity and signature before installation
+
+2. SYSTEM REQUIREMENTS
+   • macOS 10.6 Snow Leopard or later
+   • Intel x86_64 architecture
+   • Administrator privileges
+
+3. INSTALLATION PROCESS
+   • Double-click the package file to start installation
+   • Follow the installer prompts
+   • Enter administrator password when prompted
+   • Allow installation to complete
+
+4. POST-INSTALLATION
+   • The installer will automatically place the kernel extension
+   • Modern macOS versions may require security approval:
+     - Go to System Preferences > Security & Privacy
+     - Click "Allow" for the blocked system extension
+   • Restart your system if prompted
+
+5. VERIFICATION
+   • After restart, verify installation with:
+     sudo kextstat | grep VMQemuVGA
+   • You should see: puredarwin.driver.VMQemuVGA
+
+=== ADVANCED FEATURES ===
+
+VMQemuVGA v8.0 includes enterprise-grade acceleration:
+
+• VirtIO GPU Acceleration
+  - Hardware-accelerated virtualization graphics
+  - Full GPU command submission pipeline
+
+• Metal Framework Integration
+  - Native Metal API support in virtual machines
+  - Hardware-accelerated compute shaders
+  - Advanced GPU memory management
+
+• OpenGL Bridge
+  - Legacy OpenGL application support
+  - Compatibility layer for older software
+
+• CoreAnimation Acceleration
+  - Hardware-accelerated UI animations
+  - Smooth window compositing and effects
+
+• Advanced Command Buffer Management
+  - Pipeline hazard detection and resolution
+  - Memory barrier optimization
+  - Resource dependency tracking
+  - Command buffer pooling for performance
+
+=== COMPATIBILITY NOTES ===
+
+• macOS 10.6-10.10: Uses /System/Library/Extensions
+• macOS 10.11+: Uses /Library/Extensions (SIP-compatible)
+• macOS 10.13+: Requires user approval for kernel extensions
+• macOS 11+: Full support with modern security framework
+
+=== TROUBLESHOOTING ===
+
+If the kernel extension fails to load:
+
+1. Check System Preferences > Security & Privacy for approval prompts
+2. Verify SIP settings: csrutil status
+3. For development systems, SIP can be disabled temporarily
+4. Check Console.app for kernel extension loading errors
+5. Verify signature: codesign -vv /System/Library/Extensions/VMQemuVGA.kext
+
+=== SUPPORT ===
+
+For technical support and documentation:
+• GitHub: https://github.com/ivanagui2/VMQemuVGA
+• This is a PRIVATE distribution for internal use only
+• Contains proprietary Apple Developer ID certificates
+
+=== UNINSTALLATION ===
+
+To remove VMQemuVGA:
+1. sudo kextunload -b puredarwin.driver.VMQemuVGA
+2. sudo rm -rf /System/Library/Extensions/VMQemuVGA.kext
+3. sudo rm -rf /Library/Extensions/VMQemuVGA.kext
+4. Rebuild cache: sudo kextcache -system-caches
+

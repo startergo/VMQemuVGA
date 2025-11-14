@@ -1,0 +1,28 @@
+# Commands to run inside the VM to check GPU status:
+
+# 1. Check PCI devices for VirtIO GPU
+lspci | grep -i "vga\|display\|virtio""
+
+# 2. Check graphics info via system_profiler
+system_profiler SPDisplaysDataType
+
+# 3. Check IOKit for VMQemuVGA driver
+ioreg -l -w 0 -c IOFramebuffer | grep -A10 -B5 "VMQemuVGA"
+
+# 4. Check kernel messages for VMQemuVGA
+dmesg | grep -i vmqemuvga | tail -10
+
+# 5. Check if VirtIO GPU GL is detected
+ioreg -l | grep -i virtio
+
+# 6. Check OpenGL renderer
+system_profiler SPDisplaysDataType | grep -i "chipset\|renderer\|vram"
+
+# 7. If directhw is available, check PCI configuration directly
+# First find the VirtIO GPU PCI address with: lspci -v
+# Then read PCI config space (replace XX:XX.X with actual PCI address):
+# directhw -r pci -a XX:XX.X -o 0x10 -l 4   # Read BAR0 (VRAM base address)
+# directhw -r pci -a XX:XX.X -o 0x00 -l 4   # Read Vendor/Device ID
+
+# 8. Check for VirtIO GPU specific registers (if PCI address known)
+# directhw -r pci -a XX:XX.X -o 0x00 -l 64  # Read full PCI config header
