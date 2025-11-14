@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>VMVirtIOGLEngine</string>
+	<key>CFBundleGetInfoString</key>
+	<string>VirtIO GPU OpenGL Engine</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.vmware.opengl.VMVirtIOGLEngine</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>VMVirtIOGLEngine</string>
+	<key>CFBundlePackageType</key>
+	<string>BNDL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleVersion</key>
+	<string>1.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2025</string>
+	
+	<!-- OpenGL Renderer Information -->
+	<key>IOClass</key>
+	<string>VMVirtIOGLEngine</string>
+	<key>IOProviderClass</key>
+	<string>IOAccelerator</string>
+	<key>IOMatchCategory</key>
+	<string>IOAccelerator</string>
+	<key>IOProbeScore</key>
+	<integer>50000</integer>
+	
+	<!-- Match our IOAccelerator -->
+	<key>IOPropertyMatch</key>
+	<dict>
+		<key>IOAcceleratorClassName</key>
+		<string>VMVirtIOGPUAccelerator</string>
+	</dict>
+	
+	<!-- Renderer Properties -->
+	<key>IOAcceleratorTypes</key>
+	<array>
+		<string>3D</string>
+		<string>Hardware</string>
+		<string>VirtIO-GPU</string>
+	</array>
+	
+	<key>GLRendererID</key>
+	<string>0x00024600</string>
+	
+	<key>GLRendererProperty</key>
+	<dict>
+		<key>Accelerated</key>
+		<true/>
+		<key>CompliantRenderer</key>
+		<true/>
+		<key>Robust</key>
+		<true/>
+		<key>VideoMemory</key>
+		<integer>16777216</integer>
+		<key>TextureMemory</key>
+		<integer>16777216</integer>
+		<key>RendererName</key>
+		<string>VirtIO GPU Hardware Renderer</string>
+		<key>Version</key>
+		<string>2.1</string>
+		<key>VendorID</key>
+		<integer>0x1AF4</integer>
+		<key>DeviceID</key>
+		<integer>0x1050</integer>
+	</dict>
+</dict>
+</plist>
