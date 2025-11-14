@@ -331,6 +331,15 @@ enum {
     kVM3DUserClientSubmit3DCommands,
     kVM3DUserClientPresent3DSurface,
     kVM3DUserClientGetCapabilities,
+    // OpenGL command interception methods
+    kVM3DUserClientGLClear,
+    kVM3DUserClientGLClearColor,
+    kVM3DUserClientGLBegin,
+    kVM3DUserClientGLEnd,
+    kVM3DUserClientGLVertex3f,
+    kVM3DUserClientGLColor4f,
+    kVM3DUserClientGLViewport,
+    kVM3DUserClientGLFlush,
     kVM3DUserClientMethodCount
 };
 

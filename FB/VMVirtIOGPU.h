@@ -298,6 +298,13 @@ public:
     IOReturn clearSurface(uint32_t surface_id, uint32_t color);
     IOReturn copySurface(uint32_t src_id, uint32_t dst_id);
     IOReturn presentSurface(uint32_t surface_id);
+    
+    // VirtGLGL userspace library interface
+    IOReturn submitVirglCommands(const void* commands, uint32_t size);
+    IOReturn createVirglResource(uint32_t resourceId, uint32_t width, uint32_t height, uint32_t format);
+    IOReturn createVirglContext(uint32_t contextId);
+    IOReturn attachVirglResource(uint32_t contextId, uint32_t resourceId);
+    uint32_t getVirglCapability(uint32_t cap);
 };
 
 #endif /* __VMVirtIOGPU_H__ */
