@@ -428,61 +428,24 @@ bool CLASS::start(IOService* provider)
             accelTypes->release();
         }
         
-        // ARCHITECTURE FIX: Attach accelerator to IONDRVFramebuffer, not to VMVirtIOGPU
-        // The IOGraphicsFamily expects accelerators to be children of framebuffers
-        // This allows WindowServer/CGL to discover hardware acceleration
-        IOLog("VMVirtIOGPU: Waiting for IONDRVFramebuffer to attach accelerator...\n");
-        
-        // Wait up to 5 seconds for IONDRVFramebuffer to appear
-        OSDictionary* matchDict = serviceMatching("IONDRVFramebuffer");
-        IOService* framebuffer = waitForMatchingService(matchDict, 5000000000ULL);  // 5 sec timeout
-        matchDict->release();
-        
-        if (framebuffer) {
-            IOLog("VMVirtIOGPU: Found IONDRVFramebuffer (%s), attaching accelerator\n", 
-                  framebuffer->getName());
-            
-            // Attach accelerator to framebuffer (correct IOGraphicsFamily architecture)
-            if (acceleratorService->attach(framebuffer)) {
-                // CRITICAL: Call start() explicitly before registerService()
-                if (acceleratorService->start(framebuffer)) {
-                    IOLog("VMVirtIOGPU: Accelerator start() succeeded on framebuffer\n");
-                    acceleratorService->registerService();
-                    m_accelerator_service = acceleratorService;
-                    
-                    // Set properties on framebuffer to reference our accelerator
-                    framebuffer->setProperty("IOAcceleratorClassName", "VMVirtIOGPUAccelerator");
-                    framebuffer->setProperty("IOAccelIndex", (uint32_t)0, 32);
-                    framebuffer->setProperty("IOGraphicsAcceleratorClass", "VMVirtIOGPUAccelerator");
-                    
-                    IOLog("VMVirtIOGPU: *** ACCELERATOR ATTACHED TO FRAMEBUFFER SUCCESSFULLY ***\n");
-                    IOLog("VMVirtIOGPU: CGL/WindowServer should now discover hardware acceleration\n");
-                } else {
-                    IOLog("VMVirtIOGPU: Accelerator start() FAILED on framebuffer\n");
-                    acceleratorService->detach(framebuffer);
-                    acceleratorService->release();
-                }
+        // d67: RE-ENABLE accelerator with Metal plugin support
+        IOLog("VMVirtIOGPU: Registering accelerator service with Metal plugin support\n");
+        if (acceleratorService->attach(this)) {
+            // CRITICAL: Call start() explicitly before registerService()
+            // IOKit doesn't automatically call start() on attached services
+            if (acceleratorService->start(this)) {
+                IOLog("VMVirtIOGPU: Accelerator start() succeeded\n");
+                acceleratorService->registerService();
+                m_accelerator_service = acceleratorService;
+                IOLog("VMVirtIOGPU: Accelerator registered successfully - Metal plugin should be running\n");
             } else {
-                IOLog("VMVirtIOGPU: Failed to attach accelerator to framebuffer\n");
+                IOLog("VMVirtIOGPU: Accelerator start() FAILED\n");
+                acceleratorService->detach(this);
                 acceleratorService->release();
             }
         } else {
-            IOLog("VMVirtIOGPU: WARNING - IONDRVFramebuffer not found after 5 seconds\n");
-            IOLog("VMVirtIOGPU: Falling back to attaching accelerator to driver (may not work)\n");
-            
-            // Fallback: attach to self (old behavior)
-            if (acceleratorService->attach(this)) {
-                if (acceleratorService->start(this)) {
-                    acceleratorService->registerService();
-                    m_accelerator_service = acceleratorService;
-                    IOLog("VMVirtIOGPU: Accelerator registered (fallback mode - may not be discoverable)\n");
-                } else {
-                    acceleratorService->detach(this);
-                    acceleratorService->release();
-                }
-            } else {
-                acceleratorService->release();
-            }
+            IOLog("VMVirtIOGPU: Failed to attach accelerator service\n");
+            acceleratorService->release();
         }
     } else {
         IOLog("VMVirtIOGPU: Failed to create IOAccelerator service\n");

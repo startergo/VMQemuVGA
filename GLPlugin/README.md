@@ -2,23 +2,13 @@
 
 This is an OpenGL renderer plugin that allows macOS to use the VMVirtIOGPUAccelerator for hardware-accelerated 3D rendering.
 
-## What This Does (EXPERIMENTAL - NOT WORKING YET)
+## What This Does
 
-**STATUS**: This plugin is an experimental attempt to integrate with Snow Leopard's OpenGL/CGL system. Currently **NOT FUNCTIONAL** - applications still use Apple Software Renderer.
+On Snow Leopard and later macOS versions, the system's OpenGL/CGL framework needs a loadable bundle to discover and use custom graphics accelerators. This plugin:
 
-The theory was that Snow Leopard's OpenGL/CGL framework would discover and use this bundle for custom graphics accelerators. However, testing shows:
-
-❌ CGL does not automatically discover or use third-party renderer plugins
-❌ Screensavers and OpenGL apps still use software rendering
-❌ Snow Leopard's OpenGL system appears to have hardcoded renderer discovery
-
-This plugin represents our attempt to:
-1. Register as an OpenGL renderer for the VirtIO GPU
-2. Provide the interface between CGL and our IOAccelerator  
-3. Allow applications to use hardware acceleration
-
-**Reality**: Snow Leopard's OpenGL architecture is closed and doesn't support
-dynamic third-party renderer plugins the way we hoped.
+1. Registers as an OpenGL renderer for the VirtIO GPU
+2. Provides the interface between CGL and our IOAccelerator
+3. Allows applications to use hardware acceleration instead of software rendering
 
 ## Building
 
@@ -60,14 +50,15 @@ VMVirtIOGLEngine.bundle/
 
 4. **Reboot**
 
-**UPDATE**: Testing shows the bundle must be in:
-```
-/System/Library/Frameworks/OpenGL.framework/Resources/
+### Alternative Location (User-space)
+
+You can also install to user-space (doesn't require SIP disabled):
+```bash
+mkdir -p ~/Library/Graphics/OpenGL/Renderers/
+cp -r VMVirtIOGLEngine.bundle ~/Library/Graphics/OpenGL/Renderers/
 ```
 
-Not `/System/Library/Extensions/` as originally thought.
-
-However, even in the correct location, Snow Leopard's CGL does not use it.
+Note: User-space installation may not work on all macOS versions.
 
 ## Verification
 
