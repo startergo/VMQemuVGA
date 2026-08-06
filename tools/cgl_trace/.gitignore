@@ -1,0 +1,3 @@
+# Build artifacts
+cgl_log.dylib
+*.o
