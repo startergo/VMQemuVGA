@@ -1,0 +1,3 @@
+# Build artifacts
+text_interpose.dylib
+*.o

@@ -1,0 +1,3 @@
+# Build artifacts
+focus_interpose.dylib
+*.o
