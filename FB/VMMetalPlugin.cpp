@@ -75,12 +75,6 @@ bool CLASS::start(IOService* provider)
     
     // Register as Metal plugin
     setProperty("IOClass", "VMMetalPlugin");
-    setProperty("MetalPluginClassName", "VMMetalPlugin");
-    setProperty("MetalPluginName", "VMware/QEMU Virtual Graphics Metal Software Renderer");
-    setProperty("MetalDeviceName", getDeviceName());
-    setProperty("MetalFamily", "GPU Family 1");
-    setProperty("MetalFeatureSet", (unsigned long long)m_feature_set, 32);
-    setProperty("MetalSupportsUnifiedMemory", m_supports_unified_memory);
     setProperty("MetalDeviceID", getRegistryID(), 64);
     
     // Critical properties for WindowServer compatibility

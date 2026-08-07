@@ -8,8 +8,9 @@ MACOS = $(CONTENTS)/MacOS
 RESOURCES = $(CONTENTS)/Resources
 
 CC = g++
-CFLAGS = -arch x86_64 -mmacosx-version-min=10.6 -O2 -Wall
-LDFLAGS = -bundle -framework OpenGL -framework IOKit -framework CoreFoundation -framework ApplicationServices
+SDK = /Users/macbookpro/SDKs/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk
+CFLAGS = -arch x86_64 -mmacosx-version-min=10.6 -isysroot $(SDK) -stdlib=libstdc++ -O2 -Wall -Wl,-no_function_starts -Wl,-no_data_in_code_info
+LDFLAGS = -bundle -isysroot $(SDK) -stdlib=libstdc++ -Wl,-no_function_starts -Wl,-no_data_in_code_info -framework OpenGL -framework IOKit -framework CoreFoundation -framework ApplicationServices
 
 SOURCES = VMVirtIOGLEngine.cpp
 OBJECTS = $(SOURCES:.cpp=.o)

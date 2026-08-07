@@ -3503,7 +3503,6 @@ IOReturn VMOpenGLBridge::testBufferStorageSupport(uint32_t context_id)
 }
 
 // ============================================================================
-// MARK: - Advanced 3D Geometry Processing Capabilities
 // ============================================================================
 
 IOReturn VMOpenGLBridge::validateAdvanced3DGeometryCapabilities(uint32_t context_id, uint32_t surface_id)
@@ -3899,7 +3898,6 @@ IOReturn VMOpenGLBridge::performGeometryPerformanceBenchmark(uint32_t context_id
 }
 
 // ============================================================================
-// MARK: - Advanced Geometry Helper Methods
 // ============================================================================
 
 IOReturn VMOpenGLBridge::testInterleavedVertexAttributes(uint32_t context_id, uint32_t* surface_ids, size_t count)

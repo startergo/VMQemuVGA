@@ -1,0 +1,540 @@
+VMVirtIOGPU::probe: Detected PCI class code: 0x000000
+VMVirtIOGPU::probe: Detected virtio-gpu-gl-pci device (class 0x000000 = pure GPU, NO VGA)
+VMVirtIOGPU::probe: virtio-gpu-gl-pci mode - pure GPU device, native VirtIO only
+VMVirtIOGPU::probe: virtio-gpu-gl-pci native mode - no VGA compatibility available
+VMVirtIOGPU::probe: VirtIO GPU device ready for VMVirtIOGPU driver
+VMVirtIOFramebuffer::init() completed
+VMVirtIOFramebuffer::probe() - Checking provider type
+VMVirtIOFramebuffer::probe() - Direct PCI device match (Display Preferences compatible)
+VMVirtIOGPU::start with provider IOPCIDevice
+VMVirtIOGPU: Applying 5-second initialization delay for race condition fix...
+AppleUSBHub::powerStateWillChangeTo(0xffffff800b7c3c00, AppleUSBHub, 4 -> 3) took 100 ms
+AppleUSBHub::powerStateWillChangeTo(0xffffff800b7c3400, AppleUSBHub, 4 -> 3) took 100 ms
+AppleUSBHub::powerStateWillChangeTo(0xffffff800b7c3800, AppleUSBHub, 4 -> 3) took 100 ms
+Previous Shutdown Cause: 5
+DSMOS has arrived
+VMVirtIOGPU: Initialization delay complete - system services ready
+VMVirtIOGPU::start: PCI class code: 0x000000 (base=0x00, sub=0x00)
+VMVirtIOGPU::start: Unknown device type, assuming virtio-vga-gl VGA compatibility
+VMVirtIOGPU: d73 IONDRV + Accelerator architecture
+VMVirtIOGPU: virtio-vga-gl VGA compatibility mode - ALLOWING IONDRVFramebuffer for display
+VMVirtIOGPU: We provide ONLY GPU acceleration (no framebuffer) - IONDRVFramebuffer handles display
+VMVirtIOGPU: Preserving 'display' name for IONDRVFramebuffer to handle display output
+VMVirtIOGPU: super::start succeeded
+VMVirtIOGPU: IOPCIDevice cast succeeded
+VMVirtIOGPU: Skipping PCI config read (Catalina compatibility)
+VMVirtIOGPU: VirtIO GPU device confirmed via IOKit matching - proceeding with initialization
+VMVirtIOGPU: Testing VirtIO capability parsing with provider directly
+VMVirtIOGPU: findVirtIOCapability called for cfg_type=4
+VMVirtIOGPU: Attempting to parse PCI vendor capabilities
+VMVirtIOGPU: === PCI CONFIG SPACE DIAGNOSTIC ===
+VMVirtIOGPU: PCI Header - VID:DID=1af4:1050, Command=0x0007, Status=0x0010, HeaderType=0x00
+VMVirtIOGPU: Capabilities list pointer at 0x34 = 0x98
+VMVirtIOGPU: Capabilities List enabled in status register: YES
+VMVirtIOGPU: ✅  Valid capability pointer found at 0x98, parsing capability chain
+VMVirtIOGPU: Found vendor cap at 0x84: cfg_type=5, bar=0, offset=0x0, length=0x0
+VMVirtIOGPU: Found vendor cap at 0x70: cfg_type=2, bar=4, offset=0x3000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x60: cfg_type=4, bar=4, offset=0x2000, length=0x1000
+VMVirtIOGPU: ✅  Found matching VirtIO capability via PCI config parsing
+VMVirtIOGPU: SUCCESS - VirtIO capability parsing found device config at BAR 4 + 0x2000
+VMVirtIOGPU: Initializing VirtIO GPU with proper capability parsing
+VMVirtIOGPU: About to call findVirtIOCapability for device config detection
+VMVirtIOGPU: findVirtIOCapability called for cfg_type=4
+VMVirtIOGPU: Attempting to parse PCI vendor capabilities
+VMVirtIOGPU: === PCI CONFIG SPACE DIAGNOSTIC ===
+VMVirtIOGPU: PCI Header - VID:DID=1af4:1050, Command=0x0007, Status=0x0010, HeaderType=0x00
+VMVirtIOGPU: Capabilities list pointer at 0x34 = 0x98
+VMVirtIOGPU: Capabilities List enabled in status register: YES
+VMVirtIOGPU: ✅  Valid capability pointer found at 0x98, parsing capability chain
+VMVirtIOGPU: Found vendor cap at 0x84: cfg_type=5, bar=0, offset=0x0, length=0x0
+VMVirtIOGPU: Found vendor cap at 0x70: cfg_type=2, bar=4, offset=0x3000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x60: cfg_type=4, bar=4, offset=0x2000, length=0x1000
+VMVirtIOGPU: ✅  Found matching VirtIO capability via PCI config parsing
+VMVirtIOGPU: findVirtIOCapability returned: SUCCESS (BAR=4, offset=0x2000, length=0x1000)
+VMVirtIOGPU: Mapping PCI BAR 4 for device configuration
+VMVirtIOGPU: Failed to map PCI BAR 4
+VMVirtIOGPU: Final device config - scanouts: 1, capsets: 0
+VMVirtIOGPU: *** ABOUT TO START VIRTIO FEATURE NEGOTIATION ***
+VMVirtIOGPU: Starting VirtIO feature negotiation for 3D capabilities
+VMVirtIOGPU::negotiateVirtIOFeatures: Starting VirtIO feature negotiation
+VMVirtIOGPU: findVirtIOCapability called for cfg_type=1
+VMVirtIOGPU: Attempting to parse PCI vendor capabilities
+VMVirtIOGPU: === PCI CONFIG SPACE DIAGNOSTIC ===
+VMVirtIOGPU: PCI Header - VID:DID=1af4:1050, Command=0x0007, Status=0x0010, HeaderType=0x00
+VMVirtIOGPU: Capabilities list pointer at 0x34 = 0x98
+VMVirtIOGPU: Capabilities List enabled in status register: YES
+VMVirtIOGPU: ✅  Valid capability pointer found at 0x98, parsing capability chain
+VMVirtIOGPU: Found vendor cap at 0x84: cfg_type=5, bar=0, offset=0x0, length=0x0
+VMVirtIOGPU: Found vendor cap at 0x70: cfg_type=2, bar=4, offset=0x3000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x60: cfg_type=4, bar=4, offset=0x2000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x50: cfg_type=3, bar=4, offset=0x1000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x40: cfg_type=1, bar=4, offset=0x0, length=0x1000
+VMVirtIOGPU: ✅  Found matching VirtIO capability via PCI config parsing
+VMVirtIOGPU::negotiateVirtIOFeatures: Failed to map VirtIO common config (BAR 4)
+VMVirtIOGPU::negotiateVirtIOFeatures: Legacy VirtIO mode detected - continuing with defaults
+VMVirtIOGPU: *** VIRTIO FEATURE NEGOTIATION RESULT: FAILED ***
+VMVirtIOGPU: *** LEGACY MODE OPERATION ***
+VMVirtIOGPU: Modern VirtIO feature negotiation not available
+VMVirtIOGPU: Device is using legacy VirtIO 0.9.5 (Snow Leopard compatible)
+VMVirtIOGPU: Enabling conservative 3D support for legacy mode
+VMVirtIOGPU: Assuming 1 capability set for legacy VirtIO device
+VMVirtIOGPU: *** INITIALIZING VIRTIO QUEUES ***
+VMVirtIOGPU::initializeVirtIOQueues: Setting up VirtIO GPU command queues
+VMVirtIOGPU::initializeVirtIOQueues: Queues already initialized
+VMVirtIOGPU: *** VIRTIO QUEUES INITIALIZED SUCCESSFULLY ***
+VMVirtIOGPU: *** SETTING UP GPU MEMORY REGIONS (notification BAR) ***
+VMVirtIOGPU::setupGPUMemoryRegions: Configuring VirtIO GPU memory regions
+BAR_DIAGNOSTIC_START ===================================================
+VMVirtIOGPU: findVirtIOCapability called for cfg_type=2
+VMVirtIOGPU: Attempting to parse PCI vendor capabilities
+VMVirtIOGPU: === PCI CONFIG SPACE DIAGNOSTIC ===
+VMVirtIOGPU: PCI Header - VID:DID=1af4:1050, Command=0x0007, Status=0x0010, HeaderType=0x00
+VMVirtIOGPU: Capabilities list pointer at 0x34 = 0x98
+VMVirtIOGPU: Capabilities List enabled in status register: YES
+VMVirtIOGPU: ✅  Valid capability pointer found at 0x98, parsing capability chain
+VMVirtIOGPU: Found vendor cap at 0x84: cfg_type=5, bar=0, offset=0x0, length=0x0
+VMVirtIOGPU: Found vendor cap at 0x70: cfg_type=2, bar=4, offset=0x3000, length=0x1000
+VMVirtIOGPU: ✅  Found matching VirtIO capability via PCI config parsing
+VMVirtIOGPU::setupGPUMemoryRegions: Modern VirtIO 1.0+ detected - using capability-based notify
+VMVirtIOGPU::setupGPUMemoryRegions: === BAR MAPPING DIAGNOSTIC START ===
+VMVirtIOGPU::setupGPUMemoryRegions: Attempting to map PCI BAR 4 (from VirtIO capability)
+VMVirtIOGPU::setupGPUMemoryRegions: Capability reports: bar=4 offset=0x3000 length=0x1000
+VMVirtIOGPU::setupGPUMemoryRegions: Enumerating IOKit memory ranges:
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[0]: phys=0xc0066000 size=4096 (0x1000) bytes
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[1]: phys=0xff10000000 size=16384 (0x4000) bytes
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[2]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[3]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[4]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[5]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions: Reading PCI config space BARs:
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR0: not present
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR1: 32-bit memory @ 0xc0066000
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR2: not present
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR3: not present
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR4: 64-bit memory @ 0xff10000000
+VMVirtIOGPU::setupGPUMemoryRegions: Matching PCI BAR 4 to IOKit index...
+VMVirtIOGPU::setupGPUMemoryRegions: ✅  PCI BAR 4 @ 0xff10000000 → IOKit index 1
+VMVirtIOGPU::setupGPUMemoryRegions: Mapping notify BAR 4 (IOKit index 1)...
+VMVirtIOGPU::setupGPUMemoryRegions: ✅  Successfully mapped BAR 4
+VMVirtIOGPU::setupGPUMemoryRegions:   Physical address: 0xff10000000
+VMVirtIOGPU::setupGPUMemoryRegions:   Virtual address:  0xffffff805ea65000
+VMVirtIOGPU::setupGPUMemoryRegions:   Mapped size:      16384 bytes (0x4000)
+VMVirtIOGPU::setupGPUMemoryRegions:   Need offset:      0x3000 + 4 bytes
+VMVirtIOGPU::setupGPUMemoryRegions:   Size check: PASS ✅  (need 12292, have 16384)
+VMVirtIOGPU::setupGPUMemoryRegions:   Virtual address check: PASS ✅
+VMVirtIOGPU::setupGPUMemoryRegions: ✅  BAR4 mapping is sufficient for modern VirtIO 1.0
+VMVirtIOGPU::setupGPUMemoryRegions: === BAR MAPPING DIAGNOSTIC END (SUCCESS) ===
+VMVirtIOGPU::setupGPUMemoryRegions: Mapped notify region at BAR 4 + 0x3000 (BAR size: 16384 bytes)
+VMVirtIOGPU::setupGPUMemoryRegions: Notification region mapped at 0xff10000000, size: 16384
+VMVirtIOGPU::setupGPUMemoryRegions: *** HARDWARE ACCELERATION PROPERTIES CONFIGURED ***
+VMVirtIOGPU::setupGPUMemoryRegions: Enhanced framebuffer properties configured
+VMVirtIOGPU::setupGPUMemoryRegions: VirtIO GPU memory regions configured successfully
+BAR_DIAGNOSTIC_END =====================================================
+VMVirtIOGPU: ✅  GPU memory regions setup successful - VirtIO notifications enabled
+VMVirtIOGPU: Initializing 3D acceleration and WebGL support
+VMVirtIOGPU::enable3DAcceleration: Initializing VirtIO GPU 3D support
+VMVirtIOGPU::enable3DAcceleration: Device reports 1 capability sets
+VMVirtIOGPU::enable3DAcceleration: Device reports 1 capability sets, 3D likely available
+VMVirtIOGPU::initializeVirtIOQueues: Setting up VirtIO GPU command queues
+VMVirtIOGPU::initializeVirtIOQueues: Queues already initialized
+VMVirtIOGPU::enable3DAcceleration: 3D acceleration support confirmed (capsets=1)
+VMVirtIOGPU::enableFeature: Enabling VirtIO GPU features 0x1
+VMVirtIOGPU::enableFeature: Checking 3D capability (simplified approach)
+VMVirtIOGPU::enableFeature: Found 1 capability sets, 3D support likely available
+VMVirtIOGPU::enable3DAcceleration: VirtIO GPU 3D feature enabled successfully
+VMVirtIOGPU::enable3DAcceleration: Hardware rendering mode activated
+VMVirtIOGPU::enableVirgl: Enabling Virgil 3D renderer support
+VMVirtIOGPU::enableFeature: Enabling VirtIO GPU features 0x1
+VMVirtIOGPU::enableFeature: Checking 3D capability (simplified approach)
+VMVirtIOGPU::enableFeature: Found 1 capability sets, 3D support likely available
+VMVirtIOGPU::enableVirgl: Querying Virgil 3D capability sets
+VMVirtIOGPU::initHardwareDeferred: === ENTRY POINT ===
+VMVirtIOGPU::initHardwareDeferred: m_config_map=0, m_pci_device=0xffffff800afb5c00, m_num_capsets=1
+VMVirtIOGPU: Have valid config (capsets=1) - setting up memory regions for VirtIO notifications
+VMVirtIOGPU: ❌  No config map available for deferred init - SKIPPING setupGPUMemoryRegions()
+VMVirtIOGPU: This means VirtIO notifications will FAIL
+VMVirtIOGPU: Deferred hardware initialization completed
+VMVirtIOGPU::submitCommand: Submitting command type=0x108, size=20u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::enableVirgl: Capability set 0: ID=0 version=0 size=0
+VMVirtIOGPU::enableVirgl: Virgil 3D renderer enabled successfully
+VMVirtIOGPU::enable3DAcceleration: Enabling WebGL optimizations for Virgl
+VMVirtIOGPU::enable3DAcceleration: Configuring Snow Leopard WebGL compatibility
+VMVirtIOGPU::enable3DAcceleration: Enabling YouTube Canvas/Video acceleration
+VMVirtIOGPU::enableResourceBlob: Enabling VirtIO GPU resource blob support
+VMVirtIOGPU::supportsFeature: Checking feature support for flags=0x8
+VMVirtIOGPU::supportsFeature: Resource blob support = YES
+VMVirtIOGPU::supportsFeature: Final result for flags=0x8: SUPPORTED
+VMVirtIOGPU::enableFeature: Enabling VirtIO GPU features 0x8
+VMVirtIOGPU::enableResourceBlob: Maximum blob resource size: 256 MBesourceBlob: Advanced resource blob capabilities enabled: YES
+VMVirtIOGPU::enableResourceBlob: Cross-domain resource sharing: ENABLED
+VMVirtIOGPU::enableResourceBlob: Advanced texture formats: ENABLED
+VMVirtIOGPU::enableResourceBlob: Memory-mapped GPU access: ENABLED
+VMVirtIOGPU::enableResourceBlob: Resource blob support enabled successfully
+VMVirtIOGPU::enable3DAcceleration: Enabling WebGL hardware acceleration
+VMVirtIOGPU::initializeWebGLAcceleration: Setting up real WebGL hardware acceleration
+VMVirtIOGPU::initializeWebGLAcceleration: Creating real VirtIO GPU 3D context
+VMVirtIOGPU::createRenderContext: Sending CTX_CREATE command for context 2
+VMVirtIOGPU::submitCommand: Submitting command type=0x200, size=60u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::createRenderContext: CTX_CREATE returned 0x0, response type=0x200
+VMVirtIOGPU::createRenderContext: Successfully created context 2
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Created real 3D context ID: 2
+VMVirtIOGPU::initializeWebGLAcceleration: Allocating 10u MB GPU memory
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Allocated 10u MB GPU memory
+VMVirtIOGPU::initializeWebGLAcceleration: Creating 1280x720 render target (matching display resolution)
+VMVirtIOGPU::createResource3D: resource=2 target=0x2 format=0x2 bind=0x2 dims=1280x720x1
+VMVirtIOGPU::submitCommand: Submitting command type=0x204, size=48u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Created canvas resource ID: 2
+VMVirtIOGPU::initializeWebGLAcceleration: Creating depth buffer
+VMVirtIOGPU::createResource3D: resource=3 target=0x2 format=0x31 bind=0x1 dims=1280x720x1
+VMVirtIOGPU::submitCommand: Submitting command type=0x204, size=48u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Created depth buffer ID: 3
+VMVirtIOGPU::initializeWebGLAcceleration: Device reports 1 capability sets
+VMVirtIOGPU::initializeWebGLAcceleration: 3D capabilities available (virgl renderer)
+VMVirtIOGPU::initializeWebGLAcceleration: Deferring capability details to virglrenderer
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  *** REAL 3D HARDWARE ACCELERATION ENABLED ***
+VMVirtIOGPU::initializeWebGLAcceleration: Context ID: 2, Canvas: 2, Depth: 3
+VMVirtIOGPU::initializeWebGLAcceleration: GPU memory: 16 MB allocated
+VMVirtIOGPU::initializeWebGLAcceleration: WebGL acceleration configured successfully
+VMVirtIOGPU: initVirtIOGPU succeeded
+VMVirtIOGPU: VRAM properties controlled by IONDRVFramebuffer
+VMVirtIOGPU: Resolution limited by IONDRV's VRAM detection on VirtIO devices
+VMVirtIOGPU: Using fixed IOAccelerator ID: 0x1AF41050 (452202576 decimal)
+VMVirtIOGPUAccelerator::init() - inheriting from VMQemuVGAAccelerator
+VMVirtIOGPU: Registering accelerator service with Metal plugin support
+VMVirtIOGPUAccelerator::start() - VirtIO GPU accelerator with full OpenGL support
+VMVirtIOGPUAccelerator: Base IOAccelerator started, OpenGL methods inherited from parent
+VMVirtIOGPUAccelerator: Creating Metal plugin for WindowServer support
+VMVirtIOGPUAccelerator: Metal plugin allocated at 0xffffff800bb4be00
+VMVirtIOGPUAccelerator: Metal plugin init() succeeded
+VMVirtIOGPUAccelerator: Metal plugin attached successfully
+VMMetalPlugin::start - Initializing minimal Metal device
+VMMetalPlugin: Provider is VMVirtIOGPUAccelerator (VirtIO GPU)
+VMMetalPlugin Device Capabilities:
+  Device Name: VMware/QEMU Virtual Graphics Adapter (Metal Software Renderer)
+  Registry ID: 0x10000027c
+  Feature Set: 0x2710 (GPU Family 1 v1)
+  Max Texture Size: 4096x4096
+  Max Threads Per Threadgroup: 256
+  Unified Memory: Yes
+  Shader Debugging: No
+  Recommended Max Working Set: 256 MB
+  Is Removable: No
+  Is Headless: No
+  Is Low Power: Yes
+VMMetalPlugin: Started successfully - Metal device ready
+VMVirtIOGPUAccelerator: Metal plugin started and registered successfully
+VMVirtIOGPUAccelerator: AGDC and VideoAccelerator explicitly disabled
+VMVirtIOGPUAccelerator: Set IOAccelIndex=0, RendererID=0x00024600 for CGL discovery
+VMVirtIOGPUAccelerator: ✅  Advertised CGL support via IOGLContext property
+VMVirtIOGPUAccelerator: Started successfully with full OpenGL support
+VMVirtIOGPU: Accelerator start() succeeded
+VMVirtIOGPU: Accelerator registered successfully - Metal plugin should be running
+VMVirtIOGPU: Setting accelerator discovery properties...
+VMVirtIOGPU: ✅  Accelerator properties configured for CGL discovery
+VMVirtIOGPU: d73 Accelerator-only mode - NO framebuffer creation
+VMVirtIOGPU: IONDRVFramebuffer will handle all display output
+VMVirtIOGPU: We provide ONLY GPU acceleration for WindowServer Metal requirements
+VMVirtIOGPU: d73 properties set - accelerator service only, no framebuffer
+VMVirtIOGPU: Started successfully with 1 scanouts, 3D support: Yes
+VMVirtIOGPU: Service registered successfully
+VMVirtIOGPU: VMVirtIOFramebuffer will match directly for VRAM properties
+VMVirtIOGPU: Framebuffer creation delegated to IOKit personality matching
+VMVirtIOGPU: Device type detection: isVirtIOVGA=true, isVirtIOGPUPCI=false
+VMVirtIOFramebuffer::start() - Applying 5-second initialization delay for race condition fix...
+ACPI_SMC_PlatformPlugin::start - waitForService(resourceMatching(AppleIntelCPUPowerManagement) timed out
+ACPI_SMC_PlatformPlugin::start - waitForService(resourceMatching(AppleIntelCPUPowerManagement) timed out
+PMRD: systemShutdown falsereVIDPID = 0xffffffff Number of packages = 1 Number of cpus = 1 memory monitor trough MCA
+systemShutdown false
+SIOCPROTOATTACH_IN6: en0 error=17
+VMVirtIOFramebuffer::start() - Initialization delay complete - system services ready
+VMVirtIOFramebuffer::start() - Starting framebuffer
+VMVirtIOFramebuffer::start() - Direct PCI match mode (Display Preferences compatible)
+VMVirtIOFramebuffer::start() - Set AAPL,boot-display property for console device recognition
+VMVirtIOFramebuffer::start() - Creating VMVirtIOGPU helper object (no IOService registration)...
+S10: strict PM order enforced
+no Heuristic ID!
+VMVirtIOGPU::initializeWithPCIDevice - Applying 5-second delay for race condition fix...
+VMVirtIOGPU::initializeWithPCIDevice - Initialization delay complete
+VMVirtIOGPU: Initializing VirtIO GPU with proper capability parsing
+VMVirtIOGPU: About to call findVirtIOCapability for device config detection
+VMVirtIOGPU: findVirtIOCapability called for cfg_type=4
+VMVirtIOGPU: Attempting to parse PCI vendor capabilities
+VMVirtIOGPU: === PCI CONFIG SPACE DIAGNOSTIC ===
+VMVirtIOGPU: PCI Header - VID:DID=1af4:1050, Command=0x0007, Status=0x0010, HeaderType=0x00
+VMVirtIOGPU: Capabilities list pointer at 0x34 = 0x98
+VMVirtIOGPU: Capabilities List enabled in status register: YES
+VMVirtIOGPU: ✅  Valid capability pointer found at 0x98, parsing capability chain
+VMVirtIOGPU: Found vendor cap at 0x84: cfg_type=5, bar=0, offset=0x0, length=0x0
+VMVirtIOGPU: Found vendor cap at 0x70: cfg_type=2, bar=4, offset=0x3000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x60: cfg_type=4, bar=4, offset=0x2000, length=0x1000
+VMVirtIOGPU: ✅  Found matching VirtIO capability via PCI config parsing
+VMVirtIOGPU: findVirtIOCapability returned: SUCCESS (BAR=4, offset=0x2000, length=0x1000)
+VMVirtIOGPU: Mapping PCI BAR 4 for device configuration
+VMVirtIOGPU: Failed to map PCI BAR 4
+VMVirtIOGPU: Final device config - scanouts: 1, capsets: 0
+VMVirtIOGPU: *** ABOUT TO START VIRTIO FEATURE NEGOTIATION ***
+VMVirtIOGPU: Starting VirtIO feature negotiation for 3D capabilities
+VMVirtIOGPU::negotiateVirtIOFeatures: Starting VirtIO feature negotiation
+VMVirtIOGPU: findVirtIOCapability called for cfg_type=1
+VMVirtIOGPU: Attempting to parse PCI vendor capabilities
+VMVirtIOGPU: === PCI CONFIG SPACE DIAGNOSTIC ===
+VMVirtIOGPU: PCI Header - VID:DID=1af4:1050, Command=0x0007, Status=0x0010, HeaderType=0x00
+VMVirtIOGPU: Capabilities list pointer at 0x34 = 0x98
+VMVirtIOGPU: Capabilities List enabled in status register: YES
+VMVirtIOGPU: ✅  Valid capability pointer found at 0x98, parsing capability chain
+VMVirtIOGPU: Found vendor cap at 0x84: cfg_type=5, bar=0, offset=0x0, length=0x0
+VMVirtIOGPU: Found vendor cap at 0x70: cfg_type=2, bar=4, offset=0x3000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x60: cfg_type=4, bar=4, offset=0x2000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x50: cfg_type=3, bar=4, offset=0x1000, length=0x1000
+VMVirtIOGPU: Found vendor cap at 0x40: cfg_type=1, bar=4, offset=0x0, length=0x1000
+VMVirtIOGPU: ✅  Found matching VirtIO capability via PCI config parsing
+VMVirtIOGPU::negotiateVirtIOFeatures: Failed to map VirtIO common config (BAR 4)
+VMVirtIOGPU::negotiateVirtIOFeatures: Legacy VirtIO mode detected - continuing with defaults
+VMVirtIOGPU: *** VIRTIO FEATURE NEGOTIATION RESULT: FAILED ***
+VMVirtIOGPU: *** LEGACY MODE OPERATION ***
+VMVirtIOGPU: Modern VirtIO feature negotiation not available
+VMVirtIOGPU: Device is using legacy VirtIO 0.9.5 (Snow Leopard compatible)
+VMVirtIOGPU: Enabling conservative 3D support for legacy mode
+VMVirtIOGPU: Assuming 1 capability set for legacy VirtIO device
+VMVirtIOGPU: *** INITIALIZING VIRTIO QUEUES ***
+VMVirtIOGPU::initializeVirtIOQueues: Setting up VirtIO GPU command queues
+VMVirtIOGPU::initializeVirtIOQueues: Queues already initialized
+VMVirtIOGPU: *** VIRTIO QUEUES INITIALIZED SUCCESSFULLY ***
+VMVirtIOGPU: *** SETTING UP GPU MEMORY REGIONS (notification BAR) ***
+VMVirtIOGPU::setupGPUMemoryRegions: Configuring VirtIO GPU memory regions
+BAR_DIAGNOSTIC_START ===================================================
+VMVirtIOGPU: findVirtIOCapability called for cfg_type=2
+VMVirtIOGPU: Attempting to parse PCI vendor capabilities
+VMVirtIOGPU: === PCI CONFIG SPACE DIAGNOSTIC ===
+VMVirtIOGPU: PCI Header - VID:DID=1af4:1050, Command=0x0007, Status=0x0010, HeaderType=0x00
+VMVirtIOGPU: Capabilities list pointer at 0x34 = 0x98
+VMVirtIOGPU: Capabilities List enabled in status register: YES
+VMVirtIOGPU: ✅  Valid capability pointer found at 0x98, parsing capability chain
+VMVirtIOGPU: Found vendor cap at 0x84: cfg_type=5, bar=0, offset=0x0, length=0x0
+VMVirtIOGPU: Found vendor cap at 0x70: cfg_type=2, bar=4, offset=0x3000, length=0x1000
+VMVirtIOGPU: ✅  Found matching VirtIO capability via PCI config parsing
+VMVirtIOGPU::setupGPUMemoryRegions: Modern VirtIO 1.0+ detected - using capability-based notify
+VMVirtIOGPU::setupGPUMemoryRegions: === BAR MAPPING DIAGNOSTIC START ===
+VMVirtIOGPU::setupGPUMemoryRegions: Attempting to map PCI BAR 4 (from VirtIO capability)
+VMVirtIOGPU::setupGPUMemoryRegions: Capability reports: bar=4 offset=0x3000 length=0x1000
+VMVirtIOGPU::setupGPUMemoryRegions: Enumerating IOKit memory ranges:
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[0]: phys=0xc0066000 size=4096 (0x1000) bytes
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[1]: phys=0xff10000000 size=16384 (0x4000) bytes
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[2]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[3]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[4]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[5]: NOT MAPPED
+VMVirtIOGPU::setupGPUMemoryRegions: Reading PCI config space BARs:
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR0: not present
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR1: 32-bit memory @ 0xc0066000
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR2: not present
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR3: not present
+VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR4: 64-bit memory @ 0xff10000000
+VMVirtIOGPU::setupGPUMemoryRegions: Matching PCI BAR 4 to IOKit index...
+VMVirtIOGPU::setupGPUMemoryRegions: ✅  PCI BAR 4 @ 0xff10000000 → IOKit index 1
+VMVirtIOGPU::setupGPUMemoryRegions: Mapping notify BAR 4 (IOKit index 1)...
+VMVirtIOGPU::setupGPUMemoryRegions: ✅  Successfully mapped BAR 4
+VMVirtIOGPU::setupGPUMemoryRegions:   Physical address: 0xff10000000
+VMVirtIOGPU::setupGPUMemoryRegions:   Virtual address:  0xffffff805ea65000
+VMVirtIOGPU::setupGPUMemoryRegions:   Mapped size:      16384 bytes (0x4000)
+VMVirtIOGPU::setupGPUMemoryRegions:   Need offset:      0x3000 + 4 bytes
+VMVirtIOGPU::setupGPUMemoryRegions:   Size check: PASS ✅  (need 12292, have 16384)
+VMVirtIOGPU::setupGPUMemoryRegions:   Virtual address check: PASS ✅
+VMVirtIOGPU::setupGPUMemoryRegions: ✅  BAR4 mapping is sufficient for modern VirtIO 1.0
+VMVirtIOGPU::setupGPUMemoryRegions: === BAR MAPPING DIAGNOSTIC END (SUCCESS) ===
+VMVirtIOGPU::setupGPUMemoryRegions: Mapped notify region at BAR 4 + 0x3000 (BAR size: 16384 bytes)
+VMVirtIOGPU::setupGPUMemoryRegions: Notification region mapped at 0xff10000000, size: 16384
+VMVirtIOGPU::setupGPUMemoryRegions: *** HARDWARE ACCELERATION PROPERTIES CONFIGURED ***
+VMVirtIOGPU::setupGPUMemoryRegions: Enhanced framebuffer properties configured
+VMVirtIOGPU::setupGPUMemoryRegions: VirtIO GPU memory regions configured successfully
+BAR_DIAGNOSTIC_END =====================================================
+VMVirtIOGPU: ✅  GPU memory regions setup successful - VirtIO notifications enabled
+VMVirtIOGPU: Initializing 3D acceleration and WebGL support
+VMVirtIOGPU::enable3DAcceleration: Initializing VirtIO GPU 3D support
+VMVirtIOGPU::enable3DAcceleration: Device reports 1 capability sets
+VMVirtIOGPU::enable3DAcceleration: Device reports 1 capability sets, 3D likely available
+VMVirtIOGPU::initializeVirtIOQueues: Setting up VirtIO GPU command queues
+VMVirtIOGPU::initializeVirtIOQueues: Queues already initialized
+VMVirtIOGPU::enable3DAcceleration: 3D acceleration support confirmed (capsets=1)
+VMVirtIOGPU::enableFeature: Enabling VirtIO GPU features 0x1
+VMVirtIOGPU::enableFeature: Checking 3D capability (simplified approach)
+VMVirtIOGPU::enableFeature: Found 1 capability sets, 3D support likely available
+VMVirtIOGPU::enable3DAcceleration: VirtIO GPU 3D feature enabled successfully
+VMVirtIOGPU::enable3DAcceleration: Hardware rendering mode activated
+VMVirtIOGPU::enableVirgl: Enabling Virgil 3D renderer support
+VMVirtIOGPU::enableFeature: Enabling VirtIO GPU features 0x1
+VMVirtIOGPU::enableFeature: Checking 3D capability (simplified approach)
+VMVirtIOGPU::enableFeature: Found 1 capability sets, 3D support likely available
+VMVirtIOGPU::enableVirgl: Querying Virgil 3D capability sets
+VMVirtIOGPU::submitCommand: Submitting command type=0x108, size=20u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::enableVirgl: Capability set 0: ID=0 version=0 size=0
+VMVirtIOGPU::enableVirgl: Virgil 3D renderer enabled successfully
+VMVirtIOGPU::enable3DAcceleration: Enabling WebGL optimizations for Virgl
+VMVirtIOGPU::enable3DAcceleration: Configuring Snow Leopard WebGL compatibility
+VMVirtIOGPU::enable3DAcceleration: Enabling YouTube Canvas/Video acceleration
+VMVirtIOGPU::enableResourceBlob: Enabling VirtIO GPU resource blob support
+VMVirtIOGPU::supportsFeature: Checking feature support for flags=0x8
+VMVirtIOGPU::supportsFeature: Resource blob support = YES
+VMVirtIOGPU::supportsFeature: Final result for flags=0x8: SUPPORTED
+VMVirtIOGPU::enableFeature: Enabling VirtIO GPU features 0x8
+VMVirtIOGPU::enableResourceBlob: Maximum blob resource size: 256 MBesourceBlob: Advanced resource blob capabilities enabled: YES
+VMVirtIOGPU::enableResourceBlob: Cross-domain resource sharing: ENABLED
+VMVirtIOGPU::enableResourceBlob: Advanced texture formats: ENABLED
+VMVirtIOGPU::enableResourceBlob: Memory-mapped GPU access: ENABLED
+VMVirtIOGPU::enableResourceBlob: Resource blob support enabled successfully
+VMVirtIOGPU::enable3DAcceleration: Enabling WebGL hardware acceleration
+VMVirtIOGPU::initializeWebGLAcceleration: Setting up real WebGL hardware acceleration
+VMVirtIOGPU::initializeWebGLAcceleration: Creating real VirtIO GPU 3D context
+VMVirtIOGPU::createRenderContext: Sending CTX_CREATE command for context 2
+VMVirtIOGPU::submitCommand: Submitting command type=0x200, size=60u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::createRenderContext: CTX_CREATE returned 0x0, response type=0x200
+VMVirtIOGPU::createRenderContext: Successfully created context 2
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Created real 3D context ID: 2
+VMVirtIOGPU::initializeWebGLAcceleration: Allocating 10u MB GPU memory
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Allocated 10u MB GPU memory
+VMVirtIOGPU::initializeWebGLAcceleration: Creating 1280x720 render target (matching display resolution)
+VMVirtIOGPU::createResource3D: resource=2 target=0x2 format=0x2 bind=0x2 dims=1280x720x1
+VMVirtIOGPU::submitCommand: Submitting command type=0x204, size=48u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Created canvas resource ID: 2
+VMVirtIOGPU::initializeWebGLAcceleration: Creating depth buffer
+VMVirtIOGPU::createResource3D: resource=3 target=0x2 format=0x31 bind=0x1 dims=1280x720x1
+VMVirtIOGPU::submitCommand: Submitting command type=0x204, size=48u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  Created depth buffer ID: 3
+VMVirtIOGPU::initializeWebGLAcceleration: Device reports 1 capability sets
+VMVirtIOGPU::initializeWebGLAcceleration: 3D capabilities available (virgl renderer)
+VMVirtIOGPU::initializeWebGLAcceleration: Deferring capability details to virglrenderer
+VMVirtIOGPU::initializeWebGLAcceleration: ✅  *** REAL 3D HARDWARE ACCELERATION ENABLED ***
+VMVirtIOGPU::initializeWebGLAcceleration: Context ID: 2, Canvas: 2, Depth: 3
+VMVirtIOGPU::initializeWebGLAcceleration: GPU memory: 16 MB allocated
+VMVirtIOGPU::initializeWebGLAcceleration: WebGL acceleration configured successfully
+VMVirtIOGPU::initializeWithPCIDevice - Initialized successfully (NO IOService registration)
+VMVirtIOFramebuffer::start() - VMVirtIOGPU helper initialized: 0xffffff800b768c00
+VMVirtIOFramebuffer::start() - VRAM range obtained: size=4096 bytesver=0xffffff800b768c00, pci_device=0xffffff800afb5c00
+VMVirtIOFramebuffer::start() - ✓ All prerequisites met - Creating display refresh timer on PCI workloopvram=0xffffff800afb5b00
+VMVirtIOFramebuffer::start() - Timer ready, scanout deferred to enableController()
+VMVirtIOFramebuffer::start() - VRAM size configured: 512 MB using OSNumber objects
+VMVirtIOFramebuffer::start() - Set IOFramebufferMemoryBandwidth = 1073741824 bytes
+VMVirtIOFramebuffer::start() - Linked to PCI device for system display discovery
+VMVirtIOFramebuffer::start() - Framebuffer registered, IODisplayWrangler will create display0 nub
+VMVirtIOFramebuffer::start() - IOUserClientClass set to VMQemuVGAClient
+VMVirtIOFramebuffer::start() - Simple framebuffer mode (no AGDC, no HW video accel)
+VMVirtIOFramebuffer::start() - Controller enable deferred to IOGraphicsFamily
+VMVirtIOFramebuffer::start() - AGDC service creation DISABLED for testing
+VMVirtIOFramebuffer::start() - Display mode variables initialized
+VMVirtIOFramebuffer::start() - Skipping manual power management init (let IOFramebuffer handle it)
+VMVirtIOFramebuffer::start() - Declared as boot console device
+VMVirtIOFramebuffer::start() - Creating accelerator child service...
+VMQemuVGAAccelerator::start
+VMQemuVGAAccelerator: Attached to VMVirtIOFramebuffer (VirtIO GPU)
+VMQemuVGAAccelerator: 3D managers initialized for QXL/Hyper-V DDA mode
+VMQemuVGAAccelerator: Metal framework not available (macOS < 10.11) - using legacy acceleration
+VMQemuVGAAccelerator: Started successfully with OpenGL renderer properties
+VMVirtIOFramebuffer::start() - Accelerator registered successfully
+VMVirtIOFramebuffer::start() - Service registered for display matching
+VMVirtIOFramebuffer::start() - Creating display0 connection nub
+VMVirtIOFramebuffer::getAttributeForConnection() - connectIndex=0 attribute=0x666c6773
+VMVirtIOFramebuffer::getAttributeForConnection() - Attribute 'flgs' (0x666c6773)
+VMVirtIOFramebuffer::getAttributeForConnection() - kConnectionFlags: 0x4900
+VMVirtIOFramebuffer::getAttributeForConnection() - connectIndex=0 attribute=0x666c6773
+VMVirtIOFramebuffer::getAttributeForConnection() - Attribute 'flgs' (0x666c6773)
+VMVirtIOFramebuffer::getAttributeForConnection() - kConnectionFlags: 0x4900
+VMVirtIOFramebuffer::getAttributeForConnection() - connectIndex=0 attribute=0x68646463
+VMVirtIOFramebuffer::getAttributeForConnection() - Attribute 'hddc' (0x68646463)
+VMVirtIOFramebuffer::getAttributeForConnection() - NULL value pointer
+VMVirtIOFramebuffer::getAttributeForConnection() - HDDC capability check: SUPPORTED
+VMVirtIOFramebuffer::getAttributeForConnection() - connectIndex=0 attribute=0x61736e73
+VMVirtIOFramebuffer::getAttributeForConnection() - Attribute 'asns' (0x61736e73)
+VMVirtIOFramebuffer::getAttributeForConnection() - NULL value pointer
+VMVirtIOFramebuffer::getAttributeForConnection() - Apple Sense capability check: SUPPORTED
+VMVirtIOFramebuffer::start() - display0 nub created
+VMVirtIOFramebuffer::start() - FORCING GUI MODE TRANSITION (VirtIO GPU workaround)
+VMVirtIOFramebuffer::setupForCurrentConfig() - *** WINDOWSERVER GUI TRANSITION REQUESTED ***
+VMVirtIOFramebuffer::setupForCurrentConfig() - FORCING GUI MODE ACTIVATION - CONSOLE DISABLED
+VMVirtIOFramebuffer::enableController() - SAFE VERSION ENTRY POINT
+VMVirtIOFramebuffer::enableController() - About to call parent enableController
+VMVirtIOFramebuffer::enableController() - Parent enableController returned: 0x0
+VMVirtIOFramebuffer::enableController() - Marked as enabled, continuing with safe initialization
+VMVirtIOFramebuffer::getAttributeForConnection() - connectIndex=0 attribute=0x63656e61
+VMVirtIOFramebuffer::getAttributeForConnection() - Attribute 'cena' (0x63656e61)
+VMVirtIOFramebuffer::getAttributeForConnection() - kConnectionEnable: Display ONLINE
+VMVirtIOFramebuffer::enableController() - Connection check PASSED: Display is ONLINE
+VMVirtIOFramebuffer::getAttributeForConnection() - connectIndex=0 attribute=0x656e6162
+VMVirtIOFramebuffer::getAttributeForConnection() - Attribute 'enab' (0x656e6162)
+VMVirtIOFramebuffer::getAttributeForConnection() - kConnectionEnable: Display ONLINE
+VMVirtIOFramebuffer::enableController() - kConnectionEnable check result: 0x0, status: 1
+VMVirtIOFramebuffer::setAttributeForConnection() - connectIndex=0, attribute=0x656e6162, value=0x1
+VMVirtIOFramebuffer::setAttributeForConnection() - kConnectionEnable: ENABLE
+VMVirtIOFramebuffer::enableController() - Force kConnectionEnable result: 0x0
+VMVirtIOFramebuffer::enableController() - ACTIVE MODE: Setting up VirtIO GPU display
+VMVirtIOFramebuffer::enableController() - Enabling VirtIO GPU framebuffer for GUI activation
+VMVirtIOFramebuffer::enableController() - Checking PCI device properties
+VMVirtIOFramebuffer::enableController() - Device type: virtio-gpu-gl-pci
+VMVirtIOFramebuffer::enableController() - hasVGACompat=0, requiresNative=1, useNative=1
+VMVirtIOFramebuffer::enableController() - VirtIO GPU native scanout ENABLED
+VMVirtIOFramebuffer::getInformationForDisplayMode() - Mode ID=1
+VMVirtIOFramebuffer::enableController() - Setting up VirtIO display: 1024x768@32
+VMVirtIOGPU::createResource2D: Creating resource 1 (1024x768, format=0x1, size=300000u bytes)
+VMVirtIOGPU::submitCommand: Submitting command type=0x101, size=28u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::createResource2D: Create command returned 0x0, response type=0x101
+VMVirtIOFramebuffer::enableController() - VirtIO GPU display resource created successfully
+VMVirtIOGPU::attachBacking: resource=1 backing=0xffffff800afb5b00
+VMVirtIOGPU::attachBacking: Attaching backing memory - addr=0xc0066000, length=4096
+VMVirtIOGPU::submitCommand: Submitting command type=0x106, size=30u
+VMVirtIOGPU::submitCommand: Notifying modern VirtIO 1.0+ at offset 0x3000 (queue 0)
+VMVirtIOGPU::attachBacking: Attach backing returned 0x0, response type=0x106
+VMVirtIOGPU::attachBacking: Backing attached successfully
+VMVirtIOFramebuffer::enableController() - VRAM backing attached to resource
+VMVirtIOFramebuffer::enableController() - Writing TEST PATTERN: 1024x768
+Debugger: Unexpected kernel trap number: 0xe, RIP: 0xffffff7f80bdd4db, CR2: 0xffffff805ea89000
+panic trap number 0xe, rip 0xffffff7f80bdd4db
+cr0 0x000000008001003b cr2 0xffffff805ea89000 cr3 0x0000000000100000 cr4 0x0000000000000660
+panic(cpu 0 caller 0xffffff80002d1208): Kernel trap at 0xffffff7f80bdd4db, type 14=page fault, registers:
+CR0: 0x000000008001003b, CR2: 0xffffff805ea89000, CR3: 0x0000000000100000, CR4: 0x0000000000000660
+RAX: 0x00000000ff000000, RBX: 0xffffff800b84ec00, RCX: 0x00000000ffff0000, RDX: 0x000000000000a400
+RSP: 0xffffff805e603d10, RBP: 0xffffff805e603d70, RSI: 0x0000000000000000, RDI: 0x00000000ff0000ff
+R8:  0x0000000000000200, R9:  0x0000000000000180, R10: 0x0000000000000001, R11: 0xffffff80004f4e01
+R12: 0x0000000000000029, R13: 0xffffff800afb5c00, R14: 0xffffff800bb24d80, R15: 0xffffff805ea60000
+RFL: 0x0000000000010206, RIP: 0xffffff7f80bdd4db, CS:  0x0000000000000008, SS:  0x0000000000000010
+Error code: 0x0000000000000002
+
+Debugger called: <panic>
+Debugger called: <panic>
+Backtrace (CPU 0), Frame : Return Address
+0xffffff805e6039b0 : 0xffffff8000204d15 _panic + 0x260
+0xffffff805e603ab0 : 0xffffff80002d1208 _kernel_trap + 0x62b
+0xffffff805e603c00 : 0xffffff80002e3f4a _return_from_trap + 0xaa
+0xffffff805e603c10 : 0xffffff7f80bdd4db com.vmware.kext.VMQemuVGA + 148699 
+
+0xffffff805e603d70 : 0xffffff7f80bdd7bd com.vmware.kext.VMQemuVGA + 149437 
+
+0xffffff805e603db0 : 0xffffff7f80bdc3d8 com.vmware.kext.VMQemuVGA + 144344 
+
+0xffffff805e603df0 : 0xffffff800052d5a6 __ZN9IOService14startCandidateEPS_ + 0x76
+0xffffff805e603e40 : 0xffffff800052dcb1 __ZN9IOService15probeCandidatesEP12OSOrderedSet + 0x66d
+0xffffff805e603ee0 : 0xffffff800052e045 __ZN9IOService14doServiceMatchEj + 0x185
+0xffffff805e603f40 : 0xffffff800052e27a __ZN15_IOConfigThread4mainEPvi + 0x104
+0xffffff805e603fa0 : 0xffffff80002c8527 _call_continuation + 0x17
+      Kernel Extensions in backtrace (with dependencies):
+         com.vmware.kext.VMQemuVGA(8.0.0d82)@0xffffff7f80bb9000->0xffffff7f80c96fff
+            dependency: com.apple.iokit.IOGraphicsFamily(2.2.1)@0xffffff7f80853000
+            dependency: com.apple.iokit.IOPCIFamily(2.6.5)@0xffffff7f8081d000
+
+BSD process name corresponding to current thread: Unknown
+
+Mac OS version:
+10K549
+
+Kernel version:
+Darwin Kernel Version 10.8.0: Tue Jun  7 16:32:41 PDT 2011; root:xnu-1504.15.3~1/RELEASE_X86_64
+
+System uptime in nanoseconds: 23927470139
+Attempting to commit panic log to NVRAM

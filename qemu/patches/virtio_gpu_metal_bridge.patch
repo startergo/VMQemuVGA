@@ -1,0 +1,45 @@
+--- a/hw/display/meson.build
++++ b/hw/display/meson.build
+@@ -80,6 +80,9 @@
+     virtio_gpu_gl_ss = ss.source_set()
+     virtio_gpu_gl_ss.add(when: ['CONFIG_VIRTIO_GPU', virgl, opengl],
+                          if_true: [files('virtio-gpu-gl.c', 'virtio-gpu-virgl.c'), pixman, virgl])
++    if host_os == 'darwin'
++      virtio_gpu_gl_ss.add(files('virgl_metal_scanout_bridge.c'))
++    endif
+     hw_display_modules += {'virtio-gpu-gl': virtio_gpu_gl_ss}
+   endif
+ 
+--- a/hw/display/virtio-gpu.c
++++ b/hw/display/virtio-gpu.c
+@@ -32,6 +32,9 @@
+ #include "qemu/module.h"
+ #include "qapi/error.h"
+ #include "qemu/error-report.h"
++#ifdef CONFIG_COCOA
++#include "hw/display/virgl_metal_scanout_bridge.h"
++#endif
+ 
+ #define VIRTIO_GPU_VM_VERSION 1
+ 
+@@ -1521,12 +1524,20 @@
+     QTAILQ_INIT(&g->reslist);
+     QTAILQ_INIT(&g->cmdq);
+     QTAILQ_INIT(&g->fenceq);
++
++#ifdef CONFIG_COCOA
++    virtio_gpu_metal_scanout_init(g);
++#endif
+ }
+ 
+ static void virtio_gpu_device_unrealize(DeviceState *qdev)
+ {
+     VirtIOGPU *g = VIRTIO_GPU(qdev);
+ 
++#ifdef CONFIG_COCOA
++    virtio_gpu_metal_scanout_shutdown();
++#endif
++
+     g_clear_pointer(&g->ctrl_bh, qemu_bh_delete);
+     g_clear_pointer(&g->cursor_bh, qemu_bh_delete);
+     g_clear_pointer(&g->reset_bh, qemu_bh_delete);

@@ -59,7 +59,6 @@ detect_signing_identity() {
 build_kext() {
     local config="$1"
     local sign_identity="$2"
-    local snow_leopard_mode="$3"
     
     echo -e "${BLUE}🔨 Building $config configuration...${NC}"
     
@@ -73,18 +72,7 @@ build_kext() {
     xattr -w com.apple.xcode.CreatedByBuildSystem true "$BUILD_DIR/obj" 2>/dev/null || true
     xattr -w com.apple.xcode.CreatedByBuildSystem true "$BUILD_DIR/dst" 2>/dev/null || true
     
-    # Choose xcconfig file based on compatibility mode
-    local xcconfig_override=""
-    if [ "$snow_leopard_mode" = true ]; then
-        if [ -f "VMQemuVGA_10_6.xcconfig" ]; then
-            echo -e "${BLUE}🐆 Using Snow Leopard compatibility configuration${NC}"
-            xcconfig_override="XCCONFIG_FILE=VMQemuVGA_10_6.xcconfig"
-        else
-            echo -e "${YELLOW}⚠️  Snow Leopard config not found, using default with code signing disabled${NC}"
-        fi
-    fi
-    
-    if [ ! -z "$sign_identity" ] && [ "$snow_leopard_mode" = false ]; then
+    if [ ! -z "$sign_identity" ]; then
         echo -e "${GREEN}🔐 Code signing with: $sign_identity${NC}"
         
         xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
@@ -93,18 +81,12 @@ build_kext() {
                    OBJROOT="$BUILD_DIR/obj" \
                    SYMROOT="$BUILD_DIR" \
                    DSTROOT="$BUILD_DIR/dst" \
-                   VMQEMUVGA_CODE_SIGN_IDENTITY="$sign_identity" \
-                   VMQEMUVGA_CODE_SIGNING_ALLOWED=YES \
-                   VMQEMUVGA_CODE_SIGNING_REQUIRED=YES \
+                   CODE_SIGN_IDENTITY="$sign_identity" \
+                   CODE_SIGNING_REQUIRED=YES \
                    CODE_SIGN_ENTITLEMENTS="$ENTITLEMENTS_FILE" \
-                   $xcconfig_override \
                    clean build
     else
-        if [ "$snow_leopard_mode" = true ]; then
-            echo -e "${BLUE}🐆 Building for Snow Leopard (code signing disabled)${NC}"
-        else
-            echo -e "${YELLOW}⚠️  Building unsigned (development only)${NC}"
-        fi
+        echo -e "${YELLOW}⚠️  Building unsigned (development only)${NC}"
         
         xcodebuild -project "${PROJECT_NAME}.xcodeproj" \
                    -configuration "$config" \
@@ -112,98 +94,166 @@ build_kext() {
                    OBJROOT="$BUILD_DIR/obj" \
                    SYMROOT="$BUILD_DIR" \
                    DSTROOT="$BUILD_DIR/dst" \
-                   VMQEMUVGA_CODE_SIGN_IDENTITY="" \
-                   VMQEMUVGA_CODE_SIGNING_ALLOWED=NO \
-                   VMQEMUVGA_CODE_SIGNING_REQUIRED=NO \
-                   $xcconfig_override \
+                   CODE_SIGN_IDENTITY="" \
+                   CODE_SIGNING_REQUIRED=NO \
                    clean build
     fi
 }
 
 # Function to fix kext bundle structure
 # Bundle structure verification and fix function 
-fix_bundle_structure() {
+# fix_bundle_structure() {
 #     local config="$1"
 #     local kext_path="$BUILD_DIR/$config/$KEXT_NAME"
     
 #     echo -e "${BLUE}🔧 Fixing kext bundle structure...${NC}"
     
-    if [ -d "$kext_path" ]; then
-        # Check if we have the Contents structure outside the kext (wrong location)
-        if [ -d "$BUILD_DIR/$config/Contents" ] && [ ! -d "$kext_path/Contents" ]; then
-            echo -e "   Detected misplaced bundle structure, fixing..."
+#     if [ -d "$kext_path" ]; then
+#         # Check if we have the Contents structure outside the kext (wrong location)
+#         if [ -d "$BUILD_DIR/$config/Contents" ] && [ ! -d "$kext_path/Contents" ]; then
+#             echo -e "   Detected misplaced bundle structure, fixing..."
             
-            # Move Contents directory inside the kext bundle
-            mv "$BUILD_DIR/$config/Contents" "$kext_path/"
-            echo -e "   ✅ Moved Contents/ into kext bundle"
+#             # Move Contents directory inside the kext bundle
+#             mv "$BUILD_DIR/$config/Contents" "$kext_path/"
+#             echo -e "   ✅ Moved Contents/ into kext bundle"
             
-            echo -e "${GREEN}✅ Bundle structure corrected${NC}"
-        elif [ -f "$kext_path/Info.plist" ] && [ -f "$kext_path/$PROJECT_NAME" ]; then
-            echo -e "   Detected flat structure, converting to Contents/MacOS..."
+#             echo -e "${GREEN}✅ Bundle structure corrected${NC}"
+#         elif [ -f "$kext_path/Info.plist" ] && [ -f "$kext_path/$PROJECT_NAME" ]; then
+#             echo -e "   Detected flat structure, converting to Contents/MacOS..."
             
-            # Create proper Contents directory structure
-            mkdir -p "$kext_path/Contents/MacOS"
+#             # Create proper Contents directory structure
+#             mkdir -p "$kext_path/Contents/MacOS"
             
-            # Move Info.plist to correct location
-            if [ -f "$kext_path/Info.plist" ]; then
-                mv "$kext_path/Info.plist" "$kext_path/Contents/"
-                echo -e "   ✅ Moved Info.plist to Contents/"
-            fi
+#             # Move Info.plist to correct location
+#             if [ -f "$kext_path/Info.plist" ]; then
+#                 mv "$kext_path/Info.plist" "$kext_path/Contents/"
+#                 echo -e "   ✅ Moved Info.plist to Contents/"
+#             fi
             
-            # Move executable to correct location
-            if [ -f "$kext_path/$PROJECT_NAME" ]; then
-                mv "$kext_path/$PROJECT_NAME" "$kext_path/Contents/MacOS/"
-                echo -e "   ✅ Moved executable to Contents/MacOS/"
-            fi
+#             # Move executable to correct location
+#             if [ -f "$kext_path/$PROJECT_NAME" ]; then
+#                 mv "$kext_path/$PROJECT_NAME" "$kext_path/Contents/MacOS/"
+#                 echo -e "   ✅ Moved executable to Contents/MacOS/"
+#             fi
             
-            # Remove old signature directory since structure changed
-            if [ -d "$kext_path/_CodeSignature" ]; then
-                rm -rf "$kext_path/_CodeSignature"
-                echo -e "   ✅ Removed old signature for re-signing"
-            fi
+#             # Remove old signature directory since structure changed
+#             if [ -d "$kext_path/_CodeSignature" ]; then
+#                 rm -rf "$kext_path/_CodeSignature"
+#                 echo -e "   ✅ Removed old signature for re-signing"
+#             fi
             
-            echo -e "${GREEN}✅ Bundle structure corrected${NC}"
-        else
-            echo -e "   Bundle structure already correct"
+#             echo -e "${GREEN}✅ Bundle structure corrected${NC}"
+#         else
+#             echo -e "   Bundle structure already correct"
+#         fi
+#     else
+#         echo -e "${RED}❌ Kext not found at: $kext_path${NC}"
+#         return 1
+#     fi
+# }
+
+# Function to embed GLDriver bundle in kext (Snow Leopard CGL architecture)
+embed_gldriver_bundle() {
+    local config="$1"
+    local kext_path="$BUILD_DIR/$config/$KEXT_NAME"
+    local gldriver_source="GLPlugin/VMVirtIOGLEngine.bundle"
+    local gldriver_dest="$kext_path/Contents/PlugIns"
+    
+    echo -e "${BLUE}📦 Embedding GLDriver bundle in kext...${NC}"
+    
+    if [ ! -d "$gldriver_source" ]; then
+        echo -e "${YELLOW}⚠️  GLDriver bundle not found at: $gldriver_source${NC}"
+        echo -e "   CGL may not discover the OpenGL renderer"
+        return 1
+    fi
+    
+    # Create PlugIns directory in kext
+    mkdir -p "$gldriver_dest"
+    
+    # Copy GLDriver bundle into kext
+    if cp -R "$gldriver_source" "$gldriver_dest/"; then
+        echo -e "${GREEN}✅ GLDriver bundle embedded: $gldriver_dest/VMVirtIOGLEngine.bundle${NC}"
+        
+        # Verify bundle structure
+        if [ -f "$gldriver_dest/VMVirtIOGLEngine.bundle/Contents/MacOS/VMVirtIOGLEngine" ]; then
+            local bundle_size=$(wc -c < "$gldriver_dest/VMVirtIOGLEngine.bundle/Contents/MacOS/VMVirtIOGLEngine" | tr -d ' ')
+            echo -e "   Bundle size: ${bundle_size} bytes"
         fi
+        
+        # Set proper permissions
+        chmod -R 755 "$gldriver_dest/VMVirtIOGLEngine.bundle"
+        
+        return 0
     else
-        echo -e "${RED}❌ Kext not found at: $kext_path${NC}"
+        echo -e "${RED}❌ Failed to embed GLDriver bundle${NC}"
         return 1
     fi
 }
 
-# Function to re-sign kext when necessary
-re_sign_kext_if_needed() {
+# Function to embed GLDriver bundle in kext (Snow Leopard architecture)
+embed_gldriver_bundle() {
+    local config="$1"
+    local kext_path="$BUILD_DIR/$config/$KEXT_NAME"
+    local gldriver_source="GLPlugin/VMVirtIOGLEngine.bundle"
+    local gldriver_dest="$kext_path/Contents/Resources/VMVirtIOGLEngine.bundle"
+    
+    echo -e "${BLUE}📦 Embedding GLDriver bundle in kext...${NC}"
+    
+    if [ ! -d "$gldriver_source" ]; then
+        echo -e "${YELLOW}⚠️  GLDriver bundle not found at $gldriver_source${NC}"
+        echo -e "   Skipping bundle embedding - build GLPlugin first if needed${NC}"
+        return 0
+    fi
+    
+    if [ ! -d "$kext_path" ]; then
+        echo -e "${RED}❌ Kext not found at $kext_path${NC}"
+        return 1
+    fi
+    
+    # Create Resources directory if it doesn't exist
+    mkdir -p "$kext_path/Contents/Resources"
+    
+    # Remove old bundle if it exists
+    if [ -d "$gldriver_dest" ]; then
+        rm -rf "$gldriver_dest"
+    fi
+    
+    # Copy the GLDriver bundle into the kext
+    cp -R "$gldriver_source" "$gldriver_dest"
+    
+    if [ -d "$gldriver_dest" ]; then
+        echo -e "${GREEN}✅ GLDriver bundle embedded successfully${NC}"
+        echo -e "   Location: $gldriver_dest"
+        
+        # Verify the embedded bundle has the binary
+        if [ -f "$gldriver_dest/Contents/MacOS/VMVirtIOGLEngine" ]; then
+            local size_bytes=$(wc -c < "$gldriver_dest/Contents/MacOS/VMVirtIOGLEngine" | tr -d ' ')
+            local size_kb=$((size_bytes / 1024))
+            echo -e "   Binary size: ${size_bytes} bytes (${size_kb} KB)"
+        else
+            echo -e "${RED}❌ GLDriver binary not found in embedded bundle${NC}"
+            return 1
+        fi
+    else
+        echo -e "${RED}❌ Failed to embed GLDriver bundle${NC}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Function to re-sign kext after structure fix
+re_sign_kext() {
     local config="$1"
     local sign_identity="$2"
-    local structure_was_fixed="$3"
     local kext_path="$BUILD_DIR/$config/$KEXT_NAME"
+    echo -e "${BLUE}🔐 Re-signing kext with embedded GLDriver...${NC}"
     
-    # Only re-sign if we have a signing identity and either:
-    # 1. The bundle structure was fixed (invalidating original signature)
-    # 2. The kext is not properly signed
     if [ -d "$kext_path" ] && [ ! -z "$sign_identity" ]; then
-        local needs_resigning=false
-        
-        if [ "$structure_was_fixed" = "true" ]; then
-            echo -e "${BLUE}🔐 Re-signing kext after structure correction...${NC}"
-            needs_resigning=true
+        if codesign --force --sign "$sign_identity" "$kext_path" >/dev/null 2>&1; then
+            echo -e "${GREEN}✅ Kext re-signed successfully${NC}"
         else
-            # Check if kext is properly signed
-            if ! codesign --verify --verbose "$kext_path" >/dev/null 2>&1; then
-                echo -e "${BLUE}🔐 Re-signing kext due to signature issues...${NC}"
-                needs_resigning=true
-            fi
-        fi
-        
-        if [ "$needs_resigning" = "true" ]; then
-            if codesign --force --sign "$sign_identity" "$kext_path" >/dev/null 2>&1; then
-                echo -e "${GREEN}✅ Kext re-signed successfully${NC}"
-            else
-                echo -e "${YELLOW}⚠️  Re-signing failed, but kext may still work${NC}"
-            fi
-        else
-            echo -e "${GREEN}✅ Kext signature is valid, no re-signing needed${NC}"
+            echo -e "${YELLOW}⚠️  Re-signing failed, but kext may still work${NC}"
         fi
     fi
 }
@@ -258,7 +308,6 @@ main() {
     # Parse command line arguments
     local config="Release"
     local force_unsigned=false
-    local snow_leopard_mode=false
     
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -270,20 +319,11 @@ main() {
                 force_unsigned=true
                 shift
                 ;;
-            --snow-leopard)
-                snow_leopard_mode=true
-                force_unsigned=true
-                echo -e "${BLUE}🐆 Snow Leopard compatibility mode enabled${NC}"
-                echo -e "   Code signing: DISABLED (incompatible with 10.6 kernel)"
-                echo -e "   Target: macOS 10.6+ x86_64"
-                shift
-                ;;
             --help|-h)
-                echo "Usage: $0 [--debug] [--unsigned] [--snow-leopard] [--help]"
-                echo "  --debug         Build Debug configuration"
-                echo "  --unsigned      Force unsigned build"
-                echo "  --snow-leopard  Build for Snow Leopard compatibility (disables code signing)"
-                echo "  --help          Show this help"
+                echo "Usage: $0 [--debug] [--unsigned] [--help]"
+                echo "  --debug     Build Debug configuration"
+                echo "  --unsigned  Force unsigned build"
+                echo "  --help      Show this help"
                 exit 0
                 ;;
             *)
@@ -317,17 +357,17 @@ main() {
     fi
     
     # Build the kernel extension
-    build_kext "$config" "$sign_identity" "$snow_leopard_mode"
+    build_kext "$config" "$sign_identity"
     
     # # Fix bundle structure if needed
-    # local structure_fixed="false"
-    # if fix_bundle_structure "$config"; then
-    #     structure_fixed="true"
-    # fi
+    # fix_bundle_structure "$config"
     
-    # Re-sign only when necessary
+    # Embed GLDriver bundle in kext (Snow Leopard architecture)
+    embed_gldriver_bundle "$config"
+    
+    # Re-sign after structure fix and bundle embedding
     if [ ! -z "$sign_identity" ]; then
-        re_sign_kext_if_needed "$config" "$sign_identity" "false"
+        re_sign_kext "$config" "$sign_identity"
     fi
     
     # Verify the build

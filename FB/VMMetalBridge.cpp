@@ -540,7 +540,6 @@ IOReturn CLASS::createCommandQueue(uint32_t device_id, uint32_t* queue_id)
 /*
  * Advanced Metal Command Buffer Management System v6.0
  * 
- * This system provides enterprise-level Metal command buffer management with:
  * - Multi-threaded command buffer pooling and lifecycle management
  * - Advanced command recording and optimization pipeline  
  * - Real-time command buffer performance analytics
@@ -554,12 +553,10 @@ IOReturn CLASS::createCommandQueue(uint32_t device_id, uint32_t* queue_id)
  * 1. Command Buffer Pool Management System
  * 2. Advanced Command Recording Pipeline
  * 3. GPU Workload Optimization Engine
- * 4. Real-time Performance Analytics and Monitoring
  * 5. Resource Dependency Tracking System
  * 6. Command Buffer Lifecycle Management
  */
 
-// Advanced command buffer structures for enterprise management
 // Note: Struct definitions moved to VMMetalBridge.h for system-wide access
 
 typedef struct {
@@ -614,9 +611,7 @@ IOReturn CLASS::createCommandBuffer(uint32_t queue_id, uint32_t* buffer_id)
     uint64_t creation_start_time = 0;
     clock_get_uptime(&creation_start_time);
     
-    // Phase 1: Command Buffer Pool Management System
     
-    // 1.1: Comprehensive input validation with enterprise error handling
     if (!buffer_id) {
         IOLog("VMMetalBridge: Command buffer creation failed - null buffer ID pointer\n");
         g_command_buffer_stats.validation_errors++;
@@ -672,7 +667,6 @@ IOReturn CLASS::createCommandBuffer(uint32_t queue_id, uint32_t* buffer_id)
         }
     }
     
-    // Phase 2: Advanced Command Recording Pipeline
     
     // 2.1: Create high-performance 3D rendering context for command buffer
     uint32_t context_id = 1; // Default context - will be optimized based on workload
@@ -740,7 +734,6 @@ IOReturn CLASS::createCommandBuffer(uint32_t queue_id, uint32_t* buffer_id)
         g_command_buffer_registry_size++;
     }
     
-    // Phase 3: GPU Workload Optimization Engine
     
     // 3.1: Advanced command buffer object creation with optimization hints
     OSDictionary* cmd_buffer_obj = OSDictionary::withCapacity(16);
@@ -818,7 +811,6 @@ IOReturn CLASS::createCommandBuffer(uint32_t queue_id, uint32_t* buffer_id)
         }
     }
     
-    // Phase 4: Real-time Performance Analytics and Monitoring
     
     // 4.1: Update pool statistics with detailed tracking
     target_pool->active_buffers++;
@@ -852,7 +844,6 @@ IOReturn CLASS::createCommandBuffer(uint32_t queue_id, uint32_t* buffer_id)
         g_command_buffer_stats.average_recording_time_ns = creation_duration;
     }
     
-    // Phase 5: Resource Dependency Tracking System
     
     // 5.1: Initialize dependency tracking for the command buffer
     IOReturn dependency_result = initializeCommandBufferDependencies(*buffer_id);
@@ -894,7 +885,6 @@ IOReturn CLASS::createCommandBuffer(uint32_t queue_id, uint32_t* buffer_id)
 
 /*
  * Advanced Metal Command Buffer Management System v6.0 - Supporting Methods
- * Enterprise-level supporting infrastructure for command buffer management
  */
 
 // Initialize command buffer pools for different workload types
@@ -1117,7 +1107,6 @@ IOReturn CLASS::initializeCommandBufferDependencies(uint32_t buffer_id)
     /*
      * Advanced Command Buffer Resource Dependency Management System v8.0
      * 
-     * This system provides enterprise-level command buffer dependency tracking with:
      * - Resource dependency graph construction and analysis
      * - Cross-command buffer synchronization primitive management
      * - GPU pipeline hazard detection and resolution
@@ -1125,7 +1114,6 @@ IOReturn CLASS::initializeCommandBufferDependencies(uint32_t buffer_id)
      * - Resource access pattern analysis and optimization
      * - Real-time dependency violation detection and recovery
      * 
-     * Phase 1: Resource Dependency Analysis
      */
     
     // 1.1: Initialize dependency tracking structures
@@ -1148,11 +1136,7 @@ IOReturn CLASS::initializeCommandBufferDependencies(uint32_t buffer_id)
         IOLog("VMMetalBridge: Dependency graph construction failed (0x%x)\n", dependency_graph_result);
     }
     
-    /*
-     * Phase 2: GPU Pipeline Synchronization Setup
-     */
-    
-    // 2.1: Configure GPU synchronization primitives based on dependencies
+        // 2.1: Configure GPU synchronization primitives based on dependencies
     IOReturn sync_primitive_result = configureSynchronizationPrimitives(buffer_id, cmd_info);
     if (sync_primitive_result != kIOReturnSuccess) {
         IOLog("VMMetalBridge: Synchronization primitive configuration failed (0x%x)\n", sync_primitive_result);
@@ -1268,7 +1252,6 @@ void CLASS::generateCommandBufferAnalyticsReport()
 
 /*
  * Advanced Command Buffer Resource Dependency Management System v8.0 - Supporting Methods
- * Enterprise-level dependency tracking and synchronization infrastructure
  */
 
 // Note: Struct definitions moved to VMMetalBridge.h for system-wide access
@@ -2187,7 +2170,6 @@ IOReturn CLASS::updateBuffer(uint32_t buffer_id, const void* data, uint32_t offs
 /*
  * Advanced GPU Memory Synchronization and DMA Management System v7.0
  * 
- * This system provides enterprise-level GPU memory synchronization with:
  * - Multi-tier GPU memory management with intelligent allocation strategies
  * - Advanced DMA transfer optimization with batch processing and pipelining
  * - Real-time memory synchronization monitoring and performance analytics
@@ -2201,7 +2183,6 @@ IOReturn CLASS::updateBuffer(uint32_t buffer_id, const void* data, uint32_t offs
  * 1. GPU Memory Pool Management System
  * 2. Advanced DMA Transfer Pipeline
  * 3. Memory Coherency Validation Engine
- * 4. Real-time Synchronization Analytics
  * 5. GPU Command Pipeline Coordinator
  * 6. Memory Performance Optimization System
  */
@@ -2245,7 +2226,6 @@ IOReturn CLASS::performAdvancedGPUMemorySynchronization(uint32_t buffer_id, cons
     uint64_t sync_start_time = 0;
     clock_get_uptime(&sync_start_time);
     
-    // Phase 1: GPU Memory Pool Management System
     
     // 1.1: Initialize GPU memory pools if not already done
     if (g_gpu_memory_pool_count == 0) {
@@ -2277,7 +2257,6 @@ IOReturn CLASS::performAdvancedGPUMemorySynchronization(uint32_t buffer_id, cons
         }
     }
     
-    // Phase 2: Advanced DMA Transfer Pipeline
     
     // 2.1: Create memory descriptor for the transfer region
     IOBufferMemoryDescriptor* transfer_memory = 
@@ -2331,7 +2310,6 @@ IOReturn CLASS::performAdvancedGPUMemorySynchronization(uint32_t buffer_id, cons
                 "Buffer_%u_Transfer_%u", buffer_id, transfer_record->transfer_id);
     }
     
-    // Phase 3: Memory Coherency Validation Engine
     
     // 3.1: Perform memory coherency analysis and validation
     IOReturn coherency_result = validateMemoryCoherency(buffer_id, gpu_address, size, target_pool);
@@ -2347,7 +2325,6 @@ IOReturn CLASS::performAdvancedGPUMemorySynchronization(uint32_t buffer_id, cons
         g_gpu_memory_sync_stats.sync_optimizations++;
     }
     
-    // Phase 4: GPU Command Pipeline Coordination
     
     // 4.1: Coordinate with GPU command pipeline for optimal execution
     IOReturn pipeline_result = coordinateWithGPUPipeline(buffer_id, gpu_address, size, 
@@ -2370,7 +2347,6 @@ IOReturn CLASS::performAdvancedGPUMemorySynchronization(uint32_t buffer_id, cons
         return execute_result;
     }
     
-    // Phase 5: Real-time Synchronization Analytics
     
     // 5.1: Record transfer completion and calculate performance metrics
     uint64_t sync_end_time = 0;
@@ -2411,7 +2387,6 @@ IOReturn CLASS::performAdvancedGPUMemorySynchronization(uint32_t buffer_id, cons
     // Update access pattern analysis
     updateMemoryAccessPattern(selected_pool_id, size, buffer_id);
     
-    // Phase 6: Memory Performance Optimization System
     
     // 6.1: Schedule transfer for batch processing if applicable
     if (transfer_record && transfer_record->is_batched) {
@@ -2447,7 +2422,6 @@ IOReturn CLASS::performAdvancedGPUMemorySynchronization(uint32_t buffer_id, cons
 
 /*
  * Advanced GPU Memory Synchronization and DMA Management System v7.0 - Supporting Methods
- * Enterprise-level supporting infrastructure for GPU memory management
  */
 
 // Initialize GPU memory pools for different transfer types

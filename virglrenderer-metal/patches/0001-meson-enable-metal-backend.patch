@@ -1,0 +1,109 @@
+diff --git a/meson.build b/meson.build
+index 193ba32b..3ea6de32 100644
+--- a/meson.build
++++ b/meson.build
+@@ -30,6 +30,8 @@ project(
+                       'warning_level=3', 'c_std=gnu11']
+ )
+ 
++fs = import('fs')
++
+ # To change only before doing a release:
+ #
+ # 1. Incrememnt the revision
+@@ -84,6 +86,9 @@ gbm_dep = not_found
+ thread_dep = dependency('threads')
+ epoxy_dep = dependency('epoxy', version: '>= 1.5.4')
+ m_dep = cc.find_library('m', required : false)
++metal_frameworks_dep = not_found
++metal_backend_dir = meson.current_source_dir() / 'virglrenderer-metal'
++have_metal_backend = false
+ 
+ conf_data = configuration_data()
+ conf_data.set('VERSION', meson.project_version())
+@@ -173,6 +178,23 @@ endif
+ with_host_windows = host_machine.system() == 'windows'
+ with_host_darwin = host_machine.system() == 'darwin'
+ 
++if with_host_darwin and fs.is_dir(metal_backend_dir)
++   have_metal_backend = true
++   metal_frameworks_dep = dependency('appleframeworks',
++      modules : ['Metal', 'Foundation', 'IOSurface', 'CoreVideo'],
++      required : true)
++   if not add_languages('objc')
++      error('Objective-C compiler is required for the Metal backend')
++   endif
++   objc = meson.get_compiler('objc')
++   add_project_arguments(objc.get_supported_arguments(warnings), language : 'objc')
++   add_project_arguments(objc.get_supported_arguments(flags), language : 'objc')
++   add_project_arguments(objc.get_supported_arguments(['-fobjc-arc']), language : 'objc')
++   conf_data.set('ENABLE_VREND_METAL', 1)
++else
++   conf_data.set('ENABLE_VREND_METAL', 0)
++endif
++
+ if thread_dep.found() and not with_host_windows
+   conf_data.set('HAVE_PTHREAD', 1)
+   if host_machine.system() != 'netbsd' and cc.has_function(
+@@ -414,10 +436,21 @@ configure_file(input : 'config.h.meson',
+                output : 'config.h',
+                configuration : conf_data)
+ 
+-add_project_arguments('-imacros', meson.current_build_dir() / 'config.h', language : 'c')
+-add_project_arguments('-DHAVE_CONFIG_H=1', language : 'c')
++config_languages = ['c']
++if have_metal_backend
++   config_languages += ['objc']
++endif
++
++foreach lang : config_languages
++   add_project_arguments('-imacros', meson.current_build_dir() / 'config.h', language : lang)
++   add_project_arguments('-DHAVE_CONFIG_H=1', language : lang)
++endforeach
+ 
+-inc_configuration = include_directories(['.', 'src'])
++inc_configuration_paths = ['.', 'src']
++if have_metal_backend
++   inc_configuration_paths += ['virglrenderer-metal']
++endif
++inc_configuration = include_directories(inc_configuration_paths)
+ 
+ with_fuzzer = get_option('fuzzer')
+ with_valgrind = get_option('valgrind')
+@@ -459,4 +492,5 @@ summary({'c_args': (' ').join(get_option('c_args')),
+         'fuzzer': with_fuzzer,
+         'tracing': with_tracing,
+         'unstable-apis': with_unstable_apis,
++        'metal-backend': have_metal_backend,
+         }, section: 'Configuration')
+diff --git a/src/meson.build b/src/meson.build
+index 5384b59c..352764fd 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -44,6 +44,15 @@ vrend_sources = [
+    'vrend/vrend_winsys.c',
+ ]
+ 
++if have_metal_backend
++   vrend_sources += files(
++      '../virglrenderer-metal/vrend_metal.m',
++      '../virglrenderer-metal/vrend_metal_command.m',
++      '../virglrenderer-metal/vrend_metal_pipeline.m',
++      '../virglrenderer-metal/vrend_metal_shader.m',
++   )
++endif
++
+ virglrenderer_sources = [
+    'virglrenderer.c',
+ ]
+@@ -146,6 +155,10 @@ virgl_depends = [
+    m_dep,
+ ]
+ 
++if have_metal_backend
++   virgl_depends += [metal_frameworks_dep]
++endif
++
+ if with_tracing == 'perfetto'
+    virgl_depends += [vperfetto_min_dep]
+ endif

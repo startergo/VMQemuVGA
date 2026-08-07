@@ -44,6 +44,8 @@
 		PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3023 /* VMIOSurfaceManager_Helpers.cpp */; };
 		PH3B12 /* VMVirtIOAGDC.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3024 /* VMVirtIOAGDC.cpp */; };
 		VMOGLBDBB16 /* VMOpenGLTranslator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = VMOGL65DCAB /* VMOpenGLTranslator.cpp */; };
+		VMVFBC001 /* VMVirtIOFramebufferClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = VMVFBC002 /* VMVirtIOFramebufferClient.cpp */; };
+		PH3B13 /* VMAccelSurfaceClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3026 /* VMAccelSurfaceClient.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -104,6 +106,10 @@
 		PH3025 /* VMVirtIOAGDC.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMVirtIOAGDC.h; sourceTree = "<group>"; };
 		VMOGL17F0FB /* VMOpenGLTranslator.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = VMOpenGLTranslator.h; sourceTree = "<group>"; };
 		VMOGL65DCAB /* VMOpenGLTranslator.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = VMOpenGLTranslator.cpp; sourceTree = "<group>"; };
+		VMVFBC002 /* VMVirtIOFramebufferClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMVirtIOFramebufferClient.cpp; sourceTree = "<group>"; };
+		VMVFBC003 /* VMVirtIOFramebufferClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMVirtIOFramebufferClient.h; sourceTree = "<group>"; };
+		PH3026 /* VMAccelSurfaceClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMAccelSurfaceClient.cpp; sourceTree = "<group>"; };
+		PH3027 /* VMAccelSurfaceClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMAccelSurfaceClient.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -152,6 +158,8 @@
 				PH3022 /* VMCommandBuffer.cpp */,
 				PH3023 /* VMIOSurfaceManager_Helpers.cpp */,
 				PH3024 /* VMVirtIOAGDC.cpp */,
+				VMVFBC002 /* VMVirtIOFramebufferClient.cpp */,
+				PH3026 /* VMAccelSurfaceClient.cpp */,
 			);
 			name = Source;
 			sourceTree = "<group>";
@@ -206,6 +214,8 @@
 				PH3015 /* VMCommandBuffer.h */,
 				PH3017 /* virtio_gpu.h */,
 				PH3025 /* VMVirtIOAGDC.h */,
+				VMVFBC003 /* VMVirtIOFramebufferClient.h */,
+				PH3027 /* VMAccelSurfaceClient.h */,
 			);
 			name = Headers;
 			sourceTree = "<group>";
@@ -283,8 +293,10 @@
 				PH3B10 /* VMCommandBuffer.cpp in Sources */,
 				PH3B11 /* VMIOSurfaceManager_Helpers.cpp in Sources */,
 				PH3B12 /* VMVirtIOAGDC.cpp in Sources */,
-							VMOGLBDBB16 /* VMOpenGLTranslator.cpp in Sources */,
-);
+				VMOGLBDBB16 /* VMOpenGLTranslator.cpp in Sources */,
+				VMVFBC001 /* VMVirtIOFramebufferClient.cpp in Sources */,
+				PH3B13 /* VMAccelSurfaceClient.cpp in Sources */,
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
@@ -349,12 +361,12 @@
 		1DEB91DF08733DB10010E9CD /* Release */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = E52B43CA10B5B37F002470B4 /* VMQemuVGA.xcconfig */;
-			buildSettings = {
-				ARCHS = x86_64;
-				COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
-				CURRENT_PROJECT_VERSION = 8.0.0d82;
-				DYLIB_COMPATIBILITY_VERSION = 8.0.0d82;
-				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
+		buildSettings = {
+			ARCHS = x86_64;
+			COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
+			CURRENT_PROJECT_VERSION = 8.0.0d105;
+			DYLIB_COMPATIBILITY_VERSION = 8.0.0d105;
+			DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
 				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
 				MACOSX_DEPLOYMENT_TARGET = 10.6;
 				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
@@ -403,17 +415,17 @@
 		1DEB91E008733DB10010E9CD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = E52B43CA10B5B37F002470B4 /* VMQemuVGA.xcconfig */;
-			buildSettings = {
-				ARCHS = x86_64;
-				COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
-				CURRENT_PROJECT_VERSION = 8.0.0d82;
-				DYLIB_COMPATIBILITY_VERSION = 8.0.0d82;
-				DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
-				INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
-				MACOSX_DEPLOYMENT_TARGET = 10.6;
-				MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
-				SDKROOT = "";
-				STRIPFLAGS = "";
+		buildSettings = {
+			ARCHS = x86_64;
+			COPYRIGHT_NOTICE = "Copyright 2009-2011 Zenith432 2012 rafirafi";
+			CURRENT_PROJECT_VERSION = 8.0.0d105;
+			DYLIB_COMPATIBILITY_VERSION = 8.0.0d105;
+			DYLIB_CURRENT_VERSION = "$(CURRENT_PROJECT_VERSION)";
+			INSTALL_PATH = "$(SYSTEM_LIBRARY_DIR)/Extensions";
+			MACOSX_DEPLOYMENT_TARGET = 10.6;
+			MODULE_VERSION = "$(CURRENT_PROJECT_VERSION)";
+			SDKROOT = "";
+			STRIPFLAGS = "";
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_GENERATE_DEBUGGING_SYMBOLS = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;

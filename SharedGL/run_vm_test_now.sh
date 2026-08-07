@@ -1,0 +1,20 @@
+#!/bin/bash
+# Quick test runner - assumes SSH tunnel and Metal server already running
+
+echo "=========================================="
+echo "  VM FBO Test - Quick Run"
+echo "=========================================="
+echo ""
+echo "Prerequisites Check:"
+echo "  ✅ SSH tunnel already running (PID $(pgrep -f '28123:localhost:28123'))"
+echo "  ✅ Metal server already running (PID $(pgrep metal_server))"
+echo "  ✅ You're already SSH'd into VM"
+echo ""
+echo "Now run this command in your VM SSH session:"
+echo ""
+echo "  ./vm_fbo_test"
+echo ""
+echo "You should see:"
+echo "  - VM: Connection messages and FBO creation steps"
+echo "  - Host Metal server window: Colored triangle rendering"
+echo ""

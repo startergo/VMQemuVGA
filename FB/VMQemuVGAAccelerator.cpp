@@ -1,11 +1,13 @@
 #include "VMQemuVGAAccelerator.h"
 #include "VMQemuVGA.h"
+#include "VMVirtIOFramebuffer.h"
 #include "VMVirtIOGPU.h"
 #include "VMShaderManager.h"
 #include "VMTextureManager.h"
 #include "VMCommandBuffer.h"
 #include "VMMetalPlugin.h"
 #include "VMCGLContext.h"
+#include "VMAccelSurfaceClient.h"
 #include "virgl_protocol.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -86,16 +88,32 @@ bool CLASS::start(IOService* provider)
     if (!super::start(provider))
         return false;
     
-    m_framebuffer = OSDynamicCast(VMQemuVGA, provider);
+    // Support both VMQemuVGA (QXL) and VMVirtIOFramebuffer (VirtIO GPU)
+    m_framebuffer = OSDynamicCast(IOFramebuffer, provider);
     if (!m_framebuffer) {
-        IOLog("VMQemuVGAAccelerator: Provider is not VMQemuVGA\n");
+        IOLog("VMQemuVGAAccelerator: Provider is not IOFramebuffer\n");
         return false;
     }
     
-    m_gpu_device = m_framebuffer->getGPUDevice();
-    if (!m_gpu_device) {
-        IOLog("VMQemuVGAAccelerator: No GPU device available\n");
-        return false;
+    // Try to get GPU device - both VMQemuVGA and VMVirtIOFramebuffer now have getGPUDevice()
+    VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, provider);
+    VMVirtIOFramebuffer* virtio_fb = OSDynamicCast(VMVirtIOFramebuffer, provider);
+    
+    if (qxl_fb) {
+        IOLog("VMQemuVGAAccelerator: Attached to VMQemuVGA (QXL) framebuffer\n");
+        m_gpu_device = qxl_fb->getGPUDevice();
+        if (!m_gpu_device) {
+            IOLog("VMQemuVGAAccelerator: WARNING - QXL framebuffer has no GPU device\n");
+        }
+    } else if (virtio_fb) {
+        IOLog("VMQemuVGAAccelerator: Attached to VMVirtIOFramebuffer (VirtIO GPU)\n");
+        m_gpu_device = virtio_fb->getGPUDevice();
+        if (!m_gpu_device) {
+            IOLog("VMQemuVGAAccelerator: WARNING - VirtIO framebuffer has no GPU device\n");
+        }
+    } else {
+        IOLog("VMQemuVGAAccelerator: ERROR - Unknown framebuffer type\n");
+        m_gpu_device = nullptr;
     }
     
     // Create workloop and command gate
@@ -113,23 +131,33 @@ bool CLASS::start(IOService* provider)
     
     m_workloop->addEventSource(m_command_gate);
     
-    // Initialize advanced 3D managers
-    m_shader_manager = VMShaderManager::withAccelerator(this);
-    if (!m_shader_manager) {
-        IOLog("VMQemuVGAAccelerator: Failed to create shader manager\n");
-        return false;
-    }
-    
-    m_texture_manager = VMTextureManager::withAccelerator(this);
-    if (!m_texture_manager) {
-        IOLog("VMQemuVGAAccelerator: Failed to create texture manager\n");
-        return false;
-    }
-    
-    m_command_pool = VMCommandBufferPool::withAccelerator(this, 0, 16);
-    if (!m_command_pool) {
-        IOLog("VMQemuVGAAccelerator: Failed to create command buffer pool\n");
-        return false;
+    // Initialize advanced 3D managers (only for QXL/Hyper-V DDA mode)
+    // VirtIO GPU handles rendering internally through VirtIOGPU helper
+    if (m_gpu_device) {
+        m_shader_manager = VMShaderManager::withAccelerator(this);
+        if (!m_shader_manager) {
+            IOLog("VMQemuVGAAccelerator: Failed to create shader manager\n");
+            return false;
+        }
+        
+        m_texture_manager = VMTextureManager::withAccelerator(this);
+        if (!m_texture_manager) {
+            IOLog("VMQemuVGAAccelerator: Failed to create texture manager\n");
+            return false;
+        }
+        
+        m_command_pool = VMCommandBufferPool::withAccelerator(this, 0, 16);
+        if (!m_command_pool) {
+            IOLog("VMQemuVGAAccelerator: Failed to create command buffer pool\n");
+            return false;
+        }
+        
+        IOLog("VMQemuVGAAccelerator: 3D managers initialized for QXL/Hyper-V DDA mode\n");
+    } else {
+        IOLog("VMQemuVGAAccelerator: VirtIO GPU mode - skipping QXL-specific managers\n");
+        m_shader_manager = nullptr;
+        m_texture_manager = nullptr;
+        m_command_pool = nullptr;
     }
     
     // d65: Create and start Metal plugin for WindowServer compatibility (macOS 10.11+)
@@ -161,25 +189,15 @@ bool CLASS::start(IOService* provider)
     
     // Set device properties
     setProperty("IOClass", "VMQemuVGAAccelerator");
-    setProperty("3D Hardware Acceleration", true);
-    setProperty("Max Contexts", 16U, 32);
-    setProperty("Max Surfaces", 64U, 32);
-    setProperty("Supports Shaders", supportsShaders());
-    setProperty("Max Texture Size", getMaxTextureSize(), 32);
-    setProperty("Shader Manager", "Enabled");
-    setProperty("Texture Manager", "Enabled");
-    setProperty("Command Buffer Pool", "Enabled");
-    setProperty("Advanced Features", "Phase 2 Complete");
     
     // CRITICAL: CGL OpenGL Renderer Discovery Properties (Snow Leopard + Catalina)
     // These properties tell CGL that we support hardware-accelerated OpenGL rendering
     // Without these, CGL reports "accelerated=0" even though the accelerator is registered
     
     // OpenGL renderer identification - tells CGL this is a real OpenGL accelerator
-    // NOTE: "GLEngine" is Apple's software renderer. Hardware acceleration would require
-    // a custom OpenGL bundle (ATIRadeonGLDriver, GeForceGLDriver, etc.) which is extremely
-    // complex to implement. Current setup provides working GUI with software OpenGL.
-    setProperty("IOGLBundleName", "GLEngine");           // Software renderer (functional)
+    // NOTE: Using our custom VMVirtIOGLEngine bundle for hardware-accelerated rendering
+    // via VirtIO GPU. This replaces the software "GLEngine" renderer.
+    setProperty("IOGLBundleName", "VMVirtIOGLEngine");   // Hardware renderer (VirtIO GPU)
     setProperty("IOGLContext", "IOAcceleratorContext");  // Context type for OpenGL
     setProperty("IOOpenGLRenderer", kOSBooleanTrue);     // Mark as OpenGL renderer
     
@@ -222,7 +240,19 @@ bool CLASS::start(IOService* provider)
         accelTypes->release();
     }
     
+    // CRITICAL: Set IOAccelIndex and IOAccelRevision for CGL discovery
+    // CGL queries IORegistry for IOAccelerator services and uses IOAccelIndex to identify them
+    setProperty("IOAccelIndex", (uint32_t)0, 32);      // Primary accelerator index
+    setProperty("IOAccelRevision", (uint32_t)2, 32);   // Accelerator API revision
+    
     IOLog("VMQemuVGAAccelerator: Started successfully with OpenGL renderer properties\n");
+    IOLog("VMQemuVGAAccelerator: IOAccelIndex=0, IOAccelRevision=2, RendererID=0x00024600\n");
+    
+    // CRITICAL: Call registerService() to make this accelerator discoverable by CGL
+    // Without this, CGL won't query our properties and can't find the renderer
+    registerService();
+    IOLog("VMQemuVGAAccelerator: Registered service for CGL discovery\n");
+    
     return true;
 }
 
@@ -276,14 +306,52 @@ IOReturn CLASS::newUserClient(task_t owningTask, void* securityID,
     IOReturn ret = kIOReturnSuccess;
     IOUserClient* client = nullptr;
     
-    // Type 0 = Standard 3D user client
+    // Type 0 = kIOAccelSurfaceClientType (WindowServer 2D surface operations)
     // Type 1 = CGL (Core Graphics Layer) context user client
-    if (type > 1) {
+    // Type 2 = Standard 3D acceleration user client (VMQemuVGA3DUserClient)
+    // Type 4 = VMVirtIOGPUUserClient (VirtIO GPU commands)
+    if (type > 4 || type == 3) {
         return kIOReturnBadArgument;
     }
     
+    // Type 0 - kIOAccelSurfaceClientType for WindowServer 2D operations
+    // TEMPORARILY DISABLED: Surface client implementation incomplete - causes WindowServer crashes
+    // WindowServer will fall back to software rendering (which works perfectly)
+    if (type == 0) {
+        IOLog("VMQemuVGAAccelerator: VMAccelSurfaceClient disabled - WindowServer will use software rendering\n");
+        IOLog("VMQemuVGAAccelerator: (Surface lock operations need proper memory mapping implementation)\n");
+        return kIOReturnUnsupported;
+        
+        /* ORIGINAL CODE - DISABLED UNTIL MEMORY MAPPING IS IMPLEMENTED:
+        VMAccelSurfaceClient* surface_client = VMAccelSurfaceClient::withTask(owningTask);
+        if (!surface_client) {
+            return kIOReturnNoMemory;
+        }
+        
+        if (!surface_client->initWithTask(owningTask, securityID, type, nullptr)) {
+            surface_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!surface_client->attach(this)) {
+            surface_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!surface_client->start(this)) {
+            surface_client->detach(this);
+            surface_client->release();
+            return kIOReturnError;
+        }
+        
+        *handler = surface_client;
+        IOLog("VMQemuVGAAccelerator: ✅ VMAccelSurfaceClient created successfully\n");
+        return kIOReturnSuccess;
+        */
+    }
+    
+    // Type 1 - CGL context user client
     if (type == 1) {
-        // CGL is requesting an OpenGL context - return CGL user client
         IOLog("VMQemuVGAAccelerator: Creating CGL context user client for task %p\n", owningTask);
         
         VMCGLContext* cgl_client = new VMCGLContext;
@@ -312,7 +380,37 @@ IOReturn CLASS::newUserClient(task_t owningTask, void* securityID,
         return kIOReturnSuccess;
     }
     
-    // Type 0 - Standard 3D acceleration user client
+    // Type 4 - VMVirtIOGPUUserClient for VirtIO GPU commands
+    if (type == 4) {
+        IOLog("VMQemuVGAAccelerator: Creating VMVirtIOGPUUserClient\n");
+        
+        VMVirtIOGPUUserClient* virtio_client = OSTypeAlloc(VMVirtIOGPUUserClient);
+        if (!virtio_client) {
+            return kIOReturnNoMemory;
+        }
+        
+        if (!virtio_client->initWithTask(owningTask, securityID, type, nullptr)) {
+            virtio_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!virtio_client->attach(this)) {
+            virtio_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!virtio_client->start(this)) {
+            virtio_client->detach(this);
+            virtio_client->release();
+            return kIOReturnError;
+        }
+        
+        *handler = virtio_client;
+        IOLog("VMQemuVGAAccelerator: ✅ VMVirtIOGPUUserClient created successfully\n");
+        return kIOReturnSuccess;
+    }
+    
+    // Type 2 - Standard 3D acceleration user client (VMQemuVGA3DUserClient)
     VMQemuVGA3DUserClient* accel_client = VMQemuVGA3DUserClient::withTask(owningTask);
     if (!accel_client) {
         ret = kIOReturnNoMemory;
@@ -683,7 +781,8 @@ IOReturn CLASS::present3DSurface(uint32_t context_id, uint32_t surface_id)
                     uint32_t vram_size = static_cast<uint32_t>(vram->getLength());
                     
                     // For Hyper-V DDA, calculate proper offset based on current display mode
-                    QemuVGADevice* qemu_device = m_framebuffer->getDevice();
+                    VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                    QemuVGADevice* qemu_device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                     if (qemu_device) {
                         uint32_t current_width = qemu_device->getCurrentWidth();
                         uint32_t current_height = qemu_device->getCurrentHeight();
@@ -1053,7 +1152,8 @@ IOReturn CLASS::beginRenderPass(uint32_t context_id, uint32_t framebuffer_id)
         // Get VRAM information for framebuffer setup
         IODeviceMemory* vram = m_framebuffer->getVRAMRange();
         if (vram) {
-            QemuVGADevice* qemu_device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* qemu_device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (qemu_device) {
                 uint32_t fb_width = qemu_device->getCurrentWidth();
                 uint32_t fb_height = qemu_device->getCurrentHeight();
@@ -1182,7 +1282,8 @@ IOReturn CLASS::beginRenderPass(uint32_t context_id, uint32_t framebuffer_id)
         
         // Try to get actual framebuffer dimensions
         if (m_framebuffer) {
-            QemuVGADevice* device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (device) {
                 software_state.viewport[2] = static_cast<float>(device->getCurrentWidth());
                 software_state.viewport[3] = static_cast<float>(device->getCurrentHeight());
@@ -1290,7 +1391,8 @@ IOReturn CLASS::endRenderPass(uint32_t context_id)
             
             // Get actual display dimensions if available
             if (m_framebuffer) {
-                QemuVGADevice* device = m_framebuffer->getDevice();
+                VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                 if (device) {
                     gpu_finalize.present_cmd.r.width = static_cast<uint32_t>(device->getCurrentWidth());
                     gpu_finalize.present_cmd.r.height = static_cast<uint32_t>(device->getCurrentHeight());
@@ -1326,7 +1428,8 @@ IOReturn CLASS::endRenderPass(uint32_t context_id)
         // Get VRAM for final flush operations
         IODeviceMemory* vram = m_framebuffer->getVRAMRange();
         if (vram) {
-            QemuVGADevice* qemu_device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* qemu_device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (qemu_device) {
                 uint32_t fb_width = qemu_device->getCurrentWidth();
                 uint32_t fb_height = qemu_device->getCurrentHeight();
@@ -2439,7 +2542,8 @@ IOReturn CLASS::enableDepthTest(uint32_t context_id, bool enable)
             uint32_t depth_height = 768;
             
             if (m_framebuffer) {
-                QemuVGADevice* device = m_framebuffer->getDevice();
+                VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                 if (device) {
                     depth_width = device->getCurrentWidth();
                     depth_height = device->getCurrentHeight();
@@ -2565,7 +2669,8 @@ IOReturn CLASS::clearColorBuffer(uint32_t context_id, float r, float g, float b,
             if (vram_map) {
                 void* vram_ptr = (void*)vram_map->getVirtualAddress();
                 if (vram_ptr) {
-                    QemuVGADevice* device = m_framebuffer->getDevice();
+                    VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                    QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                     if (device) {
                         uint32_t fb_width = device->getCurrentWidth();
                         uint32_t fb_height = device->getCurrentHeight();
@@ -2675,7 +2780,8 @@ IOReturn CLASS::clearDepthBuffer(uint32_t context_id, float depth)
         
         // Try to get actual framebuffer dimensions
         if (m_framebuffer) {
-            QemuVGADevice* device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (device) {
                 soft_clear.depth_buffer_width = device->getCurrentWidth();
                 soft_clear.depth_buffer_height = device->getCurrentHeight();
@@ -2786,8 +2892,6 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     uint64_t freed_memory = 0;
     uint64_t collection_start_time = getCurrentTimestamp();
     
-    // Phase 1: Mark unused textures by checking reference counts
-    IOLog("VMQemuVGAAccelerator: Phase 1 - Scanning for unreferenced textures\n");
     
     struct {
         uint32_t total_textures_scanned;
@@ -3073,12 +3177,7 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     uint64_t phase1_end = getCurrentTimestamp();
     phase1_stats.scan_time_microseconds = convertToMicroseconds(phase1_end - phase1_start);
     
-    IOLog("VMQemuVGAAccelerator: Phase 1 complete - Scanned %d textures, found %d unreferenced (contexts: %d, time: %llu μs)\n",
-          phase1_stats.total_textures_scanned, phase1_stats.unreferenced_textures, 
-          phase1_stats.active_contexts_checked, phase1_stats.scan_time_microseconds);
     
-    // Phase 2: Free textures that exceed memory threshold or are truly unused
-    IOLog("VMQemuVGAAccelerator: Phase 2 - Freeing unused textures based on memory pressure\n");
     
     struct {
         uint32_t memory_threshold_kb;
@@ -3312,13 +3411,9 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     uint64_t phase2_end = getCurrentTimestamp();
     phase2_stats.free_time_microseconds = convertToMicroseconds(phase2_end - phase2_start);
     
-    IOLog("VMQemuVGAAccelerator: Phase 2 complete - Freed %d textures (%llu KB total, time: %llu μs)\n",
-          freed_count, phase2_stats.total_memory_freed / 1024, phase2_stats.free_time_microseconds);
     IOLog("VMQemuVGAAccelerator: Breakdown - Memory pressure: %d, Age-based: %d, Size-based: %d\n",
           phase2_stats.textures_freed_by_memory, phase2_stats.textures_freed_by_age, phase2_stats.textures_freed_by_size);
     
-    // Phase 3: Defragmentation and consolidation
-    IOLog("VMQemuVGAAccelerator: Phase 3 - Memory defragmentation and statistics update\n");
     
     struct {
         uint32_t contexts_cleaned;
@@ -3389,8 +3484,6 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     // Final statistics and reporting
     uint64_t total_gc_time = convertToMicroseconds(getCurrentTimestamp() - collection_start_time);
     
-    IOLog("VMQemuVGAAccelerator: Phase 3 complete - Contexts cleaned: %d, Empty removed: %d (time: %llu μs)\n",
-          phase3_stats.contexts_cleaned, phase3_stats.empty_contexts_removed, phase3_stats.defrag_time_microseconds);
     
     IOLog("VMQemuVGAAccelerator: Texture garbage collection COMPLETE\n");
     IOLog("VMQemuVGAAccelerator: =====================================================\n");
@@ -4107,5 +4200,177 @@ IOReturn VMQemuVGAAccelerator::synchronize()
     
     // In a real implementation, this would wait for all GPU operations to complete
     // For now, just return success to satisfy the linker
+    return kIOReturnSuccess;
+}
+
+//==============================================================================
+// WindowServer 2D Acceleration Implementation
+// These methods provide REAL hardware acceleration for desktop operations
+//==============================================================================
+
+IOReturn CLASS::blitSurfaceAccelerated(IOAccelSurfaceInformation* src,
+                                      IOAccelSurfaceInformation* dest,
+                                      IOAccelBounds* srcRect,
+                                      IOAccelBounds* destRect,
+                                      IOOptionBits options)
+{
+    if (!src || !dest || !srcRect || !destRect) {
+        IOLog("VMQemuVGAAccelerator::blitSurfaceAccelerated: Invalid parameters\n");
+        return kIOReturnBadArgument;
+    }
+    
+    IOLog("VMQemuVGAAccelerator::blitSurfaceAccelerated: Blit %dx%d from (%d,%d) to (%d,%d)\n",
+          srcRect->w, srcRect->h, srcRect->x, srcRect->y, destRect->x, destRect->y);
+    
+    // Check device type: VirtIO GPU (real hardware) vs QXL/Mock (software)
+    if (m_gpu_device) {
+        if (!m_gpu_device->isMockDevice()) {
+            // CASE 1: Real VirtIO GPU - Use hardware acceleration
+            IOLog("VMQemuVGAAccelerator: Using VirtIO GPU hardware blit\n");
+            
+            // VirtIO GPU can accelerate blits using TRANSFER_TO_HOST_2D
+            // This offloads the copy to the host GPU, much faster than CPU memcpy
+            IOReturn result = m_gpu_device->blitRect(
+                srcRect->x, srcRect->y,
+                destRect->x, destRect->y,
+                srcRect->w, srcRect->h,
+                src->rowBytes, dest->rowBytes
+            );
+            
+            if (result == kIOReturnSuccess) {
+                m_draw_calls++;
+                IOLog("VMQemuVGAAccelerator: VirtIO hardware blit successful\n");
+                return kIOReturnSuccess;
+            }
+            
+            IOLog("VMQemuVGAAccelerator: VirtIO hardware blit failed (0x%x), falling back to CPU\n", result);
+            // Fall through to CPU blit
+        } else {
+            // CASE 2: Mock VirtIO device (QXL hardware detected)
+            IOLog("VMQemuVGAAccelerator: Mock VirtIO device, using CPU blit for QXL\n");
+            // Fall through to CPU blit
+        }
+    } else {
+        // CASE 3: No GPU device (pure QXL mode)
+        IOLog("VMQemuVGAAccelerator: No GPU device, using CPU blit for QXL\n");
+        // Fall through to CPU blit
+    }
+    
+    // CPU-based blit (used for QXL or as VirtIO fallback)
+    // Calculate source and dest pointers
+    uint8_t* srcPtr = (uint8_t*)src->address[0] + (srcRect->y * src->rowBytes) + (srcRect->x * 4);
+    uint8_t* destPtr = (uint8_t*)dest->address[0] + (destRect->y * dest->rowBytes) + (destRect->x * 4);
+    
+    // Copy line by line
+    uint32_t bytesPerLine = srcRect->w * 4; // Assuming 32bpp BGRA/RGBA
+    for (int y = 0; y < srcRect->h; y++) {
+        memcpy(destPtr, srcPtr, bytesPerLine);
+        srcPtr += src->rowBytes;
+        destPtr += dest->rowBytes;
+    }
+    
+    m_draw_calls++;
+    IOLog("VMQemuVGAAccelerator: CPU blit completed\n");
+    return kIOReturnSuccess;
+}
+
+IOReturn CLASS::fillSurfaceAccelerated(IOAccelSurfaceInformation* surface,
+                                      IOAccelBounds* rect,
+                                      uint32_t color,
+                                      IOOptionBits options)
+{
+    if (!surface || !rect) {
+        IOLog("VMQemuVGAAccelerator::fillSurfaceAccelerated: Invalid parameters\n");
+        return kIOReturnBadArgument;
+    }
+    
+    IOLog("VMQemuVGAAccelerator::fillSurfaceAccelerated: Fill %dx%d at (%d,%d) with color 0x%08x\n",
+          rect->w, rect->h, rect->x, rect->y, color);
+    
+    // Check device type: VirtIO GPU (real hardware) vs QXL/Mock (software)
+    if (m_gpu_device) {
+        if (!m_gpu_device->isMockDevice()) {
+            // CASE 1: Real VirtIO GPU - Use hardware acceleration
+            IOLog("VMQemuVGAAccelerator: Using VirtIO GPU hardware fill\n");
+            
+            // VirtIO GPU can accelerate fills using GPU memset operations
+            // The host GPU fills the region, much faster than CPU loops
+            IOReturn result = m_gpu_device->fillRect(
+                rect->x, rect->y,
+                rect->w, rect->h,
+                color
+            );
+            
+            if (result == kIOReturnSuccess) {
+                m_draw_calls++;
+                IOLog("VMQemuVGAAccelerator: VirtIO hardware fill successful\n");
+                return kIOReturnSuccess;
+            }
+            
+            IOLog("VMQemuVGAAccelerator: VirtIO hardware fill failed (0x%x), falling back to CPU\n", result);
+            // Fall through to CPU fill
+        } else {
+            // CASE 2: Mock VirtIO device (QXL hardware detected)
+            IOLog("VMQemuVGAAccelerator: Mock VirtIO device, using CPU fill for QXL\n");
+            // Fall through to CPU fill
+        }
+    } else {
+        // CASE 3: No GPU device (pure QXL mode)
+        IOLog("VMQemuVGAAccelerator: No GPU device, using CPU fill for QXL\n");
+        // Fall through to CPU fill
+    }
+    
+    // CPU-based fill (used for QXL or as VirtIO fallback)
+    // Calculate dest pointer
+    uint8_t* destPtr = (uint8_t*)surface->address[0] + (rect->y * surface->rowBytes) + (rect->x * 4);
+    
+    // Fill line by line using fast 32-bit writes
+    for (int y = 0; y < rect->h; y++) {
+        uint32_t* pixels = (uint32_t*)destPtr;
+        for (int x = 0; x < rect->w; x++) {
+            pixels[x] = color;
+        }
+        destPtr += surface->rowBytes;
+    }
+    
+    m_draw_calls++;
+    IOLog("VMQemuVGAAccelerator: CPU fill completed\n");
+    return kIOReturnSuccess;
+}
+
+IOReturn CLASS::synchronizeAccelerator(IOOptionBits options)
+{
+    IOLog("VMQemuVGAAccelerator::synchronizeAccelerator: Synchronizing accelerator operations\n");
+    
+    // Check device type: VirtIO GPU (async) vs QXL/Mock (sync)
+    if (m_gpu_device) {
+        if (!m_gpu_device->isMockDevice()) {
+            // CASE 1: Real VirtIO GPU - Flush asynchronous command queue
+            IOLog("VMQemuVGAAccelerator: Flushing VirtIO GPU command queue\n");
+            
+            // Flush any pending VirtIO GPU commands to hardware
+            IOReturn result = m_gpu_device->flushCommands();
+            if (result != kIOReturnSuccess) {
+                IOLog("VMQemuVGAAccelerator: VirtIO GPU flush failed (0x%x)\n", result);
+                return result;
+            }
+            
+            // Wait for GPU to complete all operations
+            result = m_gpu_device->waitForIdle();
+            if (result != kIOReturnSuccess) {
+                IOLog("VMQemuVGAAccelerator: VirtIO GPU wait failed (0x%x)\n", result);
+                return result;
+            }
+            
+            IOLog("VMQemuVGAAccelerator: VirtIO GPU synchronized successfully\n");
+        } else {
+            // CASE 2: Mock VirtIO device (QXL) - CPU operations are synchronous
+            IOLog("VMQemuVGAAccelerator: Mock device, CPU operations already synchronous\n");
+        }
+    } else {
+        // CASE 3: No GPU device (pure QXL) - CPU operations are synchronous
+        IOLog("VMQemuVGAAccelerator: QXL mode, CPU operations already synchronous\n");
+    }
+    
     return kIOReturnSuccess;
 }

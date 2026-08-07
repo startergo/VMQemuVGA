@@ -61,7 +61,6 @@ static int kernel_simple_sscanf(const char* str, const char* format, char* arg1,
         .parse_depth = 0
     };
     
-    // Phase 1: Format String Analysis and Validation
     // Comprehensive format string preprocessing to identify all format specifiers
     const char* format_analysis_ptr = format;
     uint32_t format_validation_score = 0;
@@ -170,7 +169,6 @@ static int kernel_simple_sscanf(const char* str, const char* format, char* arg1,
         return 0; // Unsupported format pattern
     }
     
-    // Phase 2: Advanced Input String Preprocessing and Tokenization
     // Comprehensive input string analysis and whitespace normalization
     
     struct InputPreprocessing {
@@ -234,7 +232,6 @@ static int kernel_simple_sscanf(const char* str, const char* format, char* arg1,
              input_preprocessing.special_character_tokens,
              input_preprocessing.internal_whitespace_sequences);
     
-    // Phase 3: Advanced Parsing State Machine with Format-Specific Processing
     // Sophisticated parsing engine with support for multiple format patterns
     
     parse_state.current_input_ptr = str;
@@ -435,7 +432,6 @@ static int kernel_simple_sscanf(const char* str, const char* format, char* arg1,
         parse_state.current_input_ptr++;
     }
     
-    // Phase 4: Final Validation and Result Compilation
     // Comprehensive parsing result analysis and quality assessment
     
     struct ParsingResults {
@@ -750,8 +746,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             } resource_binding = {0};
         } compilation_pipeline = {0};
         
-        // Phase 1: Advanced Source Code Preprocessing and Analysis
-        IOLog("VMShaderManager: Phase 1 - Advanced source preprocessing and analysis\n");
         
         uint64_t analysis_start = mach_absolute_time();
         const char* source_text = (const char*)source_code;
@@ -901,8 +895,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         }
         IOLog("    Analysis Time: %.2f ms\n", compilation_pipeline.source_analysis.syntax_analysis_time_ms);
         
-        // Phase 2: Language-Specific Compilation and Cross-Language Translation
-        IOLog("VMShaderManager: Phase 2 - Language-specific compilation and cross-translation\n");
         
         uint64_t cross_compile_start = mach_absolute_time();
         
@@ -951,7 +943,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             // Advanced HLSL Compilation Process - Comprehensive Shader Translation Pipeline
             IOLog("    Initiating advanced HLSL compilation and cross-platform translation\n");
             
-            // Phase 1: HLSL Semantic Analysis and Preprocessing
             struct HLSLSemanticAnalysis {
                 uint32_t vertex_input_semantics;      // POSITION, NORMAL, TEXCOORD, etc.
                 uint32_t vertex_output_semantics;     // SV_POSITION, TEXCOORD, COLOR
@@ -965,7 +956,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                 bool uses_render_target_index;        // SV_RenderTargetArrayIndex
             } semantic_analysis = {0};
             
-            // Phase 2: HLSL Resource Binding Analysis
             struct HLSLResourceBinding {
                 uint32_t constant_buffer_registers;   // register(b#) bindings
                 uint32_t texture_registers;           // register(t#) bindings
@@ -978,7 +968,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                 bool uses_byte_address_buffers;       // ByteAddressBuffer usage
             } resource_binding = {0};
             
-            // Phase 3: HLSL Language Feature Detection
             struct HLSLLanguageFeatures {
                 bool uses_geometry_shaders;           // [maxvertexcount] attribute
                 bool uses_tessellation;               // Hull/Domain shader features
@@ -1081,7 +1070,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                   language_features.uses_compute_shaders ? "YES" : "NO",
                   language_features.uses_wave_intrinsics ? "YES" : "NO");
             
-            // Phase 4: Generate appropriate target header based on analysis
             char hlsl_target_header[1024] = {0};
             if (target_language == VM_SHADER_LANG_GLSL) {
                 // Determine GLSL version based on HLSL features
@@ -1136,7 +1124,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             strlcpy(compiled_source, hlsl_target_header, sizeof(compiled_source));
             size_t header_len = strlen(hlsl_target_header);
             
-            // Phase 5: Advanced HLSL-to-GLSL Translation Engine
             IOLog("    Initiating comprehensive HLSL-to-GLSL translation\n");
             
             const char* src_ptr = source_text;
@@ -1477,7 +1464,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             // Advanced MSL Compilation Process - Comprehensive Metal-to-GLSL Translation Pipeline
             IOLog("    Initiating advanced MSL compilation and cross-platform translation\n");
             
-            // Phase 1: MSL Attribute and Stage Interface Analysis
             struct MSLStageInterfaceAnalysis {
                 uint32_t vertex_attributes;           // [[attribute(n)]] vertex inputs
                 uint32_t buffer_arguments;            // [[buffer(n)]] arguments
@@ -1495,7 +1481,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                 bool uses_front_facing;               // [[front_facing]] usage
             } stage_interface = {0};
             
-            // Phase 2: MSL Resource Binding Analysis
             struct MSLResourceAnalysis {
                 uint32_t buffer_bindings;             // Buffer binding count
                 uint32_t texture_bindings;            // Texture binding count
@@ -1511,7 +1496,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                 uint32_t max_texture_index;           // Highest texture index used
             } resource_analysis = {0};
             
-            // Phase 3: MSL Language Feature Detection
             struct MSLLanguageFeatures {
                 bool uses_metal_stdlib;               // metal_stdlib usage
                 bool uses_simd_library;               // simd library usage
@@ -1633,7 +1617,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                   language_features.uses_simd_library ? "YES" : "NO",
                   language_features.uses_atomic_operations ? "YES" : "NO");
             
-            // Phase 4: Generate appropriate GLSL header based on MSL analysis
             char msl_target_header[1024] = {0};
             
             // Determine GLSL version based on MSL features
@@ -1679,7 +1662,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             strlcpy(compiled_source, msl_target_header, sizeof(compiled_source));
             size_t header_len = strlen(msl_target_header);
             
-            // Phase 5: Advanced MSL-to-GLSL Translation Engine
             IOLog("    Initiating comprehensive MSL-to-GLSL translation\n");
             
             const char* src_ptr = source_text;
@@ -1964,7 +1946,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             
             compilation_pipeline.cross_compilation.translation_passes++;
             
-            // Phase 6: MSL Translation Quality Assessment and Analysis
             IOLog("    Advanced MSL Translation Results:\n");
             IOLog("      Translation Quality: %s\n", 
                   (stage_interface.buffer_arguments > 0 || stage_interface.texture_arguments > 0) ? "HIGH" : "STANDARD");
@@ -2052,8 +2033,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         IOLog("    Compiled Size: %zu bytes\n", compiled_size);
         IOLog("    Cross-Compilation Time: %.2f ms\n", compilation_pipeline.cross_compilation.cross_compile_time_ms);
         
-        // Phase 3: Advanced Shader Optimization
-        IOLog("VMShaderManager: Phase 3 - Advanced shader optimization\n");
         
         uint64_t optimization_start = mach_absolute_time();
         
@@ -2142,7 +2121,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             // Advanced Sophisticated Dead Code Analysis Engine
             IOLog("        Initiating comprehensive dead code elimination analysis\n");
             
-            // Phase 1: Control Flow Graph Analysis for Unreachable Code Detection
             struct ControlFlowGraphAnalysis {
                 uint32_t entry_points_identified;       // Function entry points
                 uint32_t reachable_blocks_marked;       // Blocks reachable from entry
@@ -2184,8 +2162,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                 bool has_unreachable_after_continue;    // Code after continue statements
             } advanced_cfg = {0};
             
-            // Phase 1: Comprehensive Pattern Detection Analysis
-            IOLog("            Phase 1: Comprehensive pattern detection and reachability analysis\n");
             
             uint32_t current_nesting_depth = 0;
             uint32_t max_nesting_encountered = 0;
@@ -2435,8 +2411,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             // Update main CFG analysis with advanced results
             advanced_cfg.nested_control_depth = max_nesting_encountered;
             
-            // Phase 2: CFG Analysis Results Compilation and Quality Assessment
-            IOLog("            Phase 2: CFG analysis results compilation\n");
             
             struct CFGQualityMetrics {
                 float control_flow_complexity_score;    // Overall complexity score
@@ -2519,7 +2493,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                   cfg_analysis.has_unreachable_cases ? "DETECTED" : "NONE",
                   cfg_analysis.has_infinite_loops ? "DETECTED" : "NONE");
             
-            // Phase 2: Variable Liveness Analysis
             struct VariableLivenessAnalysis {
                 uint32_t variables_declared;            // Total variable declarations
                 uint32_t variables_read;                 // Variables that are read
@@ -2547,7 +2520,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             IOLog("            Never Used: %d, Write-Only: %d, Temporaries: %d\n",
                   liveness.variables_never_used, liveness.variables_write_only, liveness.temporary_variables);
             
-            // Phase 3: Function Call Graph Analysis
             struct FunctionCallGraphAnalysis {
                 uint32_t functions_defined;             // Functions defined in shader
                 uint32_t functions_called;              // Functions actually called
@@ -2575,7 +2547,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                   call_graph.has_uncalled_functions ? "DETECTED" : "NONE",
                   call_graph.has_dead_recursion ? "DETECTED" : "NONE");
             
-            // Phase 4: Advanced Dead Code Pattern Detection
             struct DeadCodePatternDetection {
                 uint32_t unreachable_after_unconditional; // Code after unconditional jumps
                 uint32_t impossible_conditions;           // if(false) or similar
@@ -2602,7 +2573,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                   pattern_detection.unused_computation_chains, pattern_detection.dead_loop_bodies,
                   pattern_detection.no_op_instructions);
             
-            // Phase 5: Calculate Comprehensive Dead Code Elimination Results
             IOLog("        Calculating comprehensive elimination results\n");
             
             // Calculate dead code based on sophisticated analysis
@@ -2624,7 +2594,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             dce_analysis.unused_functions = 
                 call_graph.functions_defined - call_graph.entry_point_reachable;
             
-            // Phase 6: Advanced Elimination Impact Analysis
             struct EliminationImpactAnalysis {
                 uint32_t instructions_per_unreachable_block;   // Average instructions per dead block
                 uint32_t instructions_per_unused_variable;     // Instructions associated with unused vars
@@ -2666,7 +2635,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             IOLog("            Confidence Score: %.2f (%.0f%% safe)\n",
                   impact_analysis.elimination_confidence_score, impact_analysis.elimination_confidence_score * 100.0f);
             
-            // Phase 7: Calculate Final Elimination Results with Advanced Metrics
             dce_analysis.eliminated_instructions = 
                 (dce_analysis.unreachable_blocks * impact_analysis.instructions_per_unreachable_block) +
                 (dce_analysis.unused_variables * impact_analysis.instructions_per_unused_variable) +
@@ -2679,7 +2647,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                 (((float)dce_analysis.eliminated_instructions / (float)estimated_instructions_before) * 100.0f) *
                 impact_analysis.elimination_confidence_score; // Weight by confidence
             
-            // Phase 8: Advanced Elimination Quality Assessment
             struct EliminationQualityAssessment {
                 float memory_usage_reduction;          // Estimated memory usage reduction
                 float compile_time_reduction;          // Estimated compile time improvement
@@ -2973,8 +2940,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         IOLog("      CSE: %s\n", compilation_pipeline.optimization.common_subexpression_elimination ? "YES" : "NO");
         IOLog("    Optimization Time: %.2f ms\n", compilation_pipeline.optimization.optimization_time_ms);
         
-        // Phase 4: Advanced Bytecode Generation
-        IOLog("VMShaderManager: Phase 4 - Advanced bytecode generation\n");
         
         uint64_t bytecode_start = mach_absolute_time();
         
@@ -3014,8 +2979,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         IOLog("    Debug Info: %s\n", compilation_pipeline.bytecode_gen.debug_info_embedded ? "EMBEDDED" : "STRIPPED");
         IOLog("    Generation Time: %.2f ms\n", compilation_pipeline.bytecode_gen.bytecode_generation_time_ms);
         
-        // Phase 5: Resource Binding Analysis
-        IOLog("VMShaderManager: Phase 5 - Resource binding analysis\n");
         
         // Analyze resource usage in compiled shader
         compilation_pipeline.resource_binding.uniform_buffer_bindings = 0;
@@ -3146,8 +3109,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         
         const uint8_t* binary_data = (const uint8_t*)source_code;
         
-        // Phase 1: Binary Format Detection and Validation
-        IOLog("VMShaderManager: Phase 1 - Binary format detection and validation\n");
         
         uint64_t validation_start = mach_absolute_time();
         
@@ -3357,7 +3318,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
             // Metal libraries have complex internal structure with multiple sections
             if (source_size >= 32) { // Extended minimum size for comprehensive analysis
                 
-                // Phase 1: Metal Library Header Analysis
                 struct MetalLibraryHeader {
                     uint32_t magic_signature;           // Primary magic signature
                     uint32_t version_info;              // Library format version
@@ -3434,7 +3394,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                     IOLog("      AIR Bytecode: %d bytes at offset 0x%08X\n",
                           metal_lib_header.air_bytecode_size, metal_lib_header.air_bytecode_offset);
                     
-                    // Phase 2: Platform Detection and Capability Analysis
                     struct MetalPlatformAnalysis {
                         bool is_macos_library;              // macOS Metal library
                         bool is_ios_library;                // iOS Metal library
@@ -3486,7 +3445,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                     IOLog("      Compute Support: %s\n", platform_analysis.supports_compute_dispatches ? "YES" : "NO");
                     IOLog("      Ray Tracing Support: %s\n", platform_analysis.supports_ray_tracing ? "YES" : "NO");
                     
-                    // Phase 3: Function Directory Analysis
                     if (metal_lib_header.function_count > 0 && metal_lib_header.function_directory_offset > 0 &&
                         metal_lib_header.function_directory_offset < source_size) {
                         
@@ -3571,7 +3529,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                         IOLog("        Total AIR Instructions: %d\n", func_analysis.total_air_instructions);
                     }
                     
-                    // Phase 4: AIR Bytecode Analysis
                     if (metal_lib_header.air_bytecode_size > 0 && metal_lib_header.air_bytecode_offset > 0 &&
                         metal_lib_header.air_bytecode_offset < source_size) {
                         
@@ -3911,7 +3868,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
                         IOLog("        Estimated Registers: %d\n", air_analysis.register_usage);
                     }
                     
-                    // Phase 5: Reflection Data Analysis
                     if (metal_lib_header.reflection_size > 0 && metal_lib_header.reflection_offset > 0 &&
                         metal_lib_header.reflection_offset < source_size) {
                         
@@ -4007,8 +3963,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         IOLog("    Instruction Stream: %s\n", binary_pipeline.format_validation.instruction_stream_valid ? "VALID" : "UNKNOWN");
         IOLog("    Validation Time: %.2f ms\n", binary_pipeline.format_validation.validation_time_ms);
         
-        // Phase 2: Advanced Binary Analysis and Resource Extraction
-        IOLog("VMShaderManager: Phase 2 - Advanced binary analysis and resource extraction\n");
         
         uint64_t analysis_start = mach_absolute_time();
         
@@ -4052,8 +4006,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         IOLog("    Unique Opcodes: %d\n", binary_pipeline.binary_analysis.unique_opcodes);
         IOLog("    Analysis Time: %.2f ms\n", binary_pipeline.binary_analysis.analysis_time_ms);
         
-        // Phase 3: Cross-Platform Binary Optimization
-        IOLog("VMShaderManager: Phase 3 - Cross-platform binary optimization\n");
         
         uint64_t optimization_start = mach_absolute_time();
         
@@ -4107,8 +4059,6 @@ IOReturn CLASS::compileShaderInternal(VMShaderType type, VMShaderLanguage langua
         IOLog("    Optimization Effectiveness: %.1f%%\n", binary_pipeline.cross_platform_opt.optimization_effectiveness);
         IOLog("    Optimization Time: %.2f ms\n", binary_pipeline.cross_platform_opt.optimization_time_ms);
         
-        // Phase 4: Hardware Compatibility Analysis
-        IOLog("VMShaderManager: Phase 4 - Hardware compatibility analysis\n");
         
         // Analyze hardware compatibility based on binary format and content
         binary_pipeline.hardware_compat.target_gpu_compatibility = true; // Assume compatible
@@ -4740,7 +4690,6 @@ IOReturn CLASS::parseUniformDeclarationAdvanced(const char* declaration, char* t
     parser_ctx.state = PARSER_SEEKING_UNIFORM;
     parser_ctx.array_size = 1; // Default to non-array
     
-    // Phase 1: Locate and validate 'uniform' keyword
     while (parser_ctx.current_pos < parser_ctx.line_end && parser_ctx.state != PARSER_ERROR) {
         // Skip whitespace and comments
         while (parser_ctx.current_pos < parser_ctx.line_end && 
@@ -4981,7 +4930,6 @@ IOReturn CLASS::parseUniformDeclarationAdvanced(const char* declaration, char* t
         }
     }
     
-    // Phase 2: Validate parsing results and construct output
     if (parser_ctx.state == PARSER_COMPLETE || 
         (parser_ctx.state == PARSER_PARSING_NAME && strlen(parser_ctx.base_name) > 0)) {
         
@@ -5500,7 +5448,6 @@ IOReturn CLASS::detectRealHLSLCompilerInfrastructure(HLSLCompilerInfrastructure*
     
     IOLog("VMShaderManager: Performing real HLSL compiler infrastructure detection\n");
     
-    // Phase 1: DirectX Compiler (DXC) Detection
     // Check for modern DXC compiler availability in system paths
     bool dxc_found = false;
     const char* dxc_search_paths[] = {
@@ -5519,7 +5466,6 @@ IOReturn CLASS::detectRealHLSLCompilerInfrastructure(HLSLCompilerInfrastructure*
         }
     }
     
-    // Phase 2: Legacy FXC Compiler Detection
     // Check for legacy FXC compiler for compatibility
     bool fxc_found = false;
     const char* fxc_search_paths[] = {
@@ -5537,20 +5483,17 @@ IOReturn CLASS::detectRealHLSLCompilerInfrastructure(HLSLCompilerInfrastructure*
         }
     }
     
-    // Phase 3: System Capabilities Detection
     // Check for system-level compiler infrastructure
     bool has_metal_compiler = checkFileExists("/usr/bin/metal") || checkFileExists("/usr/local/bin/metal");
     bool has_glsl_validator = checkFileExists("/usr/bin/glslangValidator") || checkFileExists("/usr/local/bin/glslangValidator");
     bool has_spirv_tools = checkFileExists("/usr/bin/spirv-opt") || checkFileExists("/usr/local/bin/spirv-opt");
     
-    // Phase 4: Framework Detection
     // Check for available shader compilation frameworks
     bool has_metal_framework = checkFrameworkAvailable("Metal");
     bool has_opengl_framework = checkFrameworkAvailable("OpenGL");
     bool has_vulkan_sdk = checkDirectoryExists("/usr/local/share/vulkan") || 
                          checkEnvironmentVariable("VULKAN_SDK");
     
-    // Phase 5: Build Infrastructure Detection
     infra->has_dxc_compiler = dxc_found;
     infra->has_fxc_fallback = fxc_found;
     infra->has_optimization_engine = has_metal_compiler || has_glsl_validator || has_spirv_tools;
@@ -5562,7 +5505,6 @@ IOReturn CLASS::detectRealHLSLCompilerInfrastructure(HLSLCompilerInfrastructure*
     infra->max_optimization_level = (dxc_found || has_metal_compiler) ? 3 : 2;
     infra->compilation_threads = getSystemCoreCount();
     
-    // Phase 6: Performance Benchmarking
     // Perform lightweight compiler performance assessment
     if (dxc_found || has_metal_compiler) {
         infra->average_compile_time_ms = performCompilerBenchmark();
@@ -5570,7 +5512,6 @@ IOReturn CLASS::detectRealHLSLCompilerInfrastructure(HLSLCompilerInfrastructure*
         infra->average_compile_time_ms = 25.0f; // Conservative estimate for software fallback
     }
     
-    // Phase 7: Detection Results Summary
     bool has_any_compiler = dxc_found || fxc_found || has_metal_compiler || has_glsl_validator;
     
     IOLog("VMShaderManager: ========== Real HLSL Compiler Detection Results ==========\n");
@@ -5608,7 +5549,6 @@ bool CLASS::checkFileExists(const char* path) const
     
     bool file_exists = false;
     
-    // Phase 1: System-level executable detection
     // Check for well-known system executables using IOKit registry information
     if (kernel_strstr(path, "/usr/bin/") || kernel_strstr(path, "/usr/local/bin/")) {
         
@@ -5647,17 +5587,14 @@ bool CLASS::checkFileExists(const char* path) const
             file_exists = false;
         }
     }
-    // Phase 2: Application and framework path detection
     else if (kernel_strstr(path, "/System/Library/") || kernel_strstr(path, "/Applications/")) {
         file_exists = checkSystemFrameworkPath(path);
         IOLog("VMShaderManager: System/Application path check: %s\n", file_exists ? "ACCESSIBLE" : "NOT ACCESSIBLE");
     }
-    // Phase 3: Third-party installation paths
     else if (kernel_strstr(path, "/opt/") || kernel_strstr(path, "/usr/local/")) {
         file_exists = checkThirdPartyInstallation(path);
         IOLog("VMShaderManager: Third-party installation check: %s\n", file_exists ? "FOUND" : "NOT FOUND");
     }
-    // Phase 4: Unknown paths - conservative approach
     else {
         file_exists = false;
         IOLog("VMShaderManager: Unknown path format - defaulting to not accessible\n");
@@ -5933,11 +5870,8 @@ bool CLASS::checkHLSLSupport() const
         uint32_t hlsl_feature_level;        // DirectX feature level compatibility
     } hlsl_caps = {0};
     
-    // Phase 1: Check for HLSL compiler infrastructure availability
-    IOLog("VMShaderManager: Phase 1 - HLSL Compiler Infrastructure Check\n");
     
     // Advanced HLSL Compiler Detection and Optimization Pipeline
-    // This comprehensive system provides enterprise-grade shader compilation with advanced optimizations
     HLSLCompilerInfrastructure compiler_infra = {0};
     
     // Initialize HLSL compiler infrastructure detection
@@ -6030,11 +5964,8 @@ bool CLASS::checkHLSLSupport() const
         hlsl_caps.has_cross_compilation = true;      // HLSL->GLSL/MSL cross-compiler
     }
     
-    // Phase 2: DirectX Shader Model support detection
-    IOLog("VMShaderManager: Phase 2 - DirectX Shader Model Support\n");
     
     // Advanced DirectX Shader Model Capability Matrix
-    // This comprehensive system provides complete DirectX shader model support with enterprise features
     struct DirectXShaderModelCapabilities {
         bool shader_model_4_0;              // DirectX 10.0 feature level
         bool shader_model_4_1;              // DirectX 10.1 feature level
@@ -6160,8 +6091,6 @@ bool CLASS::checkHLSLSupport() const
     hlsl_caps.max_supported_shader_model = dx_shader_models.max_supported_version;  // Latest supported version
     hlsl_caps.hlsl_feature_level = (dx_shader_models.shader_model_6_0) ? 0xC000 : 0xB100;  // Feature level
     
-    // Phase 3: HLSL Language Features and Compilation Pipeline Integration
-    IOLog("VMShaderManager: Phase 3 - HLSL Language Features and Advanced Compilation Pipeline\n");
     
     // Advanced HLSL Compilation Pipeline with Multi-stage Optimization
     struct HLSLCompilationPipeline {
@@ -6252,15 +6181,12 @@ bool CLASS::checkHLSLSupport() const
         .shader_intrinsics = true
     };
     
-    // Phase 4: Cross-compilation capabilities assessment
-    IOLog("VMShaderManager: Phase 4 - HLSL Cross-Compilation Assessment\n");
     
     bool cross_compile_to_glsl = true;   // HLSL -> GLSL translation
     bool cross_compile_to_msl = true;    // HLSL -> Metal Shading Language
     bool preserve_semantics = true;      // Maintain DirectX semantics in output
     bool optimize_output = true;         // Post-compilation optimization
     
-    // Phase 5: Comprehensive HLSL support result
     bool full_hlsl_support = hlsl_caps.has_hlsl_compiler && 
                             hlsl_caps.has_dx_bytecode_validator &&
                             hlsl_caps.has_cross_compilation &&
@@ -6308,14 +6234,11 @@ bool CLASS::checkSPIRVSupport() const
     // SPIR-V Support Matrix - comprehensive Vulkan IR capabilities
     SPIRVCapabilities spirv_caps = {0};
     
-    // Phase 1: Check for SPIR-V infrastructure availability
-    IOLog("VMShaderManager: Phase 1 - SPIR-V Infrastructure Check\n");
     
     // Real-world SPIR-V Compiler Infrastructure Detection System - Kernel-Space Implementation
     // This method provides actual detection of SPIR-V toolchain and validation capabilities through IORegistry
     IOLog("VMShaderManager: Performing real SPIR-V infrastructure detection via kernel-space queries\n");
     
-    // Phase 1A: IORegistry-based SPIR-V toolchain detection
     IORegistryEntry* root = IORegistryEntry::fromPath("/", gIOServicePlane);
     bool spirv_validator_detected = false;
     bool spirv_optimizer_detected = false;
@@ -6344,7 +6267,6 @@ bool CLASS::checkSPIRVSupport() const
         root->release();
     }
     
-    // Phase 1B: Advanced SPIR-V capability matrix through system integration
     IOLog("VMShaderManager: SPIR-V Infrastructure Detection Results:\n");
     IOLog("  Registry Detection - SPIR-V Tools: %s, Vulkan SDK: %s, Metal Tools: %s\n",
           spirv_validator_detected ? "FOUND" : "NOT FOUND",
@@ -6362,7 +6284,6 @@ bool CLASS::checkSPIRVSupport() const
     spirv_caps.has_opencl_compatibility = false; // OpenCL disabled in kernel space for security
     spirv_caps.has_reflection_support = spirv_reflect_detected;
     
-    // Phase 1C: Enhanced SPIR-V toolchain integration assessment
     struct SPIRVToolchainAssessment {
         bool has_spirv_tools_integration;    // Complete SPIR-V tools suite
         bool has_glslang_integration;        // GLSL -> SPIR-V compiler
@@ -6394,8 +6315,6 @@ bool CLASS::checkSPIRVSupport() const
     IOLog("  Validation Pipeline: %s\n", toolchain_assessment.has_validation_pipeline ? "COMPLETE" : "BASIC");
     IOLog("  Optimization Pipeline: %s\n", toolchain_assessment.has_optimization_pipeline ? "COMPLETE" : "BASIC");
     
-    // Phase 2: SPIR-V version and Vulkan compatibility with real version detection
-    IOLog("VMShaderManager: Phase 2 - SPIR-V Version Compatibility Assessment\n");
     
     // Real SPIR-V version detection based on detected toolchain capabilities
     uint32_t detected_spirv_version = 0x10000;        // Default: SPIR-V 1.0
@@ -6457,11 +6376,7 @@ bool CLASS::checkSPIRVSupport() const
           version_caps.supports_spirv_1_5 ? "YES" : "NO",
           version_caps.supports_spirv_1_6 ? "YES" : "NO");
     
-    // Phase 3: SPIR-V Capability Set Detection
-    IOLog("VMShaderManager: Phase 3 - SPIR-V Capability Assessment\n");
     
-    // Phase 3: SPIR-V Capability Set Detection - Real System Assessment
-    IOLog("VMShaderManager: Phase 3 - SPIR-V Capability Assessment\n");
     
     struct SPIRVCapabilitySet {
         bool shader_capabilities;        // Basic shader execution
@@ -6541,11 +6456,7 @@ bool CLASS::checkSPIRVSupport() const
           capability_set.mesh_shader_capabilities ? "SUPPORTED" : "NOT SUPPORTED",
           capability_set.task_shader_capabilities ? "SUPPORTED" : "NOT SUPPORTED");
     
-    // Phase 4: SPIR-V Cross-Compilation Matrix
-    IOLog("VMShaderManager: Phase 4 - SPIR-V Cross-Compilation Support\n");
     
-    // Phase 4: SPIR-V Cross-Compilation Matrix - Real Toolchain Assessment
-    IOLog("VMShaderManager: Phase 4 - SPIR-V Cross-Compilation Support\n");
     
     struct SPIRVCrossCompilation {
         bool spirv_to_glsl;              // SPIR-V -> GLSL translation
@@ -6603,11 +6514,7 @@ bool CLASS::checkSPIRVSupport() const
           cross_compile.specialization_constants ? "YES" : "NO",
           cross_compile.push_constant_handling ? "YES" : "NO");
     
-    // Phase 5: SPIR-V Validation and Optimization Pipeline
-    IOLog("VMShaderManager: Phase 5 - SPIR-V Processing Pipeline\n");
     
-    // Phase 5: SPIR-V Validation and Optimization Pipeline - Real System Detection
-    IOLog("VMShaderManager: Phase 5 - SPIR-V Processing Pipeline\n");
     
     struct SPIRVProcessingPipeline {
         bool bytecode_validation;        // Structural SPIR-V validation
@@ -6678,7 +6585,6 @@ bool CLASS::checkSPIRVSupport() const
     IOLog("    Debug Info Processing: %s\n",
           processing.debug_info_processing ? "ENABLED" : "DISABLED");
     
-    // Phase 6: Comprehensive SPIR-V support assessment
     bool full_spirv_support = spirv_caps.has_spirv_validator &&
                              spirv_caps.has_spirv_optimizer &&
                              spirv_caps.has_spirv_cross_compiler &&
@@ -6737,7 +6643,6 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
 {
     IOLog("VMShaderManager::useProgram: Activating shader program %d for context %d\n", program_id, context_id);
     
-    // Phase 1: Validate context and program parameters
     if (context_id >= MAX_RENDER_CONTEXTS) {
         IOLog("VMShaderManager::useProgram: ERROR - Invalid context ID %d (max: %d)\n", 
               context_id, MAX_RENDER_CONTEXTS - 1);
@@ -6746,7 +6651,6 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
     
     IOLockLock(m_shader_lock);
     
-    // Phase 2: Locate and validate shader program
     ShaderProgram* program = findProgram(program_id);
     if (!program) {
         IOLockUnlock(m_shader_lock);
@@ -6754,14 +6658,12 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
         return kIOReturnNotFound;
     }
     
-    // Phase 3: Verify program is properly linked
     if (!program->is_linked) {
         IOLockUnlock(m_shader_lock);
         IOLog("VMShaderManager::useProgram: ERROR - Program %d is not linked\n", program_id);
         return kIOReturnNotReady;
     }
     
-    // Phase 4: Store current program state for context switching
     struct ProgramActivationState {
         uint32_t previous_program_id;
         uint64_t activation_timestamp;
@@ -6778,7 +6680,6 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
         }
     }
     
-    // Phase 5: Hardware-specific program activation
     IOReturn hw_result = kIOReturnSuccess;
     if (m_accelerator) {
         IOLog("VMShaderManager::useProgram: Activating program %d on hardware accelerator\n", program_id);
@@ -6814,7 +6715,6 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
         activation_state.needs_attribute_binding = true;
     }
     
-    // Phase 6: Software fallback activation
     else {
         IOLog("VMShaderManager::useProgram: Using software rendering pipeline for program %d\n", program_id);
         
@@ -6830,7 +6730,6 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
         }
     }
     
-    // Phase 7: Update context state tracking
     activation_state.activation_timestamp = mach_absolute_time();
     activation_state.activation_frame_count = getCurrentFrameCount();
     
@@ -6856,7 +6755,6 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
         }
     }
     
-    // Phase 8: Performance tracking and statistics
     program->usage_count++;
     program->last_used_timestamp = activation_state.activation_timestamp;
     
@@ -6879,7 +6777,6 @@ IOReturn CLASS::useProgram(uint32_t context_id, uint32_t program_id)
     
     IOLockUnlock(m_shader_lock);
     
-    // Phase 9: Comprehensive activation logging
     IOLog("VMShaderManager: ========== Program Activation Complete ==========\n");
     IOLog("  Program ID: %d, Context ID: %d\n", program_id, context_id);
     IOLog("  Previous Program: %d\n", activation_state.previous_program_id);
@@ -6909,7 +6806,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
     
     IOLockLock(m_shader_lock);
     
-    // Phase 1: Locate and validate shader program
     ShaderProgram* program = findProgram(program_id);
     if (!program) {
         IOLockUnlock(m_shader_lock);
@@ -6917,15 +6813,12 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         return kIOReturnNotFound;
     }
     
-    // Phase 2: Verify program has required shaders
     if (!program->shader_ids || program->shader_ids->getCount() == 0) {
         IOLockUnlock(m_shader_lock);
         IOLog("VMShaderManager::linkProgram: ERROR - Program %d has no attached shaders\n", program_id);
         return kIOReturnBadArgument;
     }
     
-    // Phase 3: Advanced shader compatibility validation
-    IOLog("VMShaderManager::linkProgram: Phase 3 - Shader Compatibility Validation\n");
     
     struct LinkingValidation {
         bool has_vertex_shader;
@@ -7008,7 +6901,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     // Real tessellation control bytecode analysis with kernel-space validation
                     IOLog("    Performing comprehensive tessellation control bytecode analysis\n");
                     
-                    // Phase 1: Tessellation Control Bytecode Structure Analysis
                     struct TessellationControlBytecodeAnalysis {
                         // Bytecode format detection
                         uint32_t bytecode_format;              // 0=SPIR-V, 1=GLSL, 2=MSL, 3=HLSL
@@ -7048,7 +6940,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     IOByteCount bytecode_length = shader->bytecode->getLength();
                     uint32_t bytecode_size = (uint32_t)((bytecode_length < UINT32_MAX) ? bytecode_length : UINT32_MAX);
                     
-                    // Phase 2: Bytecode Format Detection and Header Analysis
                     IOLog("      Analyzing bytecode format and structure\n");
                     
                     if (bytecode_size >= 20 && bytecode_data[0] == 0x03 && bytecode_data[1] == 0x02 && 
@@ -7207,7 +7098,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         tc_analysis.tessellation_instruction_count = tc_analysis.instruction_count / 8;
                     }
                     
-                    // Phase 3: Tessellation Control Feature Validation and Configuration
                     IOLog("      Validating tessellation control shader features\n");
                     
                     // Set defaults if not detected
@@ -7251,7 +7141,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         tc_analysis.tessellation_instruction_count * base_time_per_instruction * 
                         complexity_multiplier * tc_analysis.estimated_invocations_per_patch;
                     
-                    // Phase 4: Apply Analysis Results to Validation Structure
                     IOLog("      Applying tessellation control analysis results\n");
                     
                     tess_control_validation.has_patch_vertices_out = tc_analysis.declares_output_patch_size;
@@ -7375,7 +7264,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     // Real tessellation evaluation bytecode analysis with comprehensive domain shader validation
                     IOLog("    Performing comprehensive tessellation evaluation bytecode analysis\n");
                     
-                    // Phase 1: Tessellation Evaluation Bytecode Structure Analysis
                     struct TessellationEvaluationBytecodeAnalysis {
                         // Bytecode format and structure
                         uint32_t bytecode_format;              // 0=SPIR-V, 1=GLSL, 2=MSL, 3=HLSL
@@ -7431,7 +7319,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     IOByteCount bytecode_length = shader->bytecode->getLength();
                     uint32_t bytecode_size = (uint32_t)((bytecode_length < UINT32_MAX) ? bytecode_length : UINT32_MAX);
                     
-                    // Phase 2: Bytecode Format Detection and Header Analysis
                     IOLog("      Analyzing domain shader bytecode format and structure\n");
                     
                     if (bytecode_size >= 20 && bytecode_data[0] == 0x03 && bytecode_data[1] == 0x02 && 
@@ -7655,7 +7542,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         te_analysis.domain_instruction_count = te_analysis.instruction_count / 6;
                     }
                     
-                    // Phase 3: Tessellation Evaluation Feature Validation and Configuration
                     IOLog("      Validating tessellation evaluation shader features\n");
                     
                     // Validate topology consistency
@@ -7742,7 +7628,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     uint32_t output_data_per_patch = te_analysis.estimated_vertices_per_patch * te_analysis.vertex_component_count * 4;
                     te_analysis.memory_bandwidth_requirements = input_data_per_patch + output_data_per_patch;
                     
-                    // Phase 4: Apply Analysis Results to Validation Structure
                     IOLog("      Applying tessellation evaluation analysis results\n");
                     
                     tess_eval_validation.has_primitive_mode = te_analysis.declares_primitive_topology;
@@ -7921,8 +7806,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         validation.total_resource_count += shader->resources ? shader->resources->getCount() : 0;
     }
     
-    // Phase 4: Pipeline stage validation
-    IOLog("VMShaderManager::linkProgram: Phase 4 - Pipeline Stage Validation\n");
     
     bool pipeline_valid = false;
     if (validation.has_compute_shader) {
@@ -7944,8 +7827,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         return kIOReturnBadArgument;
     }
     
-    // Phase 5: Interface variable matching and validation
-    IOLog("VMShaderManager::linkProgram: Phase 5 - Interface Variable Matching\n");
     
     struct InterfaceMatching {
         uint32_t vertex_outputs;
@@ -7961,7 +7842,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
     // Comprehensive Shader Interface Validation System
     IOLog("VMShaderManager::linkProgram: Performing comprehensive shader interface validation\n");
     
-    // Phase 5A: Vertex-to-Fragment Interface Validation
     if (validation.has_vertex_shader && validation.has_fragment_shader) {
         IOLog("  Validating Vertex->Fragment interface compatibility\n");
         
@@ -8026,7 +7906,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 // Real-time parsing system supporting SPIR-V, GLSL, MSL, HLSL, and DXIL
                 IOLog("    Performing comprehensive vertex shader output bytecode analysis\n");
                 
-                // Phase 1: Vertex Shader Bytecode Analysis Structure
                 struct VertexShaderBytecodeAnalysis {
                     // Bytecode format and version detection
                     uint32_t bytecode_format;              // 0=SPIR-V, 1=GLSL, 2=MSL, 3=HLSL, 4=DXIL
@@ -8104,7 +7983,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 
                 IOLog("      Vertex shader bytecode size: %d bytes\n", bytecode_size);
                 
-                // Phase 2: Bytecode Format Detection and Header Analysis
                 IOLog("      Detecting vertex shader bytecode format\n");
                 
                 if (bytecode_size >= 20 && bytecode_data[0] == 0x03 && bytecode_data[1] == 0x02 && 
@@ -8129,7 +8007,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     
                     IOLog("        SPIR-V bound objects: %d\n", bound_objects);
                     
-                    // Phase 2A: SPIR-V Output Variable Extraction
                     struct SPIRVOutputVariable {
                         uint32_t result_id;
                         uint32_t type_id;
@@ -8315,7 +8192,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     uint32_t pos = 0;
                     vs_analysis.instruction_count = 0;
                     
-                    // Phase 2B: GLSL Output Variable Extraction
                     struct GLSLOutputVariable {
                         char name[64];
                         char type[32];
@@ -8485,7 +8361,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           vs_analysis.instruction_count, vs_analysis.total_output_variables);
                 }
                 
-                // Phase 3: Output Variable Classification and Analysis
                 IOLog("      Classifying vertex shader outputs\n");
                 
                 // Analyze output characteristics based on detected patterns
@@ -8520,7 +8395,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           estimated_texture_coords, estimated_normals, estimated_colors);
                 }
                 
-                // Phase 4: Memory Layout and Performance Analysis
                 IOLog("      Analyzing vertex output memory layout and performance\n");
                 
                 // Calculate memory requirements
@@ -8558,7 +8432,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 float complexity_penalty = (vs_analysis.interpolation_complexity > 32) ? 0.7f : 1.0f;
                 vs_analysis.estimated_throughput_vertices_per_ms = 10000.0f * complexity_penalty;
                 
-                // Phase 5: Compatibility and Validation Analysis
                 IOLog("      Validating vertex output compatibility\n");
                 
                 // Check for standards compliance
@@ -8588,7 +8461,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     IOLog("        OPTIMIZATION: Layout could be more GPU-friendly\n");
                 }
                 
-                // Phase 6: Copy Results to Interface Structure
                 IOLog("      Finalizing vertex shader output analysis\n");
                 
                 // Update the vertex-fragment interface with real analysis results
@@ -8775,7 +8647,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 // Real-time parsing system supporting SPIR-V, GLSL, MSL, HLSL, and DXIL
                 IOLog("    Performing comprehensive fragment shader input bytecode analysis\n");
                 
-                // Phase 1: Fragment Shader Bytecode Analysis Structure
                 struct FragmentShaderBytecodeAnalysis {
                     // Bytecode format and version detection
                     uint32_t bytecode_format;              // 0=SPIR-V, 1=GLSL, 2=MSL, 3=HLSL, 4=DXIL
@@ -8863,7 +8734,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 
                 IOLog("      Fragment shader bytecode size: %d bytes\n", fs_bytecode_size);
                 
-                // Phase 2: Fragment Bytecode Format Detection and Header Analysis
                 IOLog("      Detecting fragment shader bytecode format\n");
                 
                 if (fs_bytecode_size >= 20 && fs_bytecode_data[0] == 0x03 && fs_bytecode_data[1] == 0x02 && 
@@ -8888,7 +8758,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     
                     IOLog("        SPIR-V bound objects: %d\n", fs_bound_objects);
                     
-                    // Phase 2A: SPIR-V Input Variable Extraction
                     struct SPIRVInputVariable {
                         uint32_t result_id;
                         uint32_t type_id;
@@ -9110,7 +8979,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     uint32_t fs_pos = 0;
                     fs_analysis.instruction_count = 0;
                     
-                    // Phase 2B: GLSL Input Variable Extraction
                     struct GLSLInputVariable {
                         char name[64];
                         char type[32];
@@ -9254,7 +9122,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           fs_analysis.instruction_count, fs_analysis.total_input_variables);
                 }
                 
-                // Phase 3: Input Variable Classification and Analysis
                 IOLog("      Classifying fragment shader inputs\n");
                 
                 // Analyze input characteristics based on detected patterns
@@ -9290,7 +9157,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           estimated_texture_coords, estimated_normals, estimated_colors);
                 }
                 
-                // Phase 4: Memory Layout and Performance Analysis
                 IOLog("      Analyzing fragment input memory layout and performance\n");
                 
                 // Calculate memory requirements
@@ -9332,7 +9198,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 
                 fs_analysis.estimated_throughput_fragments_per_ms = 50000.0f * complexity_penalty;
                 
-                // Phase 5: Compatibility and Validation Analysis
                 IOLog("      Validating fragment input compatibility\n");
                 
                 // Check for standards compliance
@@ -9568,7 +9433,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         interface_check.vertex_fragment_compatible = true;
     }
     
-    // Phase 5B: Vertex-to-Geometry Interface Validation
     if (validation.has_vertex_shader && validation.has_geometry_shader) {
         IOLog("  Validating Vertex->Geometry interface compatibility\n");
         
@@ -9603,7 +9467,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 // Real-time parsing system supporting SPIR-V, GLSL, MSL, HLSL, and DXIL
                 IOLog("    Performing comprehensive geometry shader input bytecode analysis\n");
                 
-                // Phase 1: Geometry Shader Bytecode Analysis Structure
                 struct GeometryShaderBytecodeAnalysis {
                     // Bytecode format and version detection
                     uint32_t bytecode_format;              // 0=SPIR-V, 1=GLSL, 2=MSL, 3=HLSL, 4=DXIL
@@ -9704,7 +9567,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 
                 IOLog("      Geometry shader bytecode size: %d bytes\n", gs_bytecode_size);
                 
-                // Phase 2: Geometry Bytecode Format Detection and Header Analysis
                 IOLog("      Detecting geometry shader bytecode format\n");
                 
                 if (gs_bytecode_size >= 20 && gs_bytecode_data[0] == 0x03 && gs_bytecode_data[1] == 0x02 && 
@@ -9729,7 +9591,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     
                     IOLog("        SPIR-V bound objects: %d\n", gs_bound_objects);
                     
-                    // Phase 2A: SPIR-V Geometry Shader Analysis
                     struct SPIRVGeometryVariable {
                         uint32_t result_id;
                         uint32_t type_id;
@@ -10079,7 +9940,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           gs_analysis.instruction_count);
                 }
                 
-                // Phase 3: Advanced Geometry Processing Analysis
                 IOLog("      Analyzing geometry processing characteristics\n");
                 
                 // Calculate primitive amplification
@@ -10102,7 +9962,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     }
                 }
                 
-                // Phase 4: Memory Layout and Performance Analysis
                 IOLog("      Analyzing geometry shader memory layout and performance\n");
                 
                 // Calculate memory requirements
@@ -10142,7 +10001,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                                                    (gs_analysis.geometry_memory_pressure < 70) &&
                                                    !gs_analysis.uses_multiple_streams;
                 
-                // Phase 5: Advanced Feature Detection
                 IOLog("      Detecting advanced geometry features\n");
                 
                 // Analyze advanced features based on patterns
@@ -10163,7 +10021,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     gs_analysis.render_target_array_usage = 1;
                 }
                 
-                // Phase 6: Validation and Compliance Analysis
                 IOLog("      Validating geometry shader compliance\n");
                 
                 // Check for compliance issues
@@ -10324,7 +10181,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         interface_check.vertex_geometry_compatible = true;
     }
     
-    // Phase 5C: Geometry-to-Fragment Interface Validation
     if (validation.has_geometry_shader && validation.has_fragment_shader) {
         IOLog("  Validating Geometry->Fragment interface compatibility\n");
         
@@ -10435,8 +10291,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                                      interface_check.vertex_geometry_compatible &&
                                      interface_check.geometry_fragment_compatible;
     
-    // Phase 6: Resource aggregation and unified program interface
-    IOLog("VMShaderManager::linkProgram: Phase 6 - Resource Aggregation\n");
     
     // Clear existing aggregated resources
     if (program->all_uniforms) {
@@ -10509,14 +10363,11 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         }
     }
     
-    // Phase 7: Hardware-specific linking
     IOReturn link_result = kIOReturnSuccess;
     if (m_accelerator) {
         { // Additional opening brace for structural balance
         IOLog("VMShaderManager::linkProgram: Performing hardware-accelerated linking\n");
         
-        // Phase 7A: GPU Pipeline Compilation and Optimization
-        IOLog("VMShaderManager::linkProgram: Phase 7A - GPU Pipeline Compilation\n");
         
         struct GPUPipelineCompilation {
             bool vertex_stage_optimized;
@@ -10616,7 +10467,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         bool dead_code_marked;             // Dead code identified
                     } semantic_analysis = {0};
                     
-                    // Advanced Optimization Pipeline
                     struct OptimizationPipeline {
                         uint32_t total_optimization_passes; // Number of optimization rounds
                         uint32_t instructions_eliminated;   // Instructions removed
@@ -10682,8 +10532,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     } binary_generation = {0};
                 } compilation = {0};
                 
-                // Phase 1: Advanced Source Code Analysis
-                IOLog("        Phase 1: Performing comprehensive source analysis\n");
                 
                 uint64_t analysis_start = mach_absolute_time();
                 
@@ -10777,16 +10625,12 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 compilation.stages.source_analysis_complete = true;
                 compilation.stages.compilation_stage_count++;
                 
-                // Phase 2: Abstract Syntax Tree Generation and Analysis
-                IOLog("        Phase 2: Building and analyzing Abstract Syntax Tree\n");
                 
                 uint64_t ast_start = mach_absolute_time();
                 
                 // Comprehensive Abstract Syntax Tree Generation and Analysis System
                 IOLog("          Performing real-time AST construction from vertex shader bytecode\n");
                 
-                // Phase 2.1: AST Node Construction and Classification
-                IOLog("            Phase 2.1: Constructing and classifying AST nodes\n");
                 
                 if (vertex_shader->bytecode && vertex_shader->bytecode->getLength() > 0) {
                     const uint8_t* vs_bytecode_data = (const uint8_t*)vertex_shader->bytecode->getBytesNoCopy();
@@ -10896,8 +10740,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     IOLog("              Using fallback AST estimation (no bytecode available)\n");
                 }
                 
-                // Phase 2.2: Expression Depth and Complexity Analysis
-                IOLog("            Phase 2.2: Analyzing expression depth and complexity\n");
                 
                 compilation.ast_analysis.expression_depth = compilation.source_analysis.loop_nesting_depth + 2;
                 uint32_t max_expression_depth = 0;
@@ -10931,8 +10773,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 IOLog("                Complex Expressions: %d, Simple Expressions: %d\n",
                       complex_expression_count, simple_expression_count);
                 
-                // Phase 2.3: Advanced AST Feature Detection
-                IOLog("            Phase 2.3: Detecting advanced AST features\n");
                 
                 // Advanced AST analysis flags based on real patterns
                 compilation.ast_analysis.has_recursive_calls = false; // Vertex shaders rarely use recursion
@@ -10963,8 +10803,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       has_loop_unrolling_candidates ? "YES" : "NO",
                       has_function_overloading ? "YES" : "NO");
                 
-                // Phase 2.4: AST Optimization Opportunities Analysis
-                IOLog("            Phase 2.4: Identifying AST optimization opportunities\n");
                 
                 uint32_t constant_folding_opportunities = compilation.ast_analysis.constant_expressions;
                 uint32_t dead_code_elimination_candidates = 
@@ -11027,16 +10865,12 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 compilation.stages.ast_generation_complete = true;
                 compilation.stages.compilation_stage_count++;
                 
-                // Phase 3: Comprehensive Semantic Analysis
-                IOLog("        Phase 3: Performing semantic analysis and validation\n");
                 
                 uint64_t semantic_start = mach_absolute_time();
                 
                 // Comprehensive Semantic Analysis and Type System Validation
                 IOLog("          Performing real-time semantic analysis from vertex shader bytecode\n");
                 
-                // Phase 3.1: Type System Analysis and Validation
-                IOLog("            Phase 3.1: Analyzing type system and validating declarations\n");
                 
                 compilation.semantic_analysis.type_checking_errors = 0;
                 compilation.semantic_analysis.undefined_symbols = 0;
@@ -11119,8 +10953,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 IOLog("                Precision Mismatches: %d, Storage Qualifiers: %d\n",
                       precision_mismatches, compilation.semantic_analysis.storage_qualifiers);
                 
-                // Phase 3.2: Symbol Table Construction and Resolution
-                IOLog("            Phase 3.2: Building symbol table and resolving references\n");
                 
                 uint32_t global_symbols = 0;
                 uint32_t local_symbols = 0;
@@ -11157,8 +10989,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 IOLog("                Symbol Conflicts: %d, Undefined Symbols: %d\n",
                       symbol_conflicts, compilation.semantic_analysis.undefined_symbols);
                 
-                // Phase 3.3: Interface Variable Analysis and Validation
-                IOLog("            Phase 3.3: Analyzing shader interface variables\n");
                 
                 uint32_t vertex_inputs = 0;
                 uint32_t vertex_outputs = 0;
@@ -11197,8 +11027,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 IOLog("                Layout Qualifiers: %d, Total Interface Variables: %d\n",
                       layout_qualifiers, compilation.semantic_analysis.interface_variables);
                 
-                // Phase 3.4: Dead Code Analysis and Unused Variable Detection
-                IOLog("            Phase 3.4: Performing dead code analysis\n");
                 
                 uint32_t potentially_unused_variables = 0;
                 uint32_t definitely_unused_variables = 0;
@@ -11266,16 +11094,11 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 compilation.stages.semantic_analysis_complete = true;
                 compilation.stages.compilation_stage_count++;
                 
-                // Phase 4: Advanced Optimization Pipeline
-                IOLog("        Phase 4: Applying advanced optimization pipeline\n");
                 
                 uint64_t optimization_start = mach_absolute_time();
                 
-                // Comprehensive Advanced Optimization Pipeline System
                 IOLog("          Performing real-time optimization analysis from vertex shader bytecode\n");
                 
-                // Phase 4.1: Constant Folding and Expression Simplification
-                IOLog("            Phase 4.1: Performing constant folding and expression simplification\n");
                 
                 uint32_t literal_constants = 0;
                 uint32_t computed_constants = 0;
@@ -11351,8 +11174,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 IOLog("                Division to Multiplication: %d, Expensive Functions Eliminated: %d\n",
                       division_to_multiplication, expensive_function_eliminations);
                 
-                // Phase 4.2: Dead Code Elimination and Control Flow Optimization
-                IOLog("            Phase 4.2: Performing dead code elimination and control flow optimization\n");
                 
                 uint32_t unreachable_basic_blocks = 0;
                 uint32_t eliminated_branches = 0;
@@ -11393,8 +11214,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       jump_threading_applied, branch_folding_applied, tail_call_eliminations);
                 IOLog("                Total Dead Code Eliminated: %d instructions\n", total_dead_code_eliminated);
                 
-                // Phase 4.3: Loop Optimization and Unrolling Analysis
-                IOLog("            Phase 4.3: Analyzing loop optimization and unrolling opportunities\n");
                 
                 uint32_t unrollable_loops = 0;
                 uint32_t partially_unrolled_loops = 0;
@@ -11440,8 +11259,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 IOLog("                Vectorizable Loops: %d, Advanced Optimization: %s\n",
                       vectorizable_loops, advanced_loop_optimization ? "YES" : "NO");
                 
-                // Phase 4.4: Function Inlining and Call Site Optimization
-                IOLog("            Phase 4.4: Performing function inlining and call site optimization\n");
                 
                 uint32_t small_function_inlines = 0;
                 uint32_t hot_function_inlines = 0;
@@ -11527,16 +11344,12 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 compilation.stages.optimization_passes_complete = true;
                 compilation.stages.compilation_stage_count++;
                 
-                // Phase 5: GPU ISA Code Generation
-                IOLog("        Phase 5: Generating GPU ISA code\n");
                 
                 uint64_t isa_start = mach_absolute_time();
                 
                 // Comprehensive GPU ISA Generation and Architecture Translation System
                 IOLog("          Performing real-time ISA generation from optimized vertex shader bytecode\n");
                 
-                // Phase 5.1: Target Architecture Analysis and Instruction Set Selection
-                IOLog("            Phase 5.1: Analyzing target GPU architecture and selecting instruction set\n");
                 
                 compilation.isa_generation.target_architecture = 0x1050; // Simulated GPU architecture ID
                 uint32_t optimized_instruction_count = compilation.source_analysis.instruction_count - 
@@ -11623,8 +11436,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       supports_geometry_shaders ? "YES" : "NO",
                       supports_tessellation ? "YES" : "NO");
                 
-                // Phase 5.2: Instruction Translation and Encoding
-                IOLog("            Phase 5.2: Translating high-level operations to GPU ISA\n");
                 
                 uint32_t scalar_alu_instructions = 0;
                 uint32_t vector_alu_instructions = 0;
@@ -11675,8 +11486,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       compilation.isa_generation.isa_instruction_count,
                       (float)compilation.isa_generation.isa_instruction_count / (float)optimized_instruction_count);
                 
-                // Phase 5.3: GPU Resource Allocation and Scheduling Analysis
-                IOLog("            Phase 5.3: Analyzing GPU resource allocation and scheduling\n");
                 
                 uint32_t warp_occupancy_percent = 0;
                 uint32_t texture_cache_utilization = 0;
@@ -11734,8 +11543,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       requires_atomic_operations ? "REQUIRED" : "NOT_REQUIRED",
                       requires_barrier_synchronization ? "REQUIRED" : "NOT_REQUIRED");
                 
-                // Phase 5.4: Performance Optimization and Validation
-                IOLog("            Phase 5.4: Performing ISA-level performance optimization\n");
                 
                 uint32_t instruction_reordering_applied = 0;
                 uint32_t dual_issue_opportunities = 0;
@@ -11823,14 +11630,10 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 compilation.stages.isa_generation_complete = true;
                 compilation.stages.compilation_stage_count++;
                 
-                // Phase 6: Advanced Register Allocation
-                IOLog("        Phase 6: Performing advanced register allocation\n");
                 
                 // Comprehensive Advanced Register Allocation System
                 IOLog("          Performing real-time register allocation from optimized vertex shader bytecode\n");
                 
-                // Phase 6.1: Register Bank Architecture Analysis and Allocation Strategy
-                IOLog("            Phase 6.1: Analyzing register bank architecture and allocation strategy\n");
                 
                 compilation.register_allocation.available_registers = 128; // Typical GPU register count
                 uint32_t register_file_banks = 0;
@@ -11909,8 +11712,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         } semantic_analysis;
                     } spv_analysis = {0};
                     
-                    // Phase 1: Comprehensive Instruction Pattern Analysis
-                    IOLog("                Phase 1: Comprehensive instruction pattern analysis\n");
                     
                     for (uint32_t i = 0; i < vs_bytecode_size - 12; i++) {
                         uint32_t* instruction = (uint32_t*)(vs_bytecode_data + i);
@@ -12007,8 +11808,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         }
                     }
                     
-                    // Phase 2: Advanced Register Bank Conflict Analysis
-                    IOLog("                Phase 2: Advanced register bank conflict analysis\n");
                     
                     // Calculate bank conflict potential
                     spv_analysis.conflict_analysis.potential_bank_conflicts = 
@@ -12037,8 +11836,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     spv_analysis.conflict_analysis.supports_dual_issue = 
                         (spv_analysis.conflict_analysis.parallel_execution_opportunities > 8);
                     
-                    // Phase 3: SPIR-V Semantic Analysis for Allocation Strategy
-                    IOLog("                Phase 3: SPIR-V semantic analysis for allocation strategy\n");
                     
                     // Calculate opcode diversity score
                     uint32_t unique_instruction_types = 0;
@@ -12081,8 +11878,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         spv_analysis.semantic_analysis.allocation_algorithm_suitability = 75.0f; // Linear scan sufficient
                     }
                     
-                    // Phase 4: Register Architecture Determination from Analysis
-                    IOLog("                Phase 4: Register architecture determination from bytecode analysis\n");
                     
                     // Calculate optimal register file architecture
                     if (spv_analysis.usage_patterns.matrix_operations > 3 || spv_analysis.usage_patterns.vector_operations > 15) {
@@ -12176,8 +11971,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       supports_register_caching ? "YES" : "NO");
                 IOLog("                Bank Switching: %s\n", supports_bank_switching ? "YES" : "NO");
                 
-                // Phase 6.2: Live Range Analysis and Interference Graph Construction
-                IOLog("            Phase 6.2: Performing live range analysis and interference graph construction\n");
                 
                 uint32_t variable_live_ranges = 0;
                 uint32_t temporary_live_ranges = 0;
@@ -12249,8 +12042,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     } allocation_analysis;
                 } graph_analysis = {0};
                 
-                // Phase 1: Basic Live Range and Interference Analysis
-                IOLog("                Phase 1: Basic live range and interference calculation\n");
                 
                 // Live range analysis based on variable usage and control flow
                 variable_live_ranges = compilation.ast_analysis.variable_declarations;
@@ -12271,8 +12062,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 interference_graph_density = (total_live_ranges > 0) ?
                     (interference_edges * 100) / ((total_live_ranges * (total_live_ranges - 1)) / 2) : 0;
                 
-                // Phase 2: Advanced Graph Theory Analysis with Chromatic Number Estimation
-                IOLog("                Phase 2: Advanced graph theory analysis with chromatic number estimation\n");
                 
                 // Initialize graph analysis structure
                 graph_analysis.total_vertices = total_live_ranges;
@@ -12291,8 +12080,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     graph_analysis.minimum_degree = 0;
                 }
                 
-                // Phase 3: Chromatic Number Analysis and Bounds Calculation
-                IOLog("                Phase 3: Chromatic number analysis and bounds calculation\n");
                 
                 // Calculate chromatic bounds using various graph theory techniques
                 
@@ -12353,8 +12140,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     graph_analysis.chromatic_analysis.chromatic_ratio = 1.0f;
                 }
                 
-                // Phase 4: Graph Structure Analysis and Special Properties
-                IOLog("                Phase 4: Graph structure analysis and special properties\n");
                 
                 // Bipartite graph detection
                 graph_analysis.chromatic_analysis.is_bipartite = 
@@ -12412,8 +12197,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     (graph_analysis.structural_analysis.tree_decomposition_width > 0) ?
                     graph_analysis.structural_analysis.tree_decomposition_width - 1 : 0;
                 
-                // Phase 5: Register Allocation Analysis and Algorithm Selection
-                IOLog("                Phase 5: Register allocation analysis and algorithm selection\n");
                 
                 // Identify spill candidates (high-degree vertices)
                 graph_analysis.allocation_analysis.spill_candidate_vertices = 0;
@@ -12601,8 +12384,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 IOLog("                Interference Edges: %d, Graph Density: %d%%\n",
                       interference_edges, interference_graph_density);
                 
-                // Phase 6.3: Register Allocation Algorithm Selection and Execution
-                IOLog("            Phase 6.3: Selecting and executing register allocation algorithm\n");
                 
                 // Comprehensive Chaitin-Briggs Algorithm Implementation with Optimistic Coloring
                 IOLog("              Implementing advanced Chaitin-Briggs algorithm with optimistic coloring\n");
@@ -12704,8 +12485,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     } performance;
                 } chaitin_briggs = {0};
                 
-                // Phase 1: Algorithm Configuration and Initialization
-                IOLog("                Phase 1: Algorithm configuration and initialization\n");
                 
                 // Configure algorithm parameters based on problem complexity
                 chaitin_briggs.config.max_iterations = (interference_graph_density > 70) ? 8 : 5;
@@ -12730,8 +12509,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       chaitin_briggs.state.vertices_remaining, chaitin_briggs.state.vertices_precolored,
                       interference_graph_density);
                 
-                // Phase 2: Iterative Chaitin-Briggs Algorithm Execution
-                IOLog("                Phase 2: Iterative Chaitin-Briggs algorithm execution\n");
                 
                 uint64_t algorithm_start = mach_absolute_time();
                 
@@ -12882,8 +12659,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     }
                 }
                 
-                // Phase 3: Select Phase with Optimistic Coloring
-                IOLog("                Phase 3: Select phase with optimistic coloring\n");
                 
                 if (chaitin_briggs.state.select_phase_active) {
                     uint64_t select_start = mach_absolute_time();
@@ -12917,7 +12692,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         // Advanced Vertex Analysis and Coloring Strategy System
                         // Comprehensive vertex characteristics analysis for optimal register assignment
                         
-                        // Phase 1: Vertex Degree and Interference Pattern Analysis
                         uint32_t vertex_degree = (vertex < overlapping_live_ranges) ? 
                             (overlapping_live_ranges - vertex) / 2 + 1 : 1;
                         uint32_t local_interference_density = (vertex_degree * 100) / overlapping_live_ranges;
@@ -12933,7 +12707,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                             (float)vertex_degree / (float)overlapping_live_ranges : 0.0f;
                         // uint32_t vertex_influence_radius = (vertex_degree / 3) + 1; // Reserved for future use
                         
-                        // Phase 2: Register Class Analysis and Constraint Classification
                         uint32_t register_class_constraints = 0;
                         uint32_t spill_cost_weight = 0;
                         bool is_high_priority_vertex = false;
@@ -12987,7 +12760,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                             spill_cost_weight = 2 + constant_sharing_benefit; // Low cost for constants
                         }
                         
-                        // Phase 3: Advanced Register Availability and Conflict Analysis
                         uint32_t class_specific_colors = available_colors;
                         uint32_t bank_specific_colors = available_colors;
                         uint32_t pairing_available_colors = available_colors;
@@ -13023,7 +12795,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                             effective_available_colors = aliasing_available_colors;
                         }
                         
-                        // Phase 4: Sophisticated Vertex Degree and Conflict Adjustment
                         uint32_t degree_adjusted_blocked = colors_blocked;
                         uint32_t clustering_adjustment = 0;
                         uint32_t sparsity_bonus = 0;
@@ -13056,7 +12827,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                             effective_available_colors - degree_adjusted_blocked : 0;
                         remaining_colors = constraint_adjusted_colors;
                         
-                        // Phase 5: Advanced Coloring Decision and Optimization Strategy
                         uint32_t coloring_strategy_score = 0;
                         bool prefers_low_numbered_registers = is_high_priority_vertex;
                         bool prefers_caller_saved_registers = !is_high_priority_vertex;
@@ -13270,8 +13040,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 chaitin_briggs.performance.total_algorithm_time_ms = (float)(algorithm_end - algorithm_start) / 1000000.0f;
                 chaitin_briggs.performance.phase_distribution[0] = chaitin_briggs.phases.simplify.phase_execution_time_ms;
                 
-                // Phase 4: Performance Analysis and Algorithm Assessment
-                IOLog("                Phase 4: Performance analysis and algorithm assessment\n");
                 
                 // Calculate algorithm complexity and efficiency
                 chaitin_briggs.performance.algorithm_complexity_score = 
@@ -13305,7 +13073,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       chaitin_briggs.performance.meets_performance_target ? "YES" : "NO",
                       chaitin_briggs.phases.select.coloring_success_rate);
                 
-                // Store results for Phase 6.4
                 uint32_t graph_coloring_complexity = chaitin_briggs.performance.algorithm_complexity_score;
                 uint32_t linear_scan_efficiency = 100 - (uint32_t)(chaitin_briggs.performance.total_algorithm_time_ms);
                 uint32_t priority_based_allocation = chaitin_briggs.phases.select.vertices_colored;
@@ -13483,8 +13250,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       failed_colorings, register_coalescing_applied);
                 IOLog("                Register Splitting: %d\n", register_splitting_applied);
                 
-                // Phase 6.4: Register Assignment and Spill Code Generation
-                IOLog("            Phase 6.4: Performing register assignment and spill code generation\n");
                 
                 // Comprehensive Register Assignment and Advanced Spill Code Generation System
                 IOLog("              Implementing comprehensive register assignment with advanced spill code generation\n");
@@ -13561,8 +13326,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     } quality;
                 } assignment_system = {0};
                 
-                // Phase 1: Register Class Analysis and Allocation
-                IOLog("                Phase 1: Register class analysis and allocation\n");
                 
                 uint32_t allocated_general_registers = 0;
                 uint32_t allocated_vector_registers = 0;
@@ -13603,8 +13366,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       assignment_system.register_classes.supports_register_renaming ? "YES" : "NO",
                       assignment_system.register_classes.supports_register_forwarding ? "YES" : "NO");
                 
-                // Phase 2: Assignment Strategy Selection and Configuration
-                IOLog("                Phase 2: Assignment strategy selection and configuration\n");
                 
                 // Select assignment strategy based on problem characteristics
                 if (chromatic_number_estimate > compilation.register_allocation.available_registers) {
@@ -13635,8 +13396,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       assignment_system.strategy.enable_register_coalescing ? "ON" : "OFF",
                       assignment_system.strategy.enable_live_range_splitting ? "ON" : "OFF");
                 
-                // Phase 3: Real-time Register Assignment from SPIR-V Analysis
-                IOLog("                Phase 3: Real-time register assignment from SPIR-V analysis\n");
                 
                 // Advanced Register Assignment and Spill Analysis System
                 uint32_t register_class_assignments[8] = {0}; // Different register classes
@@ -13757,8 +13516,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     allocated_special_registers = special_purpose_registers;
                 }
                 
-                // Phase 4: Advanced Spill Code Generation and Optimization
-                IOLog("                Phase 4: Advanced spill code generation and optimization\n");
                 
                 if (spill_locations_created > 0) {
                     // Advanced spill code generation system
@@ -13827,8 +13584,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 // Add register aliasing conflicts to bank conflicts
                 register_allocation_bank_conflicts += register_aliasing_conflicts;
                 
-                // Phase 5: Quality Assessment and Performance Impact Analysis
-                IOLog("                Phase 5: Quality assessment and performance impact analysis\n");
                 
                 // Calculate comprehensive register allocation metrics
                 compilation.register_allocation.register_pressure_score = 
@@ -13899,8 +13654,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           spill_locations_created, assignment_system.spill_generation.spill_code_efficiency);
                 }
                 
-                // Phase 6.4 Summary and Final Performance Assessment
-                IOLog("            Phase 6.4 Register Assignment Summary:\n");
                 IOLog("              Total Register Classes: %d configured with advanced features\n",
                       (assignment_system.register_classes.general_purpose_registers > 0 ? 1 : 0) +
                       (assignment_system.register_classes.vector_registers > 0 ? 1 : 0) +
@@ -13918,10 +13671,8 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       uses_register_pairs ? "YES" : "NO",
                       uses_register_windows ? "YES" : "NO");
                 
-                // Phase 6 Register Allocation Summary
                 float total_register_allocation_time = 15.5f; // Estimated comprehensive time
                 
-                IOLog("          Phase 6 Register Allocation Complete - Total Time: %.3f ms\n", total_register_allocation_time);
                 IOLog("            Architecture Analysis: %s, %d banks detected\n",
                       supports_register_renaming ? "ADVANCED" : "STANDARD", register_file_banks);
                 IOLog("            Interference Graph: %u%% density, chromatic estimate: %d\n",
@@ -13938,21 +13689,15 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
             
             }  // End of Phase 6 Register Allocation
             
-            // Phase 6 Complete - Register allocation finished successfully
-            IOLog("          Phase 6 Register Allocation: COMPLETED SUCCESSFULLY\n");
             IOLog("            Comprehensive register allocation system implemented with 4 sub-phases\n");
             IOLog("            Architecture analysis, interference graphs, Chaitin-Briggs algorithm, and assignment complete\n");
             
             float register_phase_time = 15.0f; // Estimated phase time
             IOLog("            Register allocation phase timing: %.3f ms\n", register_phase_time);
                 
-                // Phase 7: Comprehensive Binary Generation and Final Optimization System
-                IOLog("        Phase 7: Professional Binary Generation with Real-time Analysis\n");
                 
                 uint64_t binary_start = mach_absolute_time();
                 
-                // Phase 7.1: Instruction Encoding and Binary Format Generation
-                IOLog("          Phase 7.1: Instruction encoding and format generation\n");
                 uint64_t phase7_1_start = mach_absolute_time();
                 
                 struct InstructionEncodingAnalysis {
@@ -14150,8 +13895,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 uint64_t phase7_1_end = mach_absolute_time();
                 float phase7_1_time = (float)(phase7_1_end - phase7_1_start) / 1000000.0f;
                 
-                // Phase 7.2: Symbol Resolution and Relocation Table Generation
-                IOLog("          Phase 7.2: Symbol resolution and relocation generation\n");
                 uint64_t phase7_2_start = mach_absolute_time();
                 
                 struct SymbolResolutionSystem {
@@ -14291,8 +14034,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       symbol_system.relocation_count,
                       symbol_system.resolution_stats.symbol_resolution_success_rate);
                 
-                // Phase 7.3: Debug Information and Metadata Generation
-                IOLog("          Phase 7.3: Debug information and metadata generation\n");
                 uint64_t phase7_3_start = mach_absolute_time();
                 
                 struct DebugMetadataSystem {
@@ -14409,8 +14150,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       debug_metadata.metadata.shader_version,
                       debug_metadata.metadata.feature_flags);
                 
-                // Phase 7.4: Binary Optimization and Output Generation
-                IOLog("          Phase 7.4: Binary optimization and final output\n");
                 uint64_t phase7_4_start = mach_absolute_time();
                 
                 struct BinaryOptimizationSystem {
@@ -14571,10 +14310,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 float total_phase7_time = (float)(binary_end - binary_start) / 1000000.0f;
                 
                 IOLog("          Comprehensive Binary Generation Results:\n");
-                IOLog("            Phase 7.1 (Instruction Encoding): %.2f ms\n", phase7_1_time);
-                IOLog("            Phase 7.2 (Symbol Resolution): %.2f ms\n", phase7_2_time);
-                IOLog("            Phase 7.3 (Debug/Metadata): %.2f ms\n", phase7_3_time);
-                IOLog("            Phase 7.4 (Binary Optimization): %.2f ms\n", phase7_4_time);
                 IOLog("            Total Binary Generation Time: %.2f ms\n", total_phase7_time);
                 IOLog("            Final Binary: %d bytes, %d symbols, %d relocations\n",
                       binary_optimization.final_binary.total_size_bytes,
@@ -14585,7 +14320,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       binary_optimization.final_binary.is_position_independent ? "with" : "without");
                 
                 // Phase timing stored in debugging structures
-                // Stage 6 (Phase 7) timing: total_phase7_time ms
                 // Binary generation complete, instruction encoding time tracked
                 
                 // Calculate total compilation time estimate
@@ -14715,8 +14449,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         IOLog("VMShaderManager::linkProgram: Estimated compilation time: %.2f ms (marked at %llu)\n", 
               total_compilation_time_ms, compilation_end);
         
-        // Phase 7B: Symbol Resolution Between Shader Stages
-        IOLog("VMShaderManager::linkProgram: Phase 7B - Inter-Stage Symbol Resolution\n");
         
         struct SymbolResolution {
             uint32_t vertex_outputs_resolved;
@@ -14816,8 +14548,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     } performance = {0};
                 } advanced_resolution = {0};
                 
-                // Phase 1: Extract vertex shader output symbols
-                IOLog("    Phase 1: Extracting vertex shader output symbols\n");
                 
                 if (vertex_shader->bytecode && vertex_shader->bytecode->getLength() > 0) {
                     const uint8_t* v_bytecode = (const uint8_t*)vertex_shader->bytecode->getBytesNoCopy();
@@ -15064,8 +14794,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                     }
                 }
                 
-                // Phase 2: Extract fragment shader input symbols
-                IOLog("    Phase 2: Extracting fragment shader input symbols\n");
                 
                 if (fragment_shader->bytecode && fragment_shader->bytecode->getLength() > 0) {
                     // Similar analysis for fragment shader inputs
@@ -15097,8 +14825,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           advanced_resolution.fragment_input_count);
                 }
                 
-                // Phase 3: Symbol matching and validation
-                IOLog("    Phase 3: Performing symbol matching and validation\n");
                 
                 for (uint32_t v_out = 0; v_out < advanced_resolution.vertex_output_count; v_out++) {
                     bool found_match = false;
@@ -15216,8 +14942,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         // Simplified timing calculation for kernel context
         symbol_resolution.symbol_resolution_time_ms = (float)(resolution_end - resolution_start) / 1000000.0f;
         
-        // Phase 7C: GPU Resource Allocation and Management
-        IOLog("VMShaderManager::linkProgram: Phase 7C - GPU Resource Allocation\n");
         
         struct GPUResourceAllocation {
             // Uniform Buffer Objects
@@ -15367,8 +15091,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         IOLog("  GPU Memory: %lld bytes allocated, Peak: %lld bytes\n",
               gpu_resources.gpu_memory_allocated_bytes, gpu_resources.gpu_memory_peak_usage);
         
-        // Phase 7D: Hardware Resource Limits Validation
-        IOLog("VMShaderManager::linkProgram: Phase 7D - Resource Limits Validation\n");
         
         struct ResourceLimitsValidation {
             // Uniform limits
@@ -15435,9 +15157,7 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
             IOLog("  Resource validation: ALL LIMITS OK\n");
         }
         
-        // Phase 7E: Final GPU Pipeline State Configuration
         if (link_result == kIOReturnSuccess) {
-            IOLog("VMShaderManager::linkProgram: Phase 7E - Pipeline State Configuration\n");
             
             struct GPUPipelineState {
                 uint32_t pipeline_state_object_id;
@@ -15676,8 +15396,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                 };
             } pso_config = {0};
             
-            // Phase 1: Configure Shader Stages
-            IOLog("    Phase 1: Configuring shader stages for pipeline\n");
             
             if (validation.has_vertex_shader) {
                 CompiledShader* vertex_shader = findShader(validation.vertex_shader_id);
@@ -15765,8 +15483,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         } specialization = {0};
                     } gpu_compilation = {0};
                     
-                    // Phase 1: Comprehensive Shader Validation
-                    IOLog("          Phase 1: Comprehensive shader validation\n");
                     
                     // Bytecode integrity validation
                     uint32_t bytecode_size = (uint32_t)vertex_shader->bytecode->getLength();
@@ -15797,8 +15513,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           gpu_compilation.validation.resource_requirements_valid ? "OK" : "EXCEEDED",
                           gpu_compilation.validation.compatibility_score);
                     
-                    // Phase 2: GPU Architecture Optimization Analysis
-                    IOLog("          Phase 2: GPU architecture optimization analysis\n");
                     
                     // Calculate optimization opportunities based on shader characteristics
                     uint32_t estimated_instruction_count = bytecode_size / 8; // Rough estimate: 8 bytes per instruction
@@ -15845,8 +15559,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           gpu_compilation.metrics.memory_bandwidth_estimate,
                           gpu_compilation.metrics.arithmetic_intensity);
                     
-                    // Phase 3: Advanced Handle Allocation with Caching
-                    IOLog("          Phase 3: Advanced handle allocation with caching\n");
                     
                     // Generate sophisticated handle with validation
                     gpu_compilation.handle_allocation.base_handle_id = validation.vertex_shader_id + 2000;
@@ -15889,8 +15601,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                           gpu_compilation.handle_allocation.supports_debugging ? "YES" : "NO",
                           gpu_compilation.handle_allocation.reference_count);
                     
-                    // Phase 4: Shader Specialization Analysis
-                    IOLog("          Phase 4: Shader specialization analysis\n");
                     
                     // Analyze specialization opportunities
                     gpu_compilation.specialization.specialization_constant_count = 
@@ -15918,8 +15628,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                         IOLog("            Specialization: NOT BENEFICIAL (too few constants)\n");
                     }
                     
-                    // Phase 5: Performance Analysis and Estimation
-                    IOLog("          Phase 5: Performance analysis and estimation\n");
                     
                     // Control flow complexity analysis
                     gpu_compilation.metrics.branch_complexity_score = (bytecode_size > 1024) ?
@@ -16003,8 +15711,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
             pso_config.shader_stages.pipeline_hash = pipeline_hash;
             pso_config.shader_stages.shader_stages_valid = true;
             
-            // Phase 2: Configure Vertex Input State
-            IOLog("    Phase 2: Configuring vertex input state\n");
             
             if (program->all_attributes && program->all_attributes->getCount() > 0) {
                 pso_config.vertex_input.vertex_binding_count = 1; // Single interleaved buffer
@@ -16046,8 +15752,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       pso_config.vertex_input.vertex_bindings[0].stride_bytes);
             }
             
-            // Phase 3: Configure Advanced Rasterization State
-            IOLog("    Phase 3: Configuring advanced rasterization state\n");
             
             // Check for conservative rasterization capability
             if (m_accelerator && true) { // Conservative raster support check
@@ -16069,8 +15773,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                   pso_config.rasterization.polygon_mode, pso_config.rasterization.cull_mode,
                   pso_config.rasterization.line_width);
             
-            // Phase 4: Configure Variable Rate Shading (VRS) if supported
-            IOLog("    Phase 4: Configuring variable rate shading\n");
             
             if (m_accelerator && false) { // Variable rate shading support check
                 pso_config.multisampling.variable_rate_shading_enabled = true;
@@ -16089,8 +15791,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                   pso_config.multisampling.min_sample_shading,
                   pso_config.multisampling.alpha_to_coverage_enabled ? "ON" : "OFF");
             
-            // Phase 5: Configure Advanced Depth-Stencil Operations
-            IOLog("    Phase 5: Configuring advanced depth-stencil state\n");
             
             // Enable early fragment tests for better performance
             if (validation.has_fragment_shader && true) { // Early fragment tests check
@@ -16110,8 +15810,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                   pso_config.depth_stencil.depth_write_enabled ? "ON" : "OFF",
                   pso_config.depth_stencil.depth_compare_op);
             
-            // Phase 6: Configure Advanced Blending with Dual-Source Support
-            IOLog("    Phase 6: Configuring advanced color blending\n");
             
             // Check for advanced blending modes
             if (m_accelerator) {
@@ -16135,8 +15833,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                       pso_config.color_blend.attachments[i].color_blend_op);
             }
             
-            // Phase 7: Configure Dynamic State for Runtime Flexibility
-            IOLog("    Phase 7: Configuring dynamic state\n");
             
             uint32_t dynamic_count = 0;
             
@@ -16165,8 +15861,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
                   pso_config.dynamic_state.scissor_dynamic ? "Y" : "N",
                   pso_config.dynamic_state.depth_bias_dynamic ? "Y" : "N");
             
-            // Phase 8: Pipeline Cache Management and Optimization
-            IOLog("    Phase 8: Managing pipeline cache\n");
             
             // Check if this pipeline configuration exists in cache
             pso_config.pipeline_cache.cache_handle = (pipeline_hash % 1024) + 3000; // Simulated cache handle
@@ -16258,7 +15952,6 @@ IOReturn CLASS::linkProgram(uint32_t program_id)
         }
     }
     
-    // Phase 8: Finalize program state
     if (link_result == kIOReturnSuccess && validation.interface_compatible) {
         program->is_linked = true;
         program->link_timestamp = mach_absolute_time();
@@ -16292,7 +15985,6 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
     
     IOLockLock(m_shader_lock);
     
-    // Phase 1: Locate shader program
     ShaderProgram* program = findProgram(program_id);
     if (!program) {
         IOLockUnlock(m_shader_lock);
@@ -16300,8 +15992,6 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
         return kIOReturnNotFound;
     }
     
-    // Phase 2: Check if program is currently in use
-    IOLog("VMShaderManager::destroyProgram: Phase 2 - Active Usage Check\n");
     
     struct ProgramUsageCheck {
         uint32_t active_contexts;
@@ -16328,7 +16018,6 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
     usage_check.last_usage_time = program->last_used_timestamp;
     usage_check.safe_to_destroy = !usage_check.is_currently_bound;
     
-    // Phase 3: Forceful unbinding from active contexts (if needed)
     if (usage_check.is_currently_bound) {
         IOLog("VMShaderManager::destroyProgram: WARNING - Program %d is bound to %d contexts, unbinding\n",
               program_id, usage_check.active_contexts);
@@ -16349,10 +16038,8 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
         }
     }
     
-    // Phase 4: Hardware resource deallocation
     IOReturn dealloc_result = kIOReturnSuccess;
     if (m_accelerator && program->hardware_optimized) {
-        IOLog("VMShaderManager::destroyProgram: Phase 4 - Hardware Resource Deallocation\n");
         
         // In a real implementation, this would:
         // - Deallocate GPU memory for shader bytecode
@@ -16364,8 +16051,6 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
         IOLog("VMShaderManager::destroyProgram: Released hardware resources for program %d\n", program_id);
     }
     
-    // Phase 5: Reference counting and shader cleanup
-    IOLog("VMShaderManager::destroyProgram: Phase 5 - Shader Reference Management\n");
     
     if (program->shader_ids) {
         for (unsigned int i = 0; i < program->shader_ids->getCount(); i++) {
@@ -16393,8 +16078,6 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
         }
     }
     
-    // Phase 6: Memory cleanup and resource release
-    IOLog("VMShaderManager::destroyProgram: Phase 6 - Memory Cleanup\n");
     
     struct ResourceCleanup {
         size_t uniforms_released;
@@ -16453,7 +16136,6 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
         cleanup.total_memory_freed += cleanup.performance_stats_size;
     }
     
-    // Phase 7: Remove from program registry
     for (unsigned int i = 0; i < m_programs->getCount(); i++) {
         ShaderProgram* p = (ShaderProgram*)m_programs->getObject(i);
         if (p && p->program_id == program_id) {
@@ -16466,7 +16148,6 @@ IOReturn CLASS::destroyProgram(uint32_t program_id)
     
     IOLockUnlock(m_shader_lock);
     
-    // Phase 8: Comprehensive destruction report
     IOLog("VMShaderManager: ========== Program Destruction Complete ==========\n");
     IOLog("  Program ID: %d\n", program_id);
     IOLog("  Usage Statistics:\n");

@@ -390,8 +390,6 @@ IOReturn CLASS::destroySurface(uint32_t surface_id)
 /*
  * Advanced IOSurface Property Management System v5.0
  * 
- * This system provides enterprise-level surface property management with:
- * - Multi-phase property discovery pipeline (Validation → Resolution → Property Analysis → Analytics)
  * - Advanced surface property caching with intelligent invalidation
  * - Multi-resolution surface descriptor management with format optimization
  * - Real-time property validation and compatibility analysis
@@ -402,14 +400,11 @@ IOReturn CLASS::destroySurface(uint32_t surface_id)
  * 1. Surface Property Validation Pipeline
  * 2. Multi-Resolution Property Cache Engine
  * 3. Advanced Property Discovery and Analysis Core
- * 4. Real-time Property Analytics and Statistics System
  */
 
 /*
  * Advanced IOSurface Property Management System v5.0
  * 
- * This system provides enterprise-level surface property management with:
- * - Multi-phase property discovery pipeline (Validation → Resolution → Property Analysis → Analytics)
  * - Advanced surface property caching with intelligent invalidation
  * - Multi-resolution surface descriptor management with format optimization
  * - Real-time property validation and compatibility analysis
@@ -420,7 +415,6 @@ IOReturn CLASS::destroySurface(uint32_t surface_id)
  * 1. Surface Property Validation Pipeline
  * 2. Multi-Resolution Property Cache Engine
  * 3. Advanced Property Discovery and Analysis Core
- * 4. Real-time Property Analytics and Statistics System
  */
 
 typedef struct {
@@ -491,7 +485,6 @@ IOReturn CLASS::getSurfaceDescriptor(uint32_t surface_id, VMIOSurfaceDescriptor*
     uint64_t property_start_time = 0;
     clock_get_uptime(&property_start_time);
     
-    // Phase 1: Surface Property Validation Pipeline
     
     // 1.1: Input parameter validation with comprehensive error checking
     if (!descriptor) {
@@ -528,7 +521,6 @@ IOReturn CLASS::getSurfaceDescriptor(uint32_t surface_id, VMIOSurfaceDescriptor*
     
     g_property_stats.property_lookups++;
     
-    // Phase 2: Multi-Resolution Property Cache Engine
     
     // 2.1: Fast cache lookup for recently accessed surface properties
     for (uint32_t i = 0; i < g_property_cache_size; i++) {
@@ -557,7 +549,6 @@ IOReturn CLASS::getSurfaceDescriptor(uint32_t surface_id, VMIOSurfaceDescriptor*
     
     g_property_stats.cache_misses++;
     
-    // Phase 3: Advanced Property Discovery and Analysis Core
     
     // 3.1: Extract surface data and analyze properties
     VMIOSurface* surface = (VMIOSurface*)surface_data->getBytesNoCopy();
@@ -634,7 +625,6 @@ IOReturn CLASS::getSurfaceDescriptor(uint32_t surface_id, VMIOSurfaceDescriptor*
         }
     }
     
-    // Phase 4: Real-time Property Analytics and Statistics System
     
     // 4.1: Property compatibility analysis
     g_property_stats.compatibility_checks++;
@@ -756,7 +746,6 @@ IOReturn CLASS::getSurfaceDescriptor(uint32_t surface_id, VMIOSurfaceDescriptor*
 
 /*
  * Advanced IOSurface Property Management Analytics and Control API
- * Provides enterprise-level property statistics and cache management
  */
 
 // Get current property management system statistics
@@ -1191,7 +1180,7 @@ IOReturn CLASS::configureMemoryPools()
     } pool_configs[] = {
         { 1 * 1024 * 1024,   "Small" },    // 1MB pool
         { 4 * 1024 * 1024,   "Medium" },   // 4MB pool
-        { 512 * 1024 * 1024,  "Large" },    // 512MB pool (matches VRAM size)
+        { 16 * 1024 * 1024,  "Large" },    // 16MB pool
         { 64 * 1024 * 1024,  "XLarge" },   // 64MB pool
         { 0, nullptr }
     };
@@ -3865,9 +3854,6 @@ IOReturn CLASS::updateSurfaceFromTexture(uint32_t surface_id, uint32_t texture_i
     return kIOReturnSuccess;
 }
 
-
-
-
 IOReturn CLASS::syncGPUResource(uint32_t surface_id)
 {
     if (surface_id == 0) {
@@ -4379,3 +4365,6 @@ IOReturn CLASS::validateVideoPixelFormat(VMIOSurfacePixelFormat format, uint32_t
           format, codec_type);
     return kIOReturnBadArgument;
 }
+
+// =============================================================================
+// Missing method implementations for Snow Leopard symbol resolution

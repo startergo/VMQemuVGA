@@ -1,10 +1,19 @@
 #include "VMVirtIOFramebuffer.h"
 #include "VMVirtIOGPU.h"
 #include "VMVirtIOAGDC.h"
+#include "VMQemuVGAClient.h"
+#include "VMQemuVGAAccelerator.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/ndrvsupport/IOMacOSVideo.h>
 #include <IOKit/graphics/IOGraphicsTypes.h>
 #include <IOKit/graphics/IOAccelClientConnect.h>
+
+// Forward declaration for IODisplayWrangler
+class IODisplayWrangler : public IOService
+{
+public:
+    static bool makeDisplayConnects(IOFramebuffer* fb);
+};
 
 #define super IOFramebuffer
 OSDefineMetaClassAndStructors(VMVirtIOFramebuffer, IOFramebuffer);
@@ -19,6 +28,10 @@ bool VMVirtIOFramebuffer::init(OSDictionary* properties)
     m_pci_device = nullptr;
     m_vram_range = nullptr;
     m_agdc_service = nullptr;
+    m_accelerator = nullptr;
+    m_refresh_timer = nullptr;
+    m_scanout_resource_id = 1;  // Primary GUI display resource ID
+    m_scanout_taken_over_by_3d = false;  // 2D framebuffer active by default
     m_width = 1024;
     m_height = 768;
     m_depth = 32;
@@ -33,6 +46,13 @@ bool VMVirtIOFramebuffer::init(OSDictionary* properties)
 
 void VMVirtIOFramebuffer::free()
 {
+    // Stop and release refresh timer
+    if (m_refresh_timer) {
+        m_refresh_timer->cancelTimeout();
+        m_refresh_timer->release();
+        m_refresh_timer = nullptr;
+    }
+    
     if (m_vram_range) {
         m_vram_range->release();
         m_vram_range = nullptr;
@@ -45,55 +65,219 @@ void VMVirtIOFramebuffer::free()
 
 IOService* VMVirtIOFramebuffer::probe(IOService* provider, SInt32* score)
 {
-    IOLog("VMVirtIOFramebuffer::probe() - SIMPLE APPROACH\n");
+    IOLog("VMVirtIOFramebuffer::probe() - Checking provider type\n");
     
-    // SIMPLE: Just check if provider is VMVirtIOGPU
-    VMVirtIOGPU* gpuDevice = OSDynamicCast(VMVirtIOGPU, provider);
-    if (!gpuDevice) {
-        IOLog("VMVirtIOFramebuffer::probe() - Provider is not VMVirtIOGPU\n");
-        return nullptr;
+    // Check if provider is IOPCIDevice (direct PCI match - preferred for Display Preferences)
+    IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, provider);
+    if (pciDevice) {
+        IOLog("VMVirtIOFramebuffer::probe() - Direct PCI device match (Display Preferences compatible)\n");
+        *score = 90001;  // Higher than VMVirtIOGPU to take precedence
+        return super::probe(provider, score);
     }
     
-    // Simple probe score
-    *score = 1000;
+    // Check if provider is VMVirtIOGPU (child framebuffer approach)
+    VMVirtIOGPU* gpuDevice = OSDynamicCast(VMVirtIOGPU, provider);
+    if (gpuDevice) {
+        IOLog("VMVirtIOFramebuffer::probe() - VMVirtIOGPU provider (child framebuffer)\n");
+        *score = 1000;
+        return super::probe(provider, score);
+    }
     
-    IOLog("VMVirtIOFramebuffer::probe() - SUCCESS: Simple framebuffer probe complete\n");
-    
-    return super::probe(provider, score);
+    IOLog("VMVirtIOFramebuffer::probe() - Provider is neither IOPCIDevice nor VMVirtIOGPU\n");
+    return nullptr;
 }
 
 bool VMVirtIOFramebuffer::start(IOService* provider)
 {
-    IOLog("VMVirtIOFramebuffer::start() - SIMPLE FRAMEBUFFER starting\n");
+    // CRITICAL: 5-second initialization delay (same race condition as QXL)
+    // Race condition fix: Delay driver initialization to ensure system services are ready
+    // Analysis with io=0xff debug logging revealed that IOFramebuffer::open() blocks if called
+    // too early during boot. Testing showed 100ms insufficient, but 5000ms (5 seconds) consistently
+    // works. This delay ensures WindowServer and IOGraphicsFamily are fully initialized before
+    // our framebuffer becomes available. Without this, open() hangs intermittently during boot.
+    IOLog("VMVirtIOFramebuffer::start() - Applying 5-second initialization delay for race condition fix...\n");
+    IOSleep(5000);  // 5000ms delay - empirically determined minimum for reliable boot
+    IOLog("VMVirtIOFramebuffer::start() - Initialization delay complete - system services ready\n");
     
-    // Simple provider check
-    VMVirtIOGPU* gpuDevice = OSDynamicCast(VMVirtIOGPU, provider);
-    if (!gpuDevice) {
-        IOLog("VMVirtIOFramebuffer::start() - Provider is not VMVirtIOGPU\n");
-        return false;
-    }
-    
-    IOLog("VMVirtIOFramebuffer::start() - Simple framebuffer mode\n");
+    IOLog("VMVirtIOFramebuffer::start() - Starting framebuffer\n");
     
     if (!super::start(provider)) {
         IOLog("VMVirtIOFramebuffer::start() - super::start() failed\n");
         return false;
     }
     
-    // Provider is now VMVirtIOGPU (traditional approach)
-    m_gpu_driver = gpuDevice;
-    IOLog("VMVirtIOFramebuffer::start() - Traditional provider mode: provider=%p (VMVirtIOGPU)\n", provider);
+    // Check provider type - Direct PCI match (preferred) or VMVirtIOGPU child
+    IOPCIDevice* directPCI = OSDynamicCast(IOPCIDevice, provider);
+    VMVirtIOGPU* gpuDevice = OSDynamicCast(VMVirtIOGPU, provider);
     
-    // Provider is VMVirtIOGPU, get PCI device from its provider
-    m_pci_device = OSDynamicCast(IOPCIDevice, gpuDevice->getProvider());
-    m_gpu_driver = gpuDevice; // VMVirtIOGPU instance
+    if (directPCI) {
+        // PREFERRED: Direct PCI device match - Display Preferences compatible
+        IOLog("VMVirtIOFramebuffer::start() - Direct PCI match mode (Display Preferences compatible)\n");
+        m_pci_device = directPCI;
+        
+        // CRITICAL: Mark this as the boot/console display (copied from QXL)
+        // WindowServer checks for this property via isConsoleDevice()
+        // Without it, WindowServer falls back to console mode instead of GUI
+        provider->setProperty("AAPL,boot-display", kOSBooleanTrue);
+        IOLog("VMVirtIOFramebuffer::start() - Set AAPL,boot-display property for console device recognition\n");
+        
+        // Create VMVirtIOGPU as helper object (NO IOService registration - prevents kernel panic)
+        // Use initializeWithPCIDevice() instead of start() to skip registerService()
+        IOLog("VMVirtIOFramebuffer::start() - Creating VMVirtIOGPU helper object (no IOService registration)...\n");
+        m_gpu_driver = new VMVirtIOGPU;
+        if (m_gpu_driver) {
+            if (m_gpu_driver->init(nullptr)) {
+                // Initialize with PCI device (does everything except registerService)
+                if (m_gpu_driver->initializeWithPCIDevice(m_pci_device)) {
+                    IOLog("VMVirtIOFramebuffer::start() - VMVirtIOGPU helper initialized: %p\n", m_gpu_driver);
+                } else {
+                    IOLog("VMVirtIOFramebuffer::start() - VMVirtIOGPU::initializeWithPCIDevice() failed\n");
+                    m_gpu_driver->release();
+                    m_gpu_driver = nullptr;
+                }
+            } else {
+                IOLog("VMVirtIOFramebuffer::start() - VMVirtIOGPU::init() failed\n");
+                m_gpu_driver->release();
+                m_gpu_driver = nullptr;
+            }
+        } else {
+            IOLog("VMVirtIOFramebuffer::start() - Failed to allocate VMVirtIOGPU\n");
+        }
+        
+        if (!m_gpu_driver) {
+            IOLog("VMVirtIOFramebuffer::start() - WARNING: VMVirtIOGPU creation failed, GPU operations disabled\n");
+        }
+        
+    } else if (gpuDevice) {
+        // FALLBACK: VMVirtIOGPU child approach (works but not Display Preferences compatible)
+        IOLog("VMVirtIOFramebuffer::start() - VMVirtIOGPU child mode\n");
+        m_gpu_driver = gpuDevice;
+        m_pci_device = OSDynamicCast(IOPCIDevice, gpuDevice->getProvider());
+        
+    } else {
+        IOLog("VMVirtIOFramebuffer::start() - ERROR: Provider is neither IOPCIDevice nor VMVirtIOGPU\n");
+        return false;
+    }
     
-    IOLog("VMVirtIOFramebuffer::start() - Traditional mode: provider=%p, gpu_driver=%p, pci_device=%p\n", 
+    // CRITICAL: Establish bidirectional reference with GPU driver for scanout coordination
+    if (m_gpu_driver) {
+        m_gpu_driver->setFramebuffer(this);
+    }
+    
+    IOLog("VMVirtIOFramebuffer::start() - provider=%p, gpu_driver=%p, pci_device=%p\n", 
           provider, m_gpu_driver, m_pci_device);
+    
+    // CRITICAL: Initialize VRAM range early for display refresh
+    if (m_pci_device && !m_vram_range) {
+        m_vram_range = m_pci_device->getDeviceMemoryWithIndex(0);
+        if (m_vram_range) {
+            m_vram_range->retain();
+            IOLog("VMVirtIOFramebuffer::start() - VRAM range obtained: size=%llu bytes\n", 
+                  m_vram_range->getLength());
+        }
+    }
+    
+    // CRITICAL: Start display refresh timer immediately after GPU initialization
+    // VirtIO GPU requires periodic transfer/flush commands to update the display
+    IOLog("VMVirtIOFramebuffer::start() - Checking prerequisites: gpu=%p, pci=%p, vram=%p\n",
+          m_gpu_driver, m_pci_device, m_vram_range);
+    if (m_gpu_driver && m_pci_device && m_vram_range) {
+        IOLog("VMVirtIOFramebuffer::start() - ✓ All prerequisites met - Creating display refresh timer on PCI workloop\n");
+        IOWorkLoop* pci_workloop = m_pci_device->getWorkLoop();
+        if (pci_workloop) {
+            m_refresh_timer = IOTimerEventSource::timerEventSource(this, 
+                (IOTimerEventSource::Action)&VMVirtIOFramebuffer::displayRefreshTimer);
+            if (m_refresh_timer) {
+                if (pci_workloop->addEventSource(m_refresh_timer) == kIOReturnSuccess) {
+                    // DO NOT initialize scanout in start() - causes UTM display to not transition
+                    // Let enableController() handle scanout setup when WindowServer is ready
+                    IOLog("VMVirtIOFramebuffer::start() - Timer ready, scanout deferred to enableController()\n");
+                } else {
+                    IOLog("VMVirtIOFramebuffer::start() - Failed to add timer to workloop\n");
+                    m_refresh_timer->release();
+                    m_refresh_timer = nullptr;
+                }
+            } else {
+                IOLog("VMVirtIOFramebuffer::start() - Failed to create timer event source\n");
+            }
+        } else {
+            IOLog("VMVirtIOFramebuffer::start() - PCI device has no workloop\n");
+        }
+    }
     
     // *** VRAM SIZE FIX: Set proper VRAM properties for System Information ***
     uint32_t vram_size = 512 * 1024 * 1024;  // 512MB
     uint32_t vram_mb = 512;  // 512MB
+    
+    // *** GPU Model Information for System Profiler ***
+    // VMVirtIOFramebuffer only loads when VirtIO GPU device is present
+    
+    // CRITICAL: Detect device type - virtio-vga-gl vs virtio-gpu-gl-pci
+    // Only virtio-gpu-gl-pci needs GPU model properties (virtio-vga-gl already shows as VGA)
+    bool is_pure_gpu_mode = false;  // virtio-gpu-gl-pci (no VGA BIOS)
+    
+    if (m_pci_device) {
+        UInt32 classCode = m_pci_device->configRead32(kIOPCIConfigClassCode);
+        UInt8 baseClass = (classCode >> 24) & 0xFF;
+        UInt8 subClass = (classCode >> 16) & 0xFF;
+        
+        // 0x03:0x00 = VGA-compatible (virtio-vga-gl) - already shows in System Profiler
+        // 0x00:0x00 or 0x03:0x80 = Pure GPU (virtio-gpu-gl-pci) - needs GPU properties
+        if (baseClass == 0x00 || (baseClass == 0x03 && subClass == 0x80)) {
+            is_pure_gpu_mode = true;
+            IOLog("VMVirtIOFramebuffer::start() - Detected virtio-gpu-gl-pci (pure GPU, no VGA BIOS)\n");
+        } else if (baseClass == 0x03 && subClass == 0x00) {
+            is_pure_gpu_mode = false;
+            IOLog("VMVirtIOFramebuffer::start() - Detected virtio-vga-gl (VGA-compatible with 3D)\n");
+        }
+    }
+    
+    // Check if this VirtIO GPU has 3D acceleration capability (VIRGL feature flag)
+    bool has_3d_support = (m_gpu_driver && m_gpu_driver->supports3D());
+    
+    // Set GPU model/vendor properties based on device type
+    if (is_pure_gpu_mode) {
+        // virtio-gpu-gl-pci (pure GPU mode) - needs GPU properties for System Profiler
+        IOLog("VMVirtIOFramebuffer::start() - Setting GPU properties for virtio-gpu-gl-pci (pure GPU mode)\n");
+        
+        // Set GPU model and vendor information (visible in About This Mac > Displays)
+        if (has_3d_support) {
+            setProperty("model", "VirtIO GPU 3D");                       // GPU model name (3D capable)
+        } else {
+            setProperty("model", "VirtIO GPU");                          // GPU model name (2D only)
+        }
+        setProperty("IOName", "VMQemuVGA VirtIO GPU");                   // Device name
+        setProperty("IOProviderClass", "VMVirtIOGPU");                   // Provider class
+        
+        // Vendor information
+        setProperty("vendor", "Red Hat, Inc.");                          // VirtIO GPU vendor
+        setProperty("vendor-id", OSNumber::withNumber(0x1AF4, 16));      // Red Hat PCI vendor ID
+        setProperty("device-id", OSNumber::withNumber(0x1050, 16));      // VirtIO GPU device ID
+        
+        // TRICK: Override PCI class-code to make System Profiler recognize us as VGA device
+        // QEMU reports class 0x0000 (not VGA), but we tell macOS it's VGA-compatible
+        // This makes System Profiler show virtio-gpu-gl-pci in Graphics/Displays list
+        // class-code format: 0xBBSSPPRR (BaseClass, SubClass, ProgIF, RevisionID)
+        // 0x030000 = Display Controller (0x03), VGA-compatible (0x00), standard VGA (0x00)
+        // IORegistry stores as big-endian: <00 00 03 00> for 0x00030000
+        UInt32 vga_class_code = 0x00030000;  // 0x030000 = VGA-compatible display controller
+        OSData* vga_class = OSData::withBytes(&vga_class_code, 4);
+        if (vga_class) {
+            setProperty("class-code", vga_class);
+            vga_class->release();
+            IOLog("VMVirtIOFramebuffer::start() - Overrode class-code to 0x00030000 (VGA-compatible) for System Profiler\n");
+        }
+        
+        IOLog("VMVirtIOFramebuffer::start() - GPU properties set for virtio-gpu-gl-pci\n");
+    } else {
+        // virtio-vga-gl (VGA-compatible mode) - already shows in System Profiler as VGA device
+        // No need to override class-code (already 0x030000 from QEMU)
+        IOLog("VMVirtIOFramebuffer::start() - virtio-vga-gl detected - skipping property overrides (already VGA-compatible)\n");
+    }
+    
+    IOLog("VMVirtIOFramebuffer::start() - Device mode: %s, 3D support: %s\n",
+          is_pure_gpu_mode ? "virtio-gpu-gl-pci" : "virtio-vga-gl",
+          has_3d_support ? "YES" : "NO");
     
     // Use OSNumber objects for proper numeric property setting
     OSNumber* vram_size_num = OSNumber::withNumber(vram_size, 32);
@@ -115,15 +299,30 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     
     // *** CRITICAL: OpenGL/Hardware Acceleration Properties ***
     
-    // DISABLE ALL hardware acceleration to fix WindowServer crashes
-    setProperty("IOAcceleratorFamily", kOSBooleanFalse);
-    setProperty("IOGraphicsAccelerator", kOSBooleanFalse);
-    setProperty("IODisplayAccelerated", kOSBooleanFalse);
-    setProperty("IOAccelerator3D", kOSBooleanFalse);
-    
-    // REMOVED: All OpenGL/Metal configuration to prevent WindowServer from trying to use it
-    // setProperty("IOGLBundleName", "GLEngine");
-    // setProperty("IOAccelIndex", 0);
+    if (has_3d_support) {
+        // ENABLE hardware acceleration - VirtIO GPU 3D pipeline is now fully functional (v8.0.0d94)
+        // Since d93: contexts, resources, submit3D, transferToHost3D, flushResource all working
+        // Since d94: transferFromHost3D implemented to copy rendered pixels to guest framebuffer
+        // Works for BOTH virtio-vga-gl (VGA-compatible) and virtio-gpu-gl-pci (pure GPU)
+        setProperty("IOAcceleratorFamily", kOSBooleanTrue);      // We support IOAccelerator protocol
+        setProperty("IOGraphicsAccelerator", kOSBooleanTrue);    // Graphics acceleration available
+        setProperty("IODisplayAccelerated", kOSBooleanTrue);     // Display has acceleration
+        setProperty("IOAccelerator3D", kOSBooleanTrue);          // 3D acceleration available
+        
+        // OpenGL configuration for CGL discovery
+        setProperty("IOGLBundleName", "GLEngine");               // Use system GLEngine (software for now)
+        setProperty("IOAccelIndex", (uint64_t)0, 32);            // Accelerator index 0
+        
+        IOLog("VMVirtIOFramebuffer::start() - Hardware acceleration properties enabled\n");
+    } else {
+        // DISABLE ALL hardware acceleration for non-3D devices
+        setProperty("IOAcceleratorFamily", kOSBooleanFalse);
+        setProperty("IOGraphicsAccelerator", kOSBooleanFalse);
+        setProperty("IODisplayAccelerated", kOSBooleanFalse);
+        setProperty("IOAccelerator3D", kOSBooleanFalse);
+        
+        IOLog("VMVirtIOFramebuffer::start() - Hardware acceleration disabled (no 3D support)\n");
+    }
     
     // DISABLE AGDC: Tell WindowServer we DON'T support AGDC to prevent initialization failures
     // WindowServer was crashing because we claimed AGDC support but didn't implement it
@@ -144,18 +343,49 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     
     // ENABLE Metal compositor with minimal software renderer plugin
     // This provides a valid MTLDevice pointer to prevent WindowServer abort()
-    setProperty("MetalPluginClassName", "VMMetalPlugin");           // Our Metal plugin class
-    setProperty("MetalPluginName", "VMware/QEMU Metal Software Renderer");
-    setProperty("MetalStatisticsName", "VMMetalPlugin");
     setProperty("IOMetalBundleName", "");                           // No external bundle needed
     setProperty("IOGLESBundleName", "");                            // No OpenGL ES
     setProperty("PerformanceStatistics", OSArray::withCapacity(0)); // Empty but non-null
-    setProperty("MetalCoalescingMode", 1, 32);                      // Enable coalescing
-    setProperty("MetalCapabilityFamily", 1, 32);                    // GPU Family 1
     
     // Graphics device properties  
     setProperty("IOGraphicsDevice", kOSBooleanTrue);
-    // Note: Removed IOConsoleDevice to prevent forcing console mode
+    // CRITICAL: Must declare as console device for boot display activation
+    setProperty("IOConsoleDevice", kOSBooleanTrue);
+    
+    // IOFramebufferMemoryBandwidth is REQUIRED for macOS to activate display
+    UInt32 memoryBandwidth = 1024 * 1024 * 1024; // 1 GB/sec bandwidth (typical for virtual GPU)
+    setProperty("IOFramebufferMemoryBandwidth", memoryBandwidth);
+    IOLog("VMVirtIOFramebuffer::start() - Set IOFramebufferMemoryBandwidth = %u bytes\n", memoryBandwidth);
+    
+    // *** CRITICAL: Primary Graphics Device Properties ***
+    // These properties tell macOS this framebuffer is the primary display controller
+    setProperty("IOPrimaryGraphicsDevice", kOSBooleanTrue);  // Primary graphics device
+    setProperty("IOPrimaryDisplay", kOSBooleanTrue);         // Primary display
+    setProperty("IODisplayClass", "IOFramebuffer");          // Display class
+    setProperty("IOMatchCategory", "IOFramebuffer");         // Match category for display
+    
+    // *** CRITICAL: Publish as main display resource ***
+    // This makes the framebuffer discoverable by Display Preferences
+    if (m_pci_device) {
+        setProperty("IOPCIDevice", m_pci_device);  // Link to PCI device for system info
+        IOLog("VMVirtIOFramebuffer::start() - Linked to PCI device for system display discovery\n");
+    }
+    
+    // NOTE: Do NOT set name to "display" - IODisplayWrangler will create display0 nub automatically
+    // The framebuffer name should remain as provided by the system (e.g., "S10@2")
+    IOLog("VMVirtIOFramebuffer::start() - Framebuffer registered, IODisplayWrangler will create display0 nub\n");
+    
+    // *** CRITICAL: Set IOUserClientClass at runtime ***
+    // Programmatically created services don't inherit personality properties from Info.plist
+    // We must set IOUserClientClass here so IOFramebuffer::newUserClient() can instantiate VMQemuVGAClient
+    OSString* userClientClass = OSString::withCString("VMQemuVGAClient");
+    if (userClientClass) {
+        setProperty("IOUserClientClass", userClientClass);
+        userClientClass->release();
+        IOLog("VMVirtIOFramebuffer::start() - IOUserClientClass set to VMQemuVGAClient\n");
+    } else {
+        IOLog("VMVirtIOFramebuffer::start() - ERROR: Failed to create IOUserClientClass string\n");
+    }
     
     IOLog("VMVirtIOFramebuffer::start() - Simple framebuffer mode (no AGDC, no HW video accel)\n");
     
@@ -174,14 +404,9 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
         index_zero->release();
     }
     
-    // Enable controller
-    IOLog("VMVirtIOFramebuffer::start() - Enabling framebuffer controller\n");
-    IOReturn enable_result = enableController();
-    if (enable_result == kIOReturnSuccess) {
-        IOLog("VMVirtIOFramebuffer::start() - Framebuffer controller enabled successfully\n");
-    } else {
-        IOLog("VMVirtIOFramebuffer::start() - WARNING: Controller enable failed: 0x%08x\n", enable_result);
-    }
+    // *** CRITICAL: DO NOT call enableController() here ***
+    // IOGraphicsFamily will call it when ready - calling it too early breaks activation
+    IOLog("VMVirtIOFramebuffer::start() - Controller enable deferred to IOGraphicsFamily\n");
     
     // *** TEST: Disable AGDC service to isolate GUI login issue ***
     IOLog("VMVirtIOFramebuffer::start() - AGDC service creation DISABLED for testing\n");
@@ -192,8 +417,70 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     //     IOLog("VMVirtIOFramebuffer::start() - WARNING: AGDC service creation failed: 0x%08x\n", agdc_result);
     // }
     
-    registerService();
-    IOLog("VMVirtIOFramebuffer::start() - Framebuffer registration complete\n");
+    // Initialize display mode variables (copied from QXL - must be done before power management)
+    m_display_mode = 0;  // Will be set by IOGraphicsFamily when enableController() is called
+    m_depth_mode = 0;
+    IOLog("VMVirtIOFramebuffer::start() - Display mode variables initialized\n");
+    
+    // TESTING: Skip power management initialization - IOFramebuffer may handle this automatically
+    // The panic at IOGraphicsFamily + 88033 (offset 0x110) suggests power management structure is
+    // being accessed before it's ready. Let IOFramebuffer base class initialize power management.
+    IOLog("VMVirtIOFramebuffer::start() - Skipping manual power management init (let IOFramebuffer handle it)\n");
+    
+    // *** CRITICAL: Make this the boot console device ***
+    // The framebuffer itself must declare it's the console device, not just the provider
+    // This is what triggers IOGraphicsFamily to create display0 and AppleDisplay children
+    setProperty("IOConsoleDevice", kOSBooleanTrue);
+    setProperty("IOBootDisplay", kOSBooleanTrue);
+    IOLog("VMVirtIOFramebuffer::start() - Declared as boot console device\n");
+    
+    // *** CRITICAL: Create accelerator child service (like QXL) ***
+    // IOGraphicsFamily requires an IOAccelerator child to create display connections
+    IOLog("VMVirtIOFramebuffer::start() - Creating accelerator child service...\n");
+    m_accelerator = OSTypeAlloc(VMQemuVGAAccelerator);
+    if (m_accelerator) {
+        if (m_accelerator->init()) {
+            if (m_accelerator->attach(this)) {
+                if (m_accelerator->start(this)) {
+                    m_accelerator->registerService(kIOServiceAsynchronous);
+                    IOLog("VMVirtIOFramebuffer::start() - Accelerator registered successfully\n");
+                } else {
+                    IOLog("VMVirtIOFramebuffer::start() - WARNING: Accelerator start() failed\n");
+                    m_accelerator->detach(this);
+                    m_accelerator->release();
+                    m_accelerator = nullptr;
+                }
+            } else {
+                IOLog("VMVirtIOFramebuffer::start() - WARNING: Accelerator attach() failed\n");
+                m_accelerator->release();
+                m_accelerator = nullptr;
+            }
+        } else {
+            IOLog("VMVirtIOFramebuffer::start() - WARNING: Accelerator init() failed\n");
+            m_accelerator->release();
+            m_accelerator = nullptr;
+        }
+    } else {
+        IOLog("VMVirtIOFramebuffer::start() - WARNING: Failed to allocate accelerator\n");
+    }
+    
+    // Register service to publish in IORegistry (like QXL does at end of start())
+    registerService(kIOServiceAsynchronous);
+    IOLog("VMVirtIOFramebuffer::start() - Service registered for display matching\n");
+    
+    // CRITICAL: Manually create display0 nub since IODisplayWrangler may have already scanned
+    // IODisplayWrangler::makeDisplayConnects() creates IODisplayConnect nub named "display0"
+    IOLog("VMVirtIOFramebuffer::start() - Creating display0 connection nub\n");
+    IODisplayWrangler::makeDisplayConnects(this);
+    IOLog("VMVirtIOFramebuffer::start() - display0 nub created\n");
+    
+    // CRITICAL: Force GUI mode transition that QXL gets automatically
+    // Since macOS doesn't properly trigger VirtIO GPU GUI mode, we force it manually
+    IOLog("VMVirtIOFramebuffer::start() - FORCING GUI MODE TRANSITION (VirtIO GPU workaround)\n");
+    setupForCurrentConfig();
+    IOLog("VMVirtIOFramebuffer::start() - GUI transition complete\n");
+    
+    IOLog("VMVirtIOFramebuffer::start() - Initialization complete\n");
     
     return true;
 }
@@ -201,6 +488,13 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
 void VMVirtIOFramebuffer::stop(IOService* provider)
 {
     IOLog("VMVirtIOFramebuffer::stop() - Stopping framebuffer\n");
+    
+    // Clean up accelerator
+    if (m_accelerator) {
+        m_accelerator->terminate();
+        m_accelerator->release();
+        m_accelerator = nullptr;
+    }
     
     if (m_vram_range) {
         m_vram_range->release();
@@ -298,6 +592,48 @@ IODeviceMemory* VMVirtIOFramebuffer::getApertureRange(IOPixelAperture aperture)
     return bar0_memory;
 }
 
+// CRITICAL: WindowServer calls this to get the framebuffer memory for rendering
+IODeviceMemory* VMVirtIOFramebuffer::getVRAMRange(void)
+{
+    IOLog("VMVirtIOFramebuffer::getVRAMRange() - *** WINDOWSERVER REQUESTING FRAMEBUFFER MEMORY ***\n");
+    
+    // Return the same memory as getApertureRange - the PCI BAR 0 framebuffer
+    // This is what WindowServer writes to for GUI rendering
+    if (m_vram_range) {
+        IOLog("VMVirtIOFramebuffer::getVRAMRange() - Returning cached VRAM range\n");
+        m_vram_range->retain();
+        return m_vram_range;
+    }
+    
+    // Get BAR 0 framebuffer memory
+    IOLog("VMVirtIOFramebuffer::getVRAMRange() - Fetching PCI BAR 0 framebuffer memory\n");
+    if (!m_pci_device) {
+        IOLog("VMVirtIOFramebuffer::getVRAMRange() - ERROR: No PCI device available!\n");
+        return nullptr;
+    }
+    
+    IODeviceMemory* bar0_memory = m_pci_device->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+    if (!bar0_memory) {
+        IOLog("VMVirtIOFramebuffer::getVRAMRange() - ERROR: Failed to get BAR 0 memory!\n");
+        return nullptr;
+    }
+    
+    IOPhysicalAddress bar0_phys = bar0_memory->getPhysicalAddress();
+    IOByteCount bar0_size = bar0_memory->getLength();
+    
+    IOLog("VMVirtIOFramebuffer::getVRAMRange() - Found BAR 0: phys=0x%llx, size=0x%llx (%llu MB)\n",
+          (unsigned long long)bar0_phys, (unsigned long long)bar0_size,
+          (unsigned long long)(bar0_size / (1024 * 1024)));
+    
+    // Cache and return
+    m_vram_range = bar0_memory;
+    m_vram_range->retain();
+    
+    bar0_memory->retain();
+    IOLog("VMVirtIOFramebuffer::getVRAMRange() - *** FRAMEBUFFER MEMORY PROVIDED TO WINDOWSERVER ***\n");
+    return bar0_memory;
+}
+
 const char* VMVirtIOFramebuffer::getPixelFormats(void)
 {
     // Return OpenGL-compatible pixel formats for hardware acceleration
@@ -314,17 +650,20 @@ const char* VMVirtIOFramebuffer::getPixelFormats(void)
 
 IOItemCount VMVirtIOFramebuffer::getDisplayModeCount(void)
 {
+    IOLog("VMVirtIOFramebuffer::getDisplayModeCount() - Returning %u modes\n", m_mode_count);
     return m_mode_count;
 }
 
 IOReturn VMVirtIOFramebuffer::getDisplayModes(IODisplayModeID* allDisplayModes)
 {
+    IOLog("VMVirtIOFramebuffer::getDisplayModes() - WindowServer requesting display mode list\n");
     if (!allDisplayModes) {
         return kIOReturnBadArgument;
     }
     
     for (IOItemCount i = 0; i < m_mode_count; i++) {
         allDisplayModes[i] = m_display_modes[i];
+        IOLog("  Mode %u: ID=%d\n", i, m_display_modes[i]);
     }
     
     return kIOReturnSuccess;
@@ -333,6 +672,7 @@ IOReturn VMVirtIOFramebuffer::getDisplayModes(IODisplayModeID* allDisplayModes)
 IOReturn VMVirtIOFramebuffer::getInformationForDisplayMode(IODisplayModeID displayMode, 
                                                            IODisplayModeInformation* info)
 {
+    IOLog("VMVirtIOFramebuffer::getInformationForDisplayMode() - Mode ID=%d\n", displayMode);
     if (!info) {
         return kIOReturnBadArgument;
     }
@@ -498,37 +838,79 @@ IOReturn VMVirtIOFramebuffer::getTimingInfoForDisplayMode(IODisplayModeID displa
     return kIOReturnSuccess;
 }
 
+// CRITICAL: Override newUserClient to provide VMQemuVGAClient for WindowServer
+// Required because programmatically created services don't get personality properties
+IOReturn VMVirtIOFramebuffer::newUserClient(task_t owningTask, void* securityID, 
+                                            UInt32 type, IOUserClient** handler)
+{
+    IOLog("VMVirtIOFramebuffer::newUserClient() - WindowServer requesting user client (type=%u)\n", type);
+    
+    // Create VMQemuVGAClient instance using OSMetaClass
+    IOUserClient* client = OSTypeAlloc(VMQemuVGAClient);
+    if (!client) {
+        IOLog("VMVirtIOFramebuffer::newUserClient() - Failed to allocate VMQemuVGAClient\n");
+        *handler = nullptr;
+        return kIOReturnNoMemory;
+    }
+    
+    // Initialize the client with the task
+    if (!client->initWithTask(owningTask, securityID, type)) {
+        IOLog("VMVirtIOFramebuffer::newUserClient() - Client initWithTask failed\n");
+        client->release();
+        *handler = nullptr;
+        return kIOReturnError;
+    }
+    
+    // Attach client to this framebuffer
+    if (!client->attach(this)) {
+        IOLog("VMVirtIOFramebuffer::newUserClient() - Client attach failed\n");
+        client->release();
+        *handler = nullptr;
+        return kIOReturnError;
+    }
+    
+    // Start the client
+    if (!client->start(this)) {
+        IOLog("VMVirtIOFramebuffer::newUserClient() - Client start failed\n");
+        client->detach(this);
+        client->release();
+        *handler = nullptr;
+        return kIOReturnError;
+    }
+    
+    *handler = client;
+    IOLog("VMVirtIOFramebuffer::newUserClient() - VMQemuVGAClient created successfully\n");
+    return kIOReturnSuccess;
+}
+
 // CRITICAL: Safe open method override for WindowServer connection handling
 IOReturn VMVirtIOFramebuffer::open(void)
 {
     IOLog("VMVirtIOFramebuffer::open() - *** WINDOWSERVER OPEN REQUESTED ***\n");
     
-    // Set properties that indicate we're ready for GUI mode
-    setProperty("IOFramebufferOpenForGUI", kOSBooleanTrue);
-    setProperty("WindowServerReady", kOSBooleanTrue);
-    
-    // SAFETY: Call parent open method first, but handle failures gracefully
+    // Call parent implementation - now safe because we have IOUserClientClass="VMQemuVGAClient"
+    IOLog("VMVirtIOFramebuffer::open() - Calling super::open()\n");
     IOReturn result = super::open();
-    IOLog("VMVirtIOFramebuffer::open() - Parent open returned: 0x%x\n", result);
+    IOLog("VMVirtIOFramebuffer::open() - super::open() returned: 0x%x\n", result);
     
     if (result != kIOReturnSuccess) {
-        IOLog("VMVirtIOFramebuffer::open() - Parent open failed: 0x%x, but continuing for VM compatibility\n", result);
-        // For VM environments, we might want to succeed even if parent fails
-        // This prevents WindowServer from crashing if parent open has issues
+        IOLog("VMVirtIOFramebuffer::open() - super::open() failed, forcing success for VM compatibility\n");
         result = kIOReturnSuccess;
     }
     
+    // Set properties that indicate we're ready for GUI mode
+    setProperty("IOFramebufferOpenForGUI", kOSBooleanTrue);
+    
     // CRITICAL: Force GUI mode properties when opened by WindowServer
     // NOTE: Keep IOConsoleDevice=true (set by isConsoleDevice()) for QXL-style dual capability
-    setProperty("IOGUIDevice", kOSBooleanTrue);           // Enable GUI mode
     setProperty("IODisplayAccelerated", kOSBooleanFalse);  // DISABLE acceleration - no Metal support yet
     
     IOLog("VMVirtIOFramebuffer::open() - *** GUI MODE FORCED ON - CONSOLE MODE DISABLED ***\n");
     
-    // CRITICAL: Disable console scanout 0 to allow GUI to take over display
-    // VirtIO GPU spec: setscanout with resource_id=0 disables that scanout
-    if (m_gpu_driver) {
-        IOLog("VMVirtIOFramebuffer::open() - Disabling console scanout 0 for GUI transition\n");
+    // DISABLED: Refresh timer handled by start() + enableController() - this code not needed
+    // Let enableController() manage VirtIO GPU scanout and timer startup
+    if (false && m_gpu_driver) {
+        IOLog("VMVirtIOFramebuffer::open() - SKIPPED: Timer setup handled by enableController()\n");
         IOReturn console_result = m_gpu_driver->setscanout(0, 0, 0, 0, 0, 0);
         IOLog("VMVirtIOFramebuffer::open() - Console scanout disable returned: 0x%x\n", console_result);
         
@@ -577,6 +959,28 @@ IOReturn VMVirtIOFramebuffer::open(void)
                                                                        m_width, m_height);
                     if (flushResult == kIOReturnSuccess) {
                         IOLog("VMVirtIOFramebuffer::open() - *** GUI SCANOUT ENABLED - DISPLAY SHOULD BE ACTIVE ***\n");
+                        
+                        // CRITICAL: Start periodic display refresh timer
+                        // This ensures framebuffer updates are continuously transferred to VirtIO GPU
+                        IOLog("VMVirtIOFramebuffer::open() - Creating periodic display refresh timer\n");
+                        IOWorkLoop* workloop = getWorkLoop();
+                        if (workloop && !m_refresh_timer) {
+                            m_refresh_timer = IOTimerEventSource::timerEventSource(this, 
+                                (IOTimerEventSource::Action)&VMVirtIOFramebuffer::displayRefreshTimer);
+                            if (m_refresh_timer) {
+                                if (workloop->addEventSource(m_refresh_timer) == kIOReturnSuccess) {
+                                    // Enable timer for periodic display refresh (1 second)
+                                    m_refresh_timer->setTimeoutMS(1000);
+                                    IOLog("VMVirtIOFramebuffer::open() - Display refresh timer started (1000ms / 1 Hz)\n");
+                                } else {
+                                    IOLog("VMVirtIOFramebuffer::open() - Failed to add timer to workloop\n");
+                                    m_refresh_timer->release();
+                                    m_refresh_timer = nullptr;
+                                }
+                            } else {
+                                IOLog("VMVirtIOFramebuffer::open() - Failed to create refresh timer\n");
+                            }
+                        }
                     } else {
                         IOLog("VMVirtIOFramebuffer::open() - Flush failed: 0x%x\n", flushResult);
                     }
@@ -596,6 +1000,10 @@ IOReturn VMVirtIOFramebuffer::open(void)
     IOReturn enable_result = enableController();
     IOLog("VMVirtIOFramebuffer::open() - enableController returned: 0x%x\n", enable_result);
     
+    // Force initial display refresh to ensure WindowServer sees current framebuffer
+    IOLog("VMVirtIOFramebuffer::open() - Forcing initial display refresh for WindowServer\n");
+    refreshDisplay();
+    
     IOLog("VMVirtIOFramebuffer::open() - *** WINDOWSERVER OPEN COMPLETED - GUI MODE ACTIVE ***\n");
     return result;
 }
@@ -604,10 +1012,22 @@ void VMVirtIOFramebuffer::close(void)
 {
     IOLog("VMVirtIOFramebuffer::close() - *** WINDOWSERVER CLOSE REQUESTED ***\n");
     
+    // Stop display refresh timer
+    if (m_refresh_timer) {
+        IOLog("VMVirtIOFramebuffer::close() - Stopping display refresh timer\n");
+        m_refresh_timer->cancelTimeout();
+        
+        IOWorkLoop* workloop = getWorkLoop();
+        if (workloop) {
+            workloop->removeEventSource(m_refresh_timer);
+        }
+        
+        m_refresh_timer->release();
+        m_refresh_timer = nullptr;
+    }
+    
     // Reset GUI mode properties when WindowServer closes
     setProperty("IOFramebufferOpenForGUI", kOSBooleanFalse);
-    setProperty("WindowServerActive", kOSBooleanFalse);
-    setProperty("IOGUIActive", kOSBooleanFalse);
     
     IOLog("VMVirtIOFramebuffer::close() - GUI mode properties reset\n");
     
@@ -676,11 +1096,73 @@ IOReturn VMVirtIOFramebuffer::enableController()
     IOLog("VMVirtIOFramebuffer::enableController() - ACTIVE MODE: Setting up VirtIO GPU display\n");
     IOLog("VMVirtIOFramebuffer::enableController() - Enabling VirtIO GPU framebuffer for GUI activation\n");
     
-    // DIRECT PCI MODE: We operate as a software framebuffer without VirtIO GPU acceleration
-    IOLog("VMVirtIOFramebuffer::enableController() - DIRECT PCI MODE: Software framebuffer for primary display\n");
+    // *** CRITICAL DISCOVERY FROM SPEC SECTION 5.7.7: ***
+    // "VGA compatibility: PCI region 0 has the linear framebuffer, standard vga registers are present.
+    //  Configuring a scanout (VIRTIO_GPU_CMD_SET_SCANOUT) switches the device from vga compatibility 
+    //  mode into native virtio mode."
+    //
+    // The KEY insight: Calling SET_SCANOUT DISABLES automatic display from BAR 0!
+    // In VGA mode (before SET_SCANOUT): Writing to BAR 0 → automatic display (like QXL)
+    // In VirtIO mode (after SET_SCANOUT): Writing to BAR 0 → NOTHING (must call TRANSFER_TO_HOST_2D)
+    //
+    // Auto-detect device type from VMVirtIOGPU properties
+    OSString* deviceType = NULL;
+    bool hasVGACompatibility = false;
+    bool requiresNativeMode = false;
     
     if (m_gpu_driver) {
-        IOLog("VMVirtIOFramebuffer::enableController() - VirtIO GPU driver available - setting up accelerated display\n");
+        // Try to get properties from the GPU driver object
+        deviceType = OSDynamicCast(OSString, m_gpu_driver->getProperty("VMVirtIODeviceType"));
+        OSBoolean* vgaCompat = OSDynamicCast(OSBoolean, m_gpu_driver->getProperty("VirtIO-VGA-Compatibility"));
+        
+        // If not found on driver, try the PCI provider
+        if (!deviceType && m_pci_device) {
+            IOLog("VMVirtIOFramebuffer::enableController() - Checking PCI device properties\n");
+            deviceType = OSDynamicCast(OSString, m_pci_device->getProperty("VMVirtIODeviceType"));
+            vgaCompat = OSDynamicCast(OSBoolean, m_pci_device->getProperty("VirtIO-VGA-Compatibility"));
+        }
+        
+        hasVGACompatibility = (vgaCompat && vgaCompat->isTrue());
+        
+        if (deviceType) {
+            const char* typeStr = deviceType->getCStringNoCopy();
+            IOLog("VMVirtIOFramebuffer::enableController() - Device type: %s\n", typeStr);
+            requiresNativeMode = (strcmp(typeStr, "virtio-gpu-gl-pci") == 0);
+        } else {
+            // Fallback: check PCI class code directly
+            if (m_pci_device) {
+                UInt32 classCode = m_pci_device->configRead32(kIOPCIConfigClassCode);
+                UInt8 baseClass = (classCode >> 24) & 0xFF;
+                UInt8 subClass = (classCode >> 16) & 0xFF;
+                
+                IOLog("VMVirtIOFramebuffer::enableController() - PCI class: 0x%02x:0x%02x\n", baseClass, subClass);
+                
+                // 0x03:0x00 = VGA-compatible (virtio-vga-gl)
+                // 0x03:0x80 = Other display controller (virtio-gpu-gl-pci)
+                if (baseClass == 0x03 && subClass == 0x00) {
+                    hasVGACompatibility = true;
+                    requiresNativeMode = false;
+                    IOLog("VMVirtIOFramebuffer::enableController() - Detected VGA-compatible device (virtio-vga-gl)\n");
+                } else if (baseClass == 0x03 && subClass == 0x80) {
+                    hasVGACompatibility = false;
+                    requiresNativeMode = true;
+                    IOLog("VMVirtIOFramebuffer::enableController() - Detected pure GPU device (virtio-gpu-gl-pci)\n");
+                }
+            }
+        }
+    }
+    
+    // Decision logic:
+    // - virtio-gpu-gl-pci: MUST use native VirtIO scanout (no VGA fallback)
+    // - virtio-vga-gl: CAN use VGA mode OR native mode (your choice)
+    bool useNativeScanout = requiresNativeMode;  // Force native for virtio-gpu-gl-pci
+    
+    IOLog("VMVirtIOFramebuffer::enableController() - hasVGACompat=%d, requiresNative=%d, useNative=%d\n",
+          hasVGACompatibility, requiresNativeMode, useNativeScanout);
+    
+    // Enable VirtIO GPU scanout if needed
+    if (useNativeScanout && m_gpu_driver) {
+        IOLog("VMVirtIOFramebuffer::enableController() - VirtIO GPU native scanout ENABLED\n");
         
         // Set up display with current resolution
         IODisplayModeInformation modeInfo;
@@ -701,10 +1183,56 @@ IOReturn VMVirtIOFramebuffer::enableController()
             if (createResult == kIOReturnSuccess) {
                 IOLog("VMVirtIOFramebuffer::enableController() - VirtIO GPU display resource created successfully\n");
                 
-                // Set scanout to enable display output
+                // Attach backing storage (VRAM) to the resource
+                if (m_vram_range) {
+                    m_gpu_driver->attachBacking(resource_id, m_vram_range);
+                    IOLog("VMVirtIOFramebuffer::enableController() - VRAM backing attached to resource\n");
+                    
+                    // CRITICAL: Clear the framebuffer to remove boot console text
+                    // Only clear if this is a real framebuffer (>1MB), not control registers
+                    IOMemoryDescriptor* fbMem = m_vram_range;
+                    IOByteCount fbSize = fbMem->getLength();
+                    
+                    if (fbSize >= (1024 * 1024)) {  // Real framebuffer is at least 1MB
+                        IOLog("VMVirtIOFramebuffer::enableController() - Clearing framebuffer (%llu bytes)\n", fbSize);
+                        
+                        // Map the framebuffer for write access
+                        IOMemoryMap* fbMap = fbMem->map();
+                        if (fbMap) {
+                            void* fbAddress = (void*)fbMap->getVirtualAddress();
+                            if (fbAddress) {
+                                // Clear framebuffer to black for WindowServer to draw on
+                                // Display pipeline PROVEN working (test pattern was visible)
+                                // Now ready for WindowServer rendering
+                                size_t fbSize = m_width * m_height * 4;  // 32-bit BGRA
+                                bzero(fbAddress, fbSize);
+                                
+                                IOLog("VMVirtIOFramebuffer::enableController() - Cleared framebuffer (%ux%u) - ready for WindowServer\n", m_width, m_height);
+                            } else {
+                                IOLog("VMVirtIOFramebuffer::enableController() - ⚠️  Cannot get framebuffer virtual address\n");
+                            }
+                            fbMap->release();
+                        } else {
+                            IOLog("VMVirtIOFramebuffer::enableController() - ⚠️  Cannot map framebuffer for clearing\n");
+                        }
+                    } else {
+                        IOLog("VMVirtIOFramebuffer::enableController() - Skipping clear (BAR0 is registers, not framebuffer)\n");
+                    }
+                }
+                
+                // Now WindowServer will draw to the backing memory (m_vram_range)
+                // The 60 Hz timer will periodically copy changes to VirtIO GPU
+                IOLog("VMVirtIOFramebuffer::enableController() - Framebuffer ready for WindowServer\n");
+                
+                // Do initial transfer to clear the display
+                m_gpu_driver->transferToHost2D(resource_id, 0, 0, 0, m_width, m_height);
+                m_gpu_driver->flushResource(resource_id, 0, 0, m_width, m_height);
+                IOLog("VMVirtIOFramebuffer::enableController() - Initial framebuffer transferred to GPU\n");
+                
+                // NOW enable scanout to display the framebuffer
                 IOReturn scanoutResult = m_gpu_driver->setscanout(0, resource_id, 0, 0, m_width, m_height);
                 if (scanoutResult == kIOReturnSuccess) {
-                    IOLog("VMVirtIOFramebuffer::enableController() - VirtIO GPU scanout enabled - GUI should activate\n");
+                    IOLog("VMVirtIOFramebuffer::enableController() - ✓ VirtIO GPU scanout enabled - black screen ready\n");
                 } else {
                     IOLog("VMVirtIOFramebuffer::enableController() - VirtIO GPU scanout failed: 0x%x\n", scanoutResult);
                 }
@@ -715,57 +1243,37 @@ IOReturn VMVirtIOFramebuffer::enableController()
             IOLog("VMVirtIOFramebuffer::enableController() - Failed to get mode info: 0x%x\n", modeResult);
         }
     } else {
-        IOLog("VMVirtIOFramebuffer::enableController() - DIRECT PCI MODE: Software framebuffer without VirtIO GPU\n");
-        IOLog("VMVirtIOFramebuffer::enableController() - Primary framebuffer (index 0) provides GUI mode capability\n");
-        
-        // Set up basic display mode information
-        IODisplayModeInformation modeInfo;
-        IOReturn modeResult = getInformationForDisplayMode(m_current_mode, &modeInfo);
-        if (modeResult == kIOReturnSuccess) {
-            m_width = modeInfo.nominalWidth;
-            m_height = modeInfo.nominalHeight;
-            m_depth = 32;
-            
-            IOLog("VMVirtIOFramebuffer::enableController() - Software display mode: %dx%d@%d\n", 
-                  m_width, m_height, m_depth);
+        // Not using native scanout
+        if (requiresNativeMode) {
+            IOLog("VMVirtIOFramebuffer::enableController() - ⚠️  CRITICAL: virtio-gpu-gl-pci requires native scanout!\n");
+            IOLog("VMVirtIOFramebuffer::enableController() - No VGA fallback available, display will NOT work\n");
+        } else if (hasVGACompatibility) {
+            IOLog("VMVirtIOFramebuffer::enableController() - Using VGA compatibility mode (virtio-vga-gl)\n");
+            IOLog("VMVirtIOFramebuffer::enableController() - BAR0 framebuffer writes will auto-display\n");
+        } else {
+            IOLog("VMVirtIOFramebuffer::enableController() - ⚠️  Unknown mode - no GPU driver or display setup\n");
         }
-    }
-    
-    // CRITICAL: Implement safe software display output since VirtIO GPU is accelerator-only
-    // We need to make the framebuffer content visible without VirtIO GPU scanout
-    IOLog("VMVirtIOFramebuffer::enableController() - Implementing safe software display output\n");
-    
-    // STEP 1: Ensure framebuffer memory is properly mapped and accessible
-    // Call getApertureRange to initialize VRAM if not already done
-    if (!m_vram_range) {
-        IOLog("VMVirtIOFramebuffer::enableController() - Initializing VRAM access\n");
-        IODeviceMemory* vram = getApertureRange(kIOFBSystemAperture);
-        if (vram) {
-            IOLog("VMVirtIOFramebuffer::enableController() - VRAM initialized successfully\n");
-            vram->release(); // getApertureRange already retained it for m_vram_range
-        }
-    }
-    
-    if (m_vram_range) {
-        IOLog("VMVirtIOFramebuffer::enableController() - Framebuffer memory available: %p\n", m_vram_range);
-        IOLog("VMVirtIOFramebuffer::enableController() - Framebuffer size: %dx%d@%d\n", m_width, m_height, m_depth);
-        
-        // Get actual VRAM size from the memory object
-        IOByteCount vram_size = m_vram_range->getLength();
-        IOLog("VMVirtIOFramebuffer::enableController() - Actual VRAM size: %llu MB\n", 
-              (unsigned long long)(vram_size / (1024 * 1024)));
-        
-        // SAFE: Log framebuffer status without direct memory access
-        IOLog("VMVirtIOFramebuffer::enableController() - Framebuffer ready for display system\n");
-        
-    } else {
-        IOLog("VMVirtIOFramebuffer::enableController() - WARNING: No framebuffer memory available\n");
     }
     
     // STEP 2: Software display activation through IOFramebuffer mechanisms
     IOLog("VMVirtIOFramebuffer::enableController() - Software display output ready\n");
     
+    // *** CRITICAL: Only enable refresh timer in native VirtIO scanout mode ***
+    // In VGA compatibility mode, BAR0 writes automatically appear on screen
+    // The timer would interfere by calling transferToHost2D which is not needed in VGA mode
+    if (useNativeScanout && m_refresh_timer && m_gpu_driver) {
+        m_refresh_timer->setTimeoutMS(16);  // 60 Hz refresh rate for native VirtIO mode
+        IOLog("VMVirtIOFramebuffer::enableController() - Display refresh timer enabled: 60 Hz (native VirtIO mode)\n");
+        IOLog("VMVirtIOFramebuffer::enableController() - Timer will transfer framebuffer updates to VirtIO GPU\n");
+    } else if (!useNativeScanout) {
+        IOLog("VMVirtIOFramebuffer::enableController() - Timer DISABLED (VGA compatibility mode - not needed)\n");
+        IOLog("VMVirtIOFramebuffer::enableController() - BAR0 writes will auto-display via VGA BIOS\n");
+    } else {
+        IOLog("VMVirtIOFramebuffer::enableController() - WARNING: Timer or GPU driver not available\n");
+    }
+    
     IOLog("VMVirtIOFramebuffer::enableController() - Controller enabled successfully\n");
+    
     return kIOReturnSuccess;
 }
 // Note: enableController() method removed to use IOFramebuffer's default implementation
@@ -797,11 +1305,9 @@ IOReturn VMVirtIOFramebuffer::setDisplayMode(IODisplayModeID displayMode, IOInde
         IOLog("VMVirtIOFramebuffer::setDisplayMode() - Display mode updated successfully\n");
         IOLog("VMVirtIOFramebuffer::setDisplayMode() - Framebuffer ready for software display output\n");
         
-        // Notify VirtIO GPU driver about mode change
-        if (m_gpu_driver) {
-            // Tell VirtIO GPU about the new resolution
-            IOLog("VMVirtIOFramebuffer::setDisplayMode() - Notifying VirtIO GPU of mode change\n");
-        }
+        // Trigger display refresh to update VirtIO GPU with new content
+        IOLog("VMVirtIOFramebuffer::setDisplayMode() - Refreshing VirtIO GPU display\n");
+        refreshDisplay();
         
         // Ensure framebuffer is synchronized
         IOSleep(50); // Small delay for mode change stabilization
@@ -867,7 +1373,17 @@ IOItemCount VMVirtIOFramebuffer::getConnectionCount(void)
     return 1; // Single display connection
 }
 
-
+IOReturn VMVirtIOFramebuffer::getDisplayStatus(void* connectFlags)
+{
+    // CRITICAL: Tell IOGraphicsFamily that a display is connected
+    // Without this, macOS won't activate the framebuffer
+    if (connectFlags) {
+        // 1 = display connected, 0 = no display
+        *(IOOptionBits*)connectFlags = 1;
+    }
+    IOLog("VMVirtIOFramebuffer::getDisplayStatus() - Display connected\n");
+    return kIOReturnSuccess;
+}
 
 bool VMVirtIOFramebuffer::isConsoleDevice(void)
 {
@@ -1191,34 +1707,11 @@ IOReturn VMVirtIOFramebuffer::connectFlags(IOIndex connectIndex, IODisplayModeID
     return kIOReturnSuccess;
 }
 
-// User client support for Metal/acceleration compatibility
-IOReturn VMVirtIOFramebuffer::newUserClient(task_t owningTask, void* security_id, UInt32 type, IOUserClient** clientH)
-{
-    IOLog("VMVirtIOFramebuffer::newUserClient() - APPLE-STYLE VERSION - type=%d (0x%x)\n", (int)type, (unsigned int)type);
-    
-    // Log specific connection types like Apple does
-    if (type == kIOFBServerConnectType) {
-        IOLog("VMVirtIOFramebuffer::newUserClient() - kIOFBServerConnectType - This should trigger open()\n");
-    } else if (type == kIOFBSharedConnectType) {
-        IOLog("VMVirtIOFramebuffer::newUserClient() - kIOFBSharedConnectType - Shared connection\n");
-    } else if (type == kIOAccelSurfaceClientType) {
-        IOLog("VMVirtIOFramebuffer::newUserClient() - kIOAccelSurfaceClientType - Metal surface client\n");
-    } else {
-        IOLog("VMVirtIOFramebuffer::newUserClient() - Unknown type: %d (0x%x)\n", (int)type, (unsigned int)type);
-    }
-    
-    if (!clientH) {
-        IOLog("VMVirtIOFramebuffer::newUserClient() - NULL client pointer\n");
-        return kIOReturnBadArgument;
-    }
-    
-    // IMPORTANT: Let parent handle all connection types properly
-    // This ensures Apple's open() logic works correctly for server connections
-    IOReturn result = super::newUserClient(owningTask, security_id, type, clientH);
-    IOLog("VMVirtIOFramebuffer::newUserClient() - Parent result: 0x%x\n", result);
-    
-    return result;
-}
+// NOTE: newUserClient override removed - IOFramebuffer::newUserClient is NOT virtual in Snow Leopard
+// Cannot override non-virtual methods. QXL doesn't override it and works fine.
+// The system will automatically use IOUserClientClass from Info.plist when needed.
+// The crash at IOGraphicsFamily + 77347 happens because IOFramebuffer::newUserClient
+// expects internal state that we don't initialize. Need to investigate what state is missing.
 
 // CRITICAL: Cursor support methods (required for GUI mode)
 IOReturn VMVirtIOFramebuffer::setCursorImage(void* cursorImage)
@@ -1235,6 +1728,9 @@ IOReturn VMVirtIOFramebuffer::setCursorImage(void* cursorImage)
         IOLog("VMVirtIOFramebuffer::setCursorImage() - Custom cursor image set successfully\n");
     }
     
+    // Trigger a display refresh on cursor change (manual update since periodic timer is disabled)
+    refreshDisplay();
+    
     return kIOReturnSuccess;
 }
 
@@ -1246,6 +1742,9 @@ IOReturn VMVirtIOFramebuffer::setCursorState(SInt32 x, SInt32 y, bool visible)
     // For VirtIO GPU, cursor positioning is handled by the system
     // We just need to acknowledge cursor state changes
     // This enables proper cursor tracking for GUI applications
+    
+    // Trigger a display refresh on cursor movement (manual update since periodic timer is disabled)
+    refreshDisplay();
     
     return kIOReturnSuccess;
 }
@@ -1501,3 +2000,88 @@ IOReturn VMVirtIOFramebuffer::locateServiceDependencies(void* dependencies_buffe
     return kIOReturnSuccess;
 }
 */ // END DISABLED AGDC METHODS FOR TESTING
+
+// Display Refresh Timer Implementation
+
+void VMVirtIOFramebuffer::displayRefreshTimer(OSObject* owner, IOTimerEventSource* sender)
+{
+    VMVirtIOFramebuffer* fb = OSDynamicCast(VMVirtIOFramebuffer, owner);
+    if (!fb) {
+        IOLog("VMVirtIOFramebuffer::displayRefreshTimer() - ERROR: No framebuffer object\n");
+        return;
+    }
+    
+    static int call_count = 0;
+    call_count++;
+    
+    // Log first few calls to verify timer is working
+    if (call_count <= 5) {
+        IOLog("VMVirtIOFramebuffer::displayRefreshTimer() - Timer fired (call #%d)\n", call_count);
+    }
+    
+    // Refresh display - transfer framebuffer to VirtIO GPU and flush to display
+    fb->refreshDisplay();
+    
+    // Re-arm timer for next refresh cycle (1000ms = 1 Hz - testing, was breaking ARD at 60 Hz)
+    if (sender && fb->m_refresh_timer) {
+        fb->m_refresh_timer->setTimeoutMS(1000);
+    }
+}
+
+void VMVirtIOFramebuffer::refreshDisplay()
+{
+    // Only refresh if GPU driver is available
+    if (!m_gpu_driver) {
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - SKIP: No GPU driver\n");
+        return;
+    }
+
+    // Only perform work if we have a valid scanout resource id
+    if (m_scanout_resource_id == 0) {
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - SKIP: No scanout resource ID\n");
+        return;
+    }
+
+    // CRITICAL: Check if scanout has been taken over by 3D rendering
+    // If a 3D application has attached its own resource to the scanout,
+    // we should NOT overwrite it with our 2D framebuffer content.
+    // 3D resources manage their own transfer/flush cycle.
+    if (m_scanout_taken_over_by_3d) {
+        // 3D resource is active - don't interfere
+        return;
+    }
+
+    // Transfer framebuffer content to host GPU memory
+    IOReturn transfer_result = m_gpu_driver->transferToHost2D(m_scanout_resource_id, 0,
+                                                               0, 0, m_width, m_height);
+    if (transfer_result != kIOReturnSuccess) {
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - transferToHost2D FAILED: 0x%x\n", transfer_result);
+        return;
+    }
+
+    // Flush to display scanout
+    IOReturn flush_result = m_gpu_driver->flushResource(m_scanout_resource_id, 0, 0,
+                                                        m_width, m_height);
+    if (flush_result != kIOReturnSuccess) {
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - flushResource FAILED: 0x%x\n", flush_result);
+        return;
+    }
+    
+    // Success - log only once
+    static bool logged_success = false;
+    if (!logged_success) {
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - Transfer+Flush SUCCESS for resource %d (%dx%d)\n",
+              m_scanout_resource_id, m_width, m_height);
+        logged_success = true;
+    }
+}
+
+// 3D Scanout Management
+void VMVirtIOFramebuffer::setScanoutTakenOverBy3D(bool taken_over)
+{
+    if (taken_over != m_scanout_taken_over_by_3d) {
+        IOLog("VMVirtIOFramebuffer: Scanout control %s by 3D application\n", 
+              taken_over ? "taken over" : "returned to 2D");
+        m_scanout_taken_over_by_3d = taken_over;
+    }
+}

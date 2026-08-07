@@ -127,3 +127,9 @@ vm-ssh-key.pub
 # Third-party repositories we cloned
 csrstat-NG-master/
 directhw/
+
+# Documentation and notes
+notes/
+
+# Experimental code
+GLPlugin/

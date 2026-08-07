@@ -1,0 +1,66 @@
+#### Option B: Vendor selected MGL sources
+Copy only shader translation code. Not chosen due to maintenance burden.
+
+#### Option C: Link against libmgl.dylib
+Dynamic library approach. Not chosen due to deployment complexity.
+
+## How to Build and Use
+
+### Building with MGL Toolchain (Recommended)
+
+The MGL toolchain provides production-quality GLSL→SPIR-V→MSL translation using glslang and SPIRV-Cross.
+
+```bash
+# 1. Build MGL toolchain (only needed once, or when MGL changes)
+cd MGL
+make toolchain
+
+# 2. Build virglrenderer-metal with MGL toolchain enabled
+cd ../virglrenderer-metal
+USE_MGL_TOOLCHAIN=1 ./build.sh
+
+# 3. Run tests
+USE_MGL_TOOLCHAIN=1 ./test.sh
+```
+
+The build script will:
+- Automatically detect if MGL toolchain needs building
+- Add `-DVREND_METAL_USE_MGL_TOOLCHAIN` compile flag
+- Include `MGL/MGL/include` in the header search path
+- Link against `MGL/build/libmgl_toolchain.a` (in test harness)
+
+### Building without MGL (Fallback Mode)
+
+If you don't need the advanced shader toolchain, the default build uses a simpler regex-based translator:
+
+```bash
+cd virglrenderer-metal
+./build.sh
+./test.sh
+```
+
+This is useful for:
+- Quick testing/debugging
+- Environments where glslang/SPIRV-Cross aren't available
+- Simple shader workloads
+
+### Verifying the Integration
+
+After building with `USE_MGL_TOOLCHAIN=1`, check that:
+
+1. `MGL/build/libmgl_toolchain.a` exists
+2. Build output shows: "Building virglrenderer Metal Backend (with MGL toolchain)"
+3. Shader translation logs show `/* VREND_MGL_TOOLCHAIN */` marker in MSL output
+4. Entry points use `main0` or `main` (toolchain convention) instead of `vertex_main`/`fragment_main`
+
+## Files Modified/Created
+
+### MGL side:
+- `MGL/MGL/include/mgl_toolchain.h` - Public API header
+- `MGL/MGL/src/mgl_toolchain.c` - GLSL→SPIR-V→MSL implementation
+- `MGL/Makefile` - Added `toolchain` target
+
+### virglrenderer-metal side:
+- `virglrenderer-metal/vrend_metal_shader.m` - Integrated MGL toolchain with fallback
+- `virglrenderer-metal/build.sh` - Added `USE_MGL_TOOLCHAIN` environment variable support
+- `virglrenderer-metal/test.sh` - Links MGL toolchain library when enabled

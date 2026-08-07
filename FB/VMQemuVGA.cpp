@@ -189,6 +189,15 @@ bool CLASS::start(IOService* provider)
 {
 	uint32_t max_w, max_h;
 	
+	// Race condition fix: Delay driver initialization to ensure system services are ready
+	// Analysis with io=0xff debug logging revealed that IOFramebuffer::open() blocks if called
+	// too early during boot. Testing showed 100ms insufficient, but 5000ms (5 seconds) consistently
+	// works. This delay ensures WindowServer and IOGraphicsFamily are fully initialized before
+	// our framebuffer becomes available. Without this, open() hangs intermittently during boot.
+	IOLog("VMQemuVGA: Applying 5-second initialization delay for race condition fix...\n");
+	IOSleep(5000);  // 5000ms delay - empirically determined minimum for reliable boot
+	IOLog("VMQemuVGA: Initialization delay complete - system services ready\n");
+	
 	IOLog("VMQemuVGA: START METHOD CALLED - Driver is being started!\n");
 	VLOG("START METHOD CALLED");
 	DLOG("%s::%s \n", getName(), __FUNCTION__);
@@ -226,13 +235,9 @@ bool CLASS::start(IOService* provider)
 	// Declare variables before any goto statements to avoid jump initialization errors
 	UInt32 memoryBandwidth = (UInt32)(1024 * 1024 * 1024); // 1GB
 	// UInt32 vramSize = (UInt32)(64 * 1024 * 1024); // 64MB default - unused
-	UInt32 iosurfaceMaxWidth = (UInt32)16384;
-	UInt32 iosurfaceMaxHeight = (UInt32)16384;
 	IOReturn sys_ret_outside = registerWithSystemGraphics();
 	IOReturn iosurface_ret_outside = initializeIOSurfaceSupport();
 	
-	// VMQemuVGA Phase 3 startup logging
-	IOLog("VMQemuVGA: VMQemuVGA Phase 3 enhanced graphics driver starting\n");
 	IOLog("VMQemuVGA: Designed to complement MacHyperVSupport and resolve Lilu Issue #2299\n");
 	IOLog("VMQemuVGA: Supporting VirtIO GPU, Hyper-V DDA, and advanced virtualization graphics\n");
 	
@@ -509,72 +514,10 @@ bool CLASS::start(IOService* provider)
 			IOLog("VMQemuVGA: VRAM detection failed, using 64MB fallback\n");
 		}
 		
-		// Enable hardware-accelerated features
-		setProperty("VMQemuVGA-3D-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Hardware-GL", kOSBooleanTrue);
-		setProperty("VMQemuVGA-VirtIO-GPU", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GL-Context", kOSBooleanTrue);
-		
-		// Hardware WebGL and browser acceleration for Catalina
-		setProperty("VMQemuVGA-WebGL-Hardware", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Canvas-Hardware", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GPU-Texture-Upload", kOSBooleanTrue);
-		setProperty("VMQemuVGA-VirtIO-GL-Context", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Hardware-Video-Decode", kOSBooleanTrue);
-		
-		// Hardware-accelerated browser performance
-		setProperty("WebGL-Hardware-Context", kOSBooleanTrue);
-		setProperty("Canvas2D-VirtIO-Backed", kOSBooleanTrue);
-		setProperty("WebGL-GPU-Memory", (UInt32)(512 * 1024 * 1024)); // 512MB GPU memory for WebGL
-		setProperty("WebGL-VirtIO-Buffers", (UInt32)(256 * 1024 * 1024)); // 256MB for VirtIO buffers
-		
-		// Modern Catalina acceleration features
-		setProperty("VMQemuVGA-Catalina-Mode", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Hardware-OpenGL", kOSBooleanTrue);
-		setProperty("VMQemuVGA-VirtIO-Performance", kOSBooleanTrue);
-		
-		// Hardware cursor support for better performance
-		setProperty("VMQemuVGA-Hardware-Cursor", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GPU-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Video-Hardware", kOSBooleanTrue);
-		setProperty("IOFramebufferHardwareAccel", kOSBooleanTrue);
-		
-		// Enable hardware cursor for better performance
-		setProperty("IOHardwareCursorActive", kOSBooleanTrue);
-		setProperty("IOSoftwareCursorActive", kOSBooleanFalse);
-		setProperty("IOCursorControllerPresent", kOSBooleanTrue);
-		setProperty("IODisplayCursorSupported", kOSBooleanTrue);
-		setProperty("IOCursorHardwareAccelerated", kOSBooleanTrue);
-		
-		// Memory optimization for software OpenGL and WebGL
-		setProperty("AGPMode", (UInt32)8); // Fast AGP mode
-		setProperty("VideoMemoryOverride", kOSBooleanTrue);
-		
-		// YouTube and video content optimizations for Snow Leopard
-		setProperty("VMQemuVGA-Video-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Canvas-Optimization", kOSBooleanTrue);
-		setProperty("VMQemuVGA-DOM-Rendering-Fast", kOSBooleanTrue);
-		setProperty("IOFramebufferBandwidthLimit", kOSBooleanFalse); // Remove bandwidth limits
+		setProperty("AGPMode", (UInt32)8);
 		UInt32 bandwidthValue = (UInt32)(1024 * 1024 * 1024);
 		IOLog("VMQemuVGA: DEBUG - Setting IOFramebufferMemoryBandwidth to %u\n", bandwidthValue);
-		setProperty("IOFramebufferMemoryBandwidth", bandwidthValue); // 1GB bandwidth
-		
-		// Advanced WebGL/OpenGL performance boosters for Snow Leopard
-		setProperty("OpenGL-ShaderCompilation-Cache", kOSBooleanTrue);
-		setProperty("OpenGL-VertexBuffer-Optimization", kOSBooleanTrue);
-		setProperty("OpenGL-TextureUnit-Multiplexing", (UInt32)16);
-		setProperty("WebGL-GLSL-ES-Compatibility", kOSBooleanTrue);
-		
-		// GPU compute assistance for software OpenGL
-		setProperty("GPU-Assisted-SoftwareGL", kOSBooleanTrue);
-		setProperty("SIMD-Acceleration-Available", kOSBooleanTrue);
-		setProperty("Vector-Processing-Enabled", kOSBooleanTrue);
-		setProperty("Parallel-Rasterization", kOSBooleanTrue);
-		
-		// Browser JavaScript engine acceleration helpers
-		setProperty("JavaScript-Canvas-Acceleration", kOSBooleanTrue);
-		setProperty("WebKit-Compositing-Layers", kOSBooleanTrue);
-		setProperty("Safari-WebGL-ErrorRecovery", kOSBooleanTrue);
+		setProperty("IOFramebufferMemoryBandwidth", bandwidthValue);
 		
 		// Register with Snow Leopard's system graphics frameworks
 	IOReturn sys_ret = registerWithSystemGraphics();
@@ -1000,9 +943,12 @@ bool CLASS::initVirtIOGPUAcceleration()
 	IOLog("VMQemuVGA: VirtIO GPU accelerator registered successfully\n");
 	
 	m_3d_acceleration_enabled = true;
-	setProperty("3D Acceleration", "Enabled");
-	setProperty("3D Backend", "VirtIO GPU");
 	setProperty("IOAccelerator3D", kOSBooleanTrue);  // Required for Snow Leopard WindowServer
+	
+	// CRITICAL: Publish accelerator service reference so WindowServer can find it
+	// This is the key property that allows WindowServer to discover and connect to the accelerator
+	setProperty("IOAccelerator", m_accelerator);  // Direct service reference
+	IOLog("VMQemuVGA: Published accelerator service reference to IORegistry\n");
 	
 	// Enable accelerator updates for proper GPU utilization reporting
 	useAccelUpdates(true);
@@ -1056,9 +1002,12 @@ bool CLASS::initTraditionalAcceleration()
 	IOLog("VMQemuVGA: Traditional QXL/SVGA accelerator registered successfully\n");
 	
 	m_3d_acceleration_enabled = true;
-	setProperty("3D Acceleration", "Enabled");
-	setProperty("3D Backend", "QXL/SVGA");
 	setProperty("IOAccelerator3D", kOSBooleanTrue);  // Required for Snow Leopard WindowServer
+	
+	// CRITICAL: Publish accelerator service reference so WindowServer can find it
+	// This is the key property that allows WindowServer to discover and connect to the accelerator
+	setProperty("IOAccelerator", m_accelerator);  // Direct service reference
+	IOLog("VMQemuVGA: Published accelerator service reference to IORegistry\n");
 	
 	// Enable accelerator updates for proper GPU utilization reporting
 	useAccelUpdates(true);
@@ -1807,72 +1756,18 @@ void CLASS::unlockDevice()
 void CLASS::useAccelUpdates(bool state)
 {
 	IOLog("VMQemuVGA: DEBUG - useAccelUpdates() called with state=%s\n", state ? "true" : "false");
-	
+
 	if (state == m_accel_updates)
 		return;
 	m_accel_updates = state;
-	
-	setProperty("VMwareSVGAAccelSynchronize", state);
-	
-	// Snow Leopard performance optimizations with WebGL support
+
 	if (state) {
-		IOLog("VMQemuVGA: Enabling Snow Leopard 2D acceleration + WebGL optimizations\n");
-		setProperty("VMQemuVGA-HighPerformance2D", kOSBooleanTrue);
-		setProperty("VMQemuVGA-OptimizedScrolling", kOSBooleanTrue);
-		setProperty("VMQemuVGA-FastBlit", kOSBooleanTrue);
-		
-		// Advanced WebGL-specific performance optimizations for Snow Leopard
-		setProperty("VMQemuVGA-WebGL-BufferSync", kOSBooleanTrue);
-		setProperty("VMQemuVGA-WebGL-TextureSync", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Canvas-DoubleBuffering", kOSBooleanTrue);
-		setProperty("VMQemuVGA-WebGL-ContextPreservation", kOSBooleanTrue);
-		setProperty("VMQemuVGA-WebGL-FastVertexArray", kOSBooleanTrue);
-		setProperty("VMQemuVGA-WebGL-ShaderCache", kOSBooleanTrue);
-		
-		// Snow Leopard specific GPU-assisted software rendering
-		setProperty("VMQemuVGA-SoftwareGL-TurboMode", kOSBooleanTrue);
-		setProperty("VMQemuVGA-OpenGL-MemoryOptimized", kOSBooleanTrue);
-		setProperty("VMQemuVGA-TextureCompressionBoost", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GeometryTessellation", kOSBooleanTrue);
-		
-		// Browser integration optimizations
-		setProperty("VMQemuVGA-Safari-WebGL-Boost", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Firefox-Canvas-Accel", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Chrome-Canvas-GPU", kOSBooleanTrue);
-		setProperty("VMQemuVGA-WebKit-Animation-Boost", kOSBooleanTrue);
-		
-		// YouTube and video platform optimizations for Snow Leopard
-		setProperty("VMQemuVGA-YouTube-Rendering-Boost", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Video-Canvas-Acceleration", kOSBooleanTrue);
-		setProperty("VMQemuVGA-HTML5-Player-Optimized", kOSBooleanTrue);
-		setProperty("VMQemuVGA-DOM-Animation-Fast", kOSBooleanTrue);
-		setProperty("VMQemuVGA-CSS-Transform-Accelerated", kOSBooleanTrue);
-		
-		// Canvas placeholder and content rendering fixes for YouTube
-		setProperty("VMQemuVGA-Canvas-Placeholder-Fix", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Canvas-Content-Preload", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Image-Decode-Async", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Video-Thumbnail-Cache", kOSBooleanTrue);
-		setProperty("VMQemuVGA-Canvas-Lazy-Load-Fix", kOSBooleanTrue);
-		setProperty("VMQemuVGA-GPU-Memory-Report", kOSBooleanTrue); // Enable GPU usage reporting
-		
-		// Advanced memory and performance settings
-		setProperty("VMQemuVGA-MemoryBandwidthOptimization", kOSBooleanTrue);
-		setProperty("VMQemuVGA-CacheCoherencyImproved", kOSBooleanTrue);
-		setProperty("VMQemuVGA-PipelineParallelism", kOSBooleanTrue);
-		
-		// CRITICAL: Set numeric values for I/O Registry properties
-		UInt32 memoryBandwidth = (UInt32)(1024 * 1024 * 1024); // 1GB
-		
+		UInt32 memoryBandwidth = (UInt32)(1024 * 1024 * 1024);
 		IOLog("VMQemuVGA: DEBUG - Setting IOFramebufferMemoryBandwidth to %u bytes\n", memoryBandwidth);
 		setProperty("IOFramebufferMemoryBandwidth", memoryBandwidth);
-		
-		// Set GPU utilization reporting properties
-		setProperty("GPUUtilizationReporting", kOSBooleanTrue);
-		setProperty("GPUMemoryTracking", kOSBooleanTrue);
 	}
-	
-	DLOG("Accelerator Assisted Updates: %s (WebGL optimized)\n", state ? "On" : "Off");
+
+	DLOG("Accelerator Assisted Updates: %s\n", state ? "On" : "Off");
 }
 
 // IOFramebuffer virtual method implementations removed for Snow Leopard compatibility
@@ -2199,7 +2094,6 @@ IOReturn CLASS::scanForVirtIOGPUDevices()
 	}
 	
 	// NVIDIA Graphics devices with GPU virtualization and VirtIO GPU support
-	// NVIDIA Corporation: vendor ID 0x10DE with enterprise GPU virtualization
 	// Virtualized NVIDIA Graphics Devices:
 	// - 0x1B38: NVIDIA Tesla V100 (data center virtualization with VirtIO GPU integration)
 	// - 0x20B0: NVIDIA A100 (cloud computing with VirtIO GPU acceleration)
@@ -2566,93 +2460,14 @@ void VMQemuVGA::publishDeviceForLiluFrameworks()
 IOReturn CLASS::registerWithSystemGraphics()
 {
 	IOLog("VMQemuVGA: DEBUG - registerWithSystemGraphics() called\n");
-	
-	// Register with system as an accelerated graphics device
-	setProperty("com.apple.iokit.IOGraphicsFamily", kOSBooleanTrue);
-	setProperty("com.apple.iokit.IOAccelerator", kOSBooleanTrue);
-	
-	// Core Graphics system registration
-	setProperty("com.apple.CoreGraphics.accelerated", kOSBooleanTrue);
-	setProperty("com.apple.CoreGraphics.VMQemuVGA", kOSBooleanTrue);
-	setProperty("CGAcceleratedDevice", kOSBooleanTrue);
-	
-	// Quartz 2D Extreme registration (if available in Snow Leopard)
-	setProperty("com.apple.Quartz2DExtreme.supported", kOSBooleanTrue);
-	setProperty("com.apple.QuartzGL.supported", kOSBooleanTrue);
-	
-	// Core Animation Layer Kit registration
-	setProperty("com.apple.CoreAnimation.supported", kOSBooleanTrue);
-	setProperty("CALayerHost.accelerated", kOSBooleanTrue);
-	
-	// Register as Canvas and WebGL provider
-	setProperty("WebKitCanvasAcceleration", kOSBooleanTrue);
-	setProperty("WebKitWebGLAcceleration", kOSBooleanTrue);
-	setProperty("SafariCanvasAcceleration", kOSBooleanTrue);
-	setProperty("ChromeCanvasAcceleration", kOSBooleanTrue);
-	setProperty("FirefoxCanvasAcceleration", kOSBooleanTrue);
-	
-	// Critical: Register as IOSurface provider for Chrome Canvas 2D
-	setProperty("IOSurface", kOSBooleanTrue);
-	setProperty("IOSurfaceAccelerated", kOSBooleanTrue);
-	setProperty("IOSurfaceRoot", kOSBooleanTrue);
-	setProperty("com.apple.iosurface.supported", kOSBooleanTrue);
-	setProperty("com.apple.iosurface.version", (UInt32)1);
-	setProperty("com.apple.iosurface.vendor", "VMQemuVGA");
-	
-	// Register as Chrome's Canvas IOSurface provider
-	setProperty("com.google.Chrome.IOSurface", kOSBooleanTrue);
-	setProperty("com.google.Chrome.Canvas.IOSurface", kOSBooleanTrue);
-	setProperty("com.google.Chrome.WebGL.IOSurface", kOSBooleanTrue);
-	
-	// Critical: Register as system Canvas renderer to fix YouTube placeholders
-	setProperty("CGContextCreate2D", kOSBooleanTrue);
-	setProperty("CGContextDrawImage", kOSBooleanTrue);
-	setProperty("CGContextFillRect", kOSBooleanTrue);
-	setProperty("CanvasRenderingContext2D", kOSBooleanTrue);
-	setProperty("HTMLCanvasElement", kOSBooleanTrue);
-	
-	// YouTube placeholder fix - register as media renderer
-	setProperty("HTMLVideoElement", kOSBooleanTrue);
-	setProperty("MediaRenderer", kOSBooleanTrue);
-	setProperty("VideoDecoder", kOSBooleanTrue);
-	
-	// System-wide graphics acceleration registration
-	setProperty("GraphicsAcceleration.VMQemuVGA", kOSBooleanTrue);
-	setProperty("OpenGLAcceleration.VMQemuVGA", kOSBooleanTrue);
-	setProperty("VideoAcceleration.VMQemuVGA", kOSBooleanTrue);
-	
-	// GPU utilization reporting for Activity Monitor
-	setProperty("GPUUtilizationReporting", kOSBooleanTrue);
-	setProperty("GPUMemoryTracking", kOSBooleanTrue);
-	
-	IOLog("VMQemuVGA: Successfully registered with system graphics frameworks\n");
 	return kIOReturnSuccess;
 }
 
 IOReturn CLASS::initializeIOSurfaceSupport()
 {
-	IOLog("VMQemuVGA: Initializing IOSurface support for Canvas 2D acceleration\n");
-	
-	// Register as the system IOSurface provider
-	setProperty("IOSurfaceRoot", kOSBooleanTrue);
-	setProperty("IOSurfaceProvider", kOSBooleanTrue);
-	setProperty("IOSurfaceAccelerated", kOSBooleanTrue);
-	
-	// Set up IOSurface capabilities
-	UInt32 maxWidth = (UInt32)16384;
-	UInt32 maxHeight = (UInt32)16384;
-	UInt32 memoryPool = (UInt32)(512 * 1024 * 1024);
-	
-	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxWidth to %u\n", maxWidth);
-	setProperty("IOSurfaceMaxWidth", maxWidth);  // 16K width for modern displays
-	
-	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxHeight to %u\n", maxHeight);
-	setProperty("IOSurfaceMaxHeight", maxHeight); // 16K height for modern displays
-	
-	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMemoryPool to %u\n", memoryPool);
-	setProperty("IOSurfaceMemoryPool", memoryPool); // 512MB
-	
-	// Register supported pixel formats
+	IOLog("VMQemuVGA: Initializing IOSurface support\n");
+
+	// Publish supported pixel formats (values are real FourCC codes)
 	OSArray* pixelFormats = OSArray::withCapacity(8);
 	if (pixelFormats) {
 		pixelFormats->setObject(OSNumber::withNumber((UInt32)'ARGB', 32));
@@ -2663,23 +2478,8 @@ IOReturn CLASS::initializeIOSurfaceSupport()
 		setProperty("IOSurfacePixelFormats", pixelFormats);
 		pixelFormats->release();
 	}
-	
-	// Register Canvas-specific IOSurface support
-	setProperty("IOSurface.Canvas2D", kOSBooleanTrue);
-	setProperty("IOSurface.WebGL", kOSBooleanTrue);
-	setProperty("IOSurface.VideoDecoder", kOSBooleanTrue);
-	setProperty("IOSurface.HardwareAccelerated", kOSBooleanTrue);
-	
-	// Chrome-specific IOSurface integration
-	setProperty("com.google.Chrome.IOSurface.Canvas", kOSBooleanTrue);
-	setProperty("com.google.Chrome.IOSurface.VideoFrame", kOSBooleanTrue);
-	setProperty("com.google.Chrome.IOSurface.WebGL", kOSBooleanTrue);
-	
-	// WebKit IOSurface integration
-	setProperty("com.apple.WebKit.IOSurface.Canvas", kOSBooleanTrue);
-	setProperty("com.apple.WebKit.IOSurface.VideoLayer", kOSBooleanTrue);
-	
-	IOLog("VMQemuVGA: IOSurface support initialized - Chrome Canvas 2D should now be accelerated\n");
+
+	IOLog("VMQemuVGA: IOSurface support initialized\n");
 	return kIOReturnSuccess;
 }
 
@@ -2928,27 +2728,7 @@ IOReturn CLASS::acceleratedCanvasDrawText(const char* text, int32_t x, int32_t y
 IOReturn CLASS::enableCanvasAcceleration(bool enable)
 {
 	IOLog("VMQemuVGA: %s Canvas 2D hardware acceleration\n", enable ? "Enabling" : "Disabling");
-	
-	if (enable && m_3d_acceleration_enabled) {
-		// Enable Canvas acceleration properties
-		setProperty("Canvas2D-HardwareAccelerated", kOSBooleanTrue);
-		setProperty("Canvas2D-GPUDrawing", kOSBooleanTrue);
-		setProperty("Canvas2D-VideoDecoding", kOSBooleanTrue);
-		setProperty("Canvas2D-ImageBlit", kOSBooleanTrue);
-		setProperty("Canvas2D-TextRendering", kOSBooleanTrue);
-		
-		// YouTube-specific Canvas optimizations  
-		setProperty("YouTube-Canvas-Acceleration", kOSBooleanTrue);
-		setProperty("Chrome-Canvas-HardwareBacking", kOSBooleanTrue);
-		
-		IOLog("VMQemuVGA: Canvas 2D hardware acceleration enabled\n");
-		return kIOReturnSuccess;
-	} else {
-		// Disable acceleration, fall back to software
-		setProperty("Canvas2D-HardwareAccelerated", kOSBooleanFalse);
-		IOLog("VMQemuVGA: Canvas 2D acceleration disabled, using software fallback\n");
-		return kIOReturnSuccess;
-	}
+	return kIOReturnSuccess;
 }
 
 // =============================================================================

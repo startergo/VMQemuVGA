@@ -42,6 +42,7 @@ class VMQemuVGAClient: public IOUserClient
 	OSDeclareDefaultStructors(VMQemuVGAClient);
 
 public:
+	bool start(IOService* provider) override;
 	IOExternalMethod* getTargetAndMethodForIndex(IOService** targetP, UInt32 index) override;
 	IOReturn clientClose() override;
 	bool initWithTask(task_t owningTask, void* securityToken, UInt32 type) override;

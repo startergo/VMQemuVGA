@@ -1,0 +1,106 @@
+--- a/ui/cocoa.m
++++ b/ui/cocoa.m
+@@ -52,6 +52,10 @@
+ #include "qemu/error-report.h"
+ #include <Carbon/Carbon.h>
+ #include "hw/core/cpu.h"
++#ifdef CONFIG_VIRGL_RENDERER
++#include "hw/display/virgl_metal_scanout_bridge.h"
++#import "cocoa_metal_presenter.h"
++#endif
+ 
+ #ifdef CONFIG_EGL
+ #include "ui/egl-context.h"
+@@ -273,6 +277,10 @@
+     int mouseX;
+     int mouseY;
+     bool mouseOn;
++#ifdef CONFIG_VIRGL_RENDERER
++    uint32_t metal_scanout_id;
++    bool metal_view_attached;
++#endif
+ }
+ - (void) grabMouse;
+ - (void) ungrabMouse;
+@@ -283,6 +291,9 @@
+ - (void) notifyMouseModeChange;
+ - (BOOL) isMouseGrabbed;
+ - (void) raiseAllKeys;
++#ifdef CONFIG_VIRGL_RENDERER
++- (void)refreshMetalAttachment;
++#endif
+ @end
+ 
+ QemuCocoaView *cocoaView;
+@@ -340,6 +351,10 @@
+         [cursorLayer setAnchorPoint:CGPointMake(0, 1)];
+         [cursorLayer setZPosition:1];
+         [[self layer] addSublayer:cursorLayer];
++    #ifdef CONFIG_VIRGL_RENDERER
++        metal_scanout_id = UINT32_MAX;
++        metal_view_attached = false;
++    #endif
+ 
+     }
+     return self;
+@@ -356,6 +371,12 @@
+     CGColorSpaceRelease(colorspace);
+     [cursorLayer release];
+     cursor_unref(cursor);
++#ifdef CONFIG_VIRGL_RENDERER
++    if (metal_view_attached) {
++        cocoa_metal_presenter_detach_view(metal_scanout_id);
++        metal_view_attached = false;
++    }
++#endif
+     [super dealloc];
+ }
+ 
+@@ -389,6 +410,9 @@
+     register_displaychangelistener(&dcl);
+     [self notifyMouseModeChange];
+     [self updateUIInfo];
++#ifdef CONFIG_VIRGL_RENDERER
++    [self refreshMetalAttachment];
++#endif
+ }
+ 
+ - (void) hideCursor
+@@ -606,6 +630,9 @@
+     } else {
+         [[self window] setContentSize:[self fixAspectRatio:[self frame].size]];
+     }
++#ifdef CONFIG_VIRGL_RENDERER
++    cocoa_metal_presenter_layout_views();
++#endif
+ }
+ 
+ - (void) updateScale
+@@ -617,6 +644,9 @@
+     }
+ 
+     [self updateCursorLayout];
++#ifdef CONFIG_VIRGL_RENDERER
++    cocoa_metal_presenter_layout_views();
++#endif
+ }
+ 
+ #pragma clang diagnostic push
+@@ -689,11 +719,17 @@
+     });
+ }
+ 
++        #ifdef CONFIG_VIRGL_RENDERER
++        cocoa_metal_presenter_layout_views();
++        #endif
+ - (void) updateScreenWidth:(int)w height:(int)h
+ {
+     COCOA_DEBUG("QemuCocoaView: updateScreenWidth:height:\n");
+ 
+     if (w != screen.width || h != screen.height) {
++        #ifdef CONFIG_VIRGL_RENDERER
++        cocoa_metal_presenter_layout_views();
++        #endif
+         COCOA_DEBUG("updateScreenWidth:height: new size %d x %d\n", w, h);
+         screen.width = w;
+         screen.height = h;

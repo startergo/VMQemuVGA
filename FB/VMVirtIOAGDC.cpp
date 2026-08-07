@@ -306,9 +306,9 @@ IOReturn VMVirtIOAGDC::registerWithGPUWrangler()
     setProperty("AGDCPixelFormat", m_display_metrics.pixel_format, 32);
     
     // Set GPU acceleration properties
-    // setProperty("IOAcceleratorFamily", kOSBooleanTrue);
-    // setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
-    // setProperty("IOAccelerator3D", kOSBooleanTrue);
+    setProperty("IOAcceleratorFamily", kOSBooleanTrue);
+    setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
+    setProperty("IOAccelerator3D", kOSBooleanTrue);
     
     m_agdc_registered = true;
     

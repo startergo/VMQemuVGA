@@ -1,0 +1,1466 @@
+diff --git a/hw/display/cocoa_metal_presenter.mm b/hw/display/cocoa_metal_presenter.mm
+deleted file mode 100644
+index fcb386d578..0000000000
+--- a/hw/display/cocoa_metal_presenter.mm
++++ /dev/null
+@@ -1,574 +0,0 @@
+-#import "cocoa_metal_presenter.h"
+-
+-#import <AppKit/AppKit.h>
+-#import <Metal/Metal.h>
+-#import <QuartzCore/CAMetalLayer.h>
+-#import <IOSurface/IOSurface.h>
+-#import <CoreVideo/CoreVideo.h>
+-#import <dispatch/dispatch.h>
+-#include <mach/mach_port.h>
+-#include <math.h>
+-#include <stdint.h>
+-
+-#import "virgl_metal_scanout_bridge.h"
+-
+-static void cocoa_iosurface_consumer(const struct vrend_metal_scanout_surface_info *info, void *opaque);
+-static void cocoa_shared_event_consumer(const struct vrend_metal_shared_event_info *info, void *opaque);
+-static CVReturn _CocoaDisplayLinkCallback(CVDisplayLinkRef displayLink,
+-                                          const CVTimeStamp *now,
+-                                          const CVTimeStamp *outputTime,
+-                                          CVOptionFlags flagsIn,
+-                                          CVOptionFlags *flagsOut,
+-                                          void *displayLinkContext);
+-
+-@interface CocoaMetalPresenter ()
+-@property (nonatomic, readonly) uint32_t maxScanouts;
+-@property (nonatomic, strong) id<MTLDevice> device;
+-@property (nonatomic, strong) id<MTLCommandQueue> commandQueue;
+-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSView *> *viewTable;
+-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, CAMetalLayer *> *layerTable;
+-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *frameIdTable;
+-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, id<MTLSharedEvent>> *sharedEventTable;
+-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *sharedEventSignals;
+-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *scanoutContextMap;
+-@property (nonatomic, assign) BOOL bridgeRegistered;
+-@property (nonatomic, assign) BOOL vsyncEnabled;
+-@property (nonatomic, assign) double targetFrameRate;
+-@property (nonatomic, assign) CVDisplayLinkRef displayLink;
+-@property (nonatomic, strong) NSLock *pendingLock;
+-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSData *> *pendingInfo;
+-
+-- (void)handleIOSurfaceInfo:(struct vrend_metal_scanout_surface_info)info;
+-- (void)handleSharedEventInfoStruct:(struct vrend_metal_shared_event_info)info;
+-- (CAMetalLayer *)ensureLayerForScanout:(NSNumber *)key
+-                                   view:(NSView *)view
+-                                   size:(CGSize)size
+-                             pixelFormat:(MTLPixelFormat)pixelFormat;
+-- (void)presentSurfaceInfo:(const struct vrend_metal_scanout_surface_info)info
+-                    onLayer:(CAMetalLayer *)layer;
+-- (void)presentImmediate:(struct vrend_metal_scanout_surface_info)info;
+-- (void)startDisplayLink;
+-- (void)stopDisplayLink;
+-- (void)displayLinkDidFire;
+-- (void)applyThrottleForScanout:(uint32_t)scanout;
+-- (void)applyThrottleForAllScanouts;
+-@end
+-
+-@implementation CocoaMetalPresenter
+-
+-- (instancetype)initWithMaxScanouts:(uint32_t)maxScanouts {
+-    self = [super init];
+-    if (!self) {
+-        return nil;
+-    }
+-
+-    _maxScanouts = maxScanouts;
+-#if TARGET_OS_OSX
+-    if (@available(macOS 10.14, *)) {
+-        _device = MTLCreateSystemDefaultDevice();
+-        if (_device) {
+-            _commandQueue = [_device newCommandQueue];
+-        } else {
+-            NSLog(@"[CocoaMetalPresenter] Failed to create default Metal device");
+-        }
+-    } else {
+-        NSLog(@"[CocoaMetalPresenter] macOS 10.14+ is required for Metal scanouts");
+-    }
+-#else
+-    NSLog(@"[CocoaMetalPresenter] Metal scanouts are not supported on this platform");
+-#endif
+-
+-    _viewTable = [NSMutableDictionary dictionary];
+-    _layerTable = [NSMutableDictionary dictionary];
+-    _frameIdTable = [NSMutableDictionary dictionary];
+-    _sharedEventTable = [NSMutableDictionary dictionary];
+-    _sharedEventSignals = [NSMutableDictionary dictionary];
+-    _scanoutContextMap = [NSMutableDictionary dictionary];
+-    _pendingInfo = [NSMutableDictionary dictionary];
+-    _pendingLock = [[NSLock alloc] init];
+-    _vsyncEnabled = YES;
+-    _targetFrameRate = 60.0;
+-    _displayLink = NULL;
+-
+-    return self;
+-}
+-
+-- (void)dealloc {
+-    [self stopDisplayLink];
+-}
+-
+-- (void)setView:(NSView *)view forScanout:(uint32_t)scanout {
+-    if (!view || scanout >= self.maxScanouts) {
+-        return;
+-    }
+-
+-    dispatch_async(dispatch_get_main_queue(), ^{
+-        self.viewTable[@(scanout)] = view;
+-        [self.layerTable removeObjectForKey:@(scanout)];
+-        [self.frameIdTable removeObjectForKey:@(scanout)];
+-        [self applyThrottleForScanout:scanout];
+-    });
+-}
+-
+-- (void)detachScanout:(uint32_t)scanout {
+-    if (scanout >= self.maxScanouts) {
+-        return;
+-    }
+-
+-    dispatch_async(dispatch_get_main_queue(), ^{
+-        NSNumber *key = @(scanout);
+-        [self.viewTable removeObjectForKey:key];
+-        [self.layerTable removeObjectForKey:key];
+-        [self.frameIdTable removeObjectForKey:key];
+-        [self.scanoutContextMap removeObjectForKey:key];
+-        [self.sharedEventSignals removeObjectForKey:key];
+-    });
+-    virtio_gpu_metal_set_scanout_throttle(scanout, 0.0);
+-}
+-
+-- (void)layoutLayers {
+-    dispatch_async(dispatch_get_main_queue(), ^{
+-        [self.layerTable enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, CAMetalLayer *layer, BOOL *stop) {
+-            NSView *view = self.viewTable[key];
+-            if (!layer || !view) {
+-                return;
+-            }
+-            layer.frame = view.bounds;
+-            NSRect backingRect = [view convertRectToBacking:view.bounds];
+-            layer.drawableSize = backingRect.size;
+-        }];
+-    });
+-}
+-
+-- (void)registerWithMetalBridge {
+-    if (self.bridgeRegistered) {
+-        return;
+-    }
+-    if (!vrend_metal_scanout_supports_iosurface()) {
+-        NSLog(@"[CocoaMetalPresenter] IOSurface scanouts not available on current host");
+-        return;
+-    }
+-    self.bridgeRegistered = YES;
+-    virtio_gpu_metal_register_iosurface_consumer(cocoa_iosurface_consumer, (__bridge void *)self);
+-    virtio_gpu_metal_register_shared_event_consumer(cocoa_shared_event_consumer, (__bridge void *)self);
+-}
+-
+-- (void)unregisterFromMetalBridge {
+-    if (!self.bridgeRegistered) {
+-        return;
+-    }
+-    virtio_gpu_metal_register_iosurface_consumer(NULL, NULL);
+-    virtio_gpu_metal_register_shared_event_consumer(NULL, NULL);
+-    [self.layerTable removeAllObjects];
+-    [self.frameIdTable removeAllObjects];
+-    [self.sharedEventTable removeAllObjects];
+-    [self.sharedEventSignals removeAllObjects];
+-    [self.scanoutContextMap removeAllObjects];
+-    self.bridgeRegistered = NO;
+-}
+-
+-- (void)setVsyncEnabled:(BOOL)enabled {
+-    if (_vsyncEnabled == enabled) {
+-        return;
+-    }
+-    _vsyncEnabled = enabled;
+-    if (_vsyncEnabled) {
+-        [self startDisplayLink];
+-    } else {
+-        [self stopDisplayLink];
+-        [_pendingLock lock];
+-        [_pendingInfo removeAllObjects];
+-        [_pendingLock unlock];
+-    }
+-    [self applyThrottleForAllScanouts];
+-}
+-
+-- (BOOL)vsyncEnabled {
+-    return _vsyncEnabled;
+-}
+-
+-- (void)setTargetFrameRate:(double)hz {
+-    double clamped = hz > 0.0 ? hz : 0.0;
+-    if (fabs(_targetFrameRate - clamped) < 0.01) {
+-        return;
+-    }
+-    _targetFrameRate = clamped;
+-    [self applyThrottleForAllScanouts];
+-}
+-
+-- (double)targetFrameRate {
+-    return _targetFrameRate;
+-}
+-
+-#pragma mark - Private helpers
+-
+-- (void)handleIOSurfaceInfo:(struct vrend_metal_scanout_surface_info)info {
+-    if (info.scanout_id >= self.maxScanouts) {
+-        return;
+-    }
+-
+-    NSNumber *key = @(info.scanout_id);
+-    if (info.iosurface_id == 0) {
+-        [self.layerTable removeObjectForKey:key];
+-        [self.frameIdTable removeObjectForKey:key];
+-        [self.scanoutContextMap removeObjectForKey:key];
+-        [_pendingLock lock];
+-        [_pendingInfo removeObjectForKey:key];
+-        [_pendingLock unlock];
+-        return;
+-    }
+-
+-    if (info.ctx_id) {
+-        self.scanoutContextMap[key] = @(info.ctx_id);
+-    }
+-
+-    if (self.vsyncEnabled) {
+-        [_pendingLock lock];
+-        NSData *blob = [NSData dataWithBytes:&info length:sizeof(info)];
+-        _pendingInfo[key] = blob;
+-        [_pendingLock unlock];
+-    } else {
+-        [self presentImmediate:info];
+-    }
+-}
+-
+-- (void)handleSharedEventInfoStruct:(struct vrend_metal_shared_event_info)info {
+-    if (info.ctx_id == 0) {
+-        return;
+-    }
+-    NSNumber *key = @(info.ctx_id);
+-#if TARGET_OS_OSX
+-    if (@available(macOS 10.14, *)) {
+-        if (info.mach_port == MACH_PORT_NULL && info.shared_event_handle == 0) {
+-            [self.sharedEventTable removeObjectForKey:key];
+-            [self.sharedEventSignals removeObjectForKey:key];
+-            return;
+-        }
+-        id<MTLSharedEvent> sharedEvent = self.sharedEventTable[key];
+-        if (!sharedEvent) {
+-            MTLSharedEventHandle *handle = nil;
+-            if (info.mach_port != MACH_PORT_NULL &&
+-                [MTLSharedEventHandle instancesRespondToSelector:@selector(initWithMachPort:)]) {
+-                handle = [[MTLSharedEventHandle alloc] initWithMachPort:info.mach_port];
+-            } else if (info.shared_event_handle) {
+-                handle = (__bridge MTLSharedEventHandle *)(void *)(uintptr_t)info.shared_event_handle;
+-            }
+-            if (!handle || !self.device) {
+-                [self.sharedEventTable removeObjectForKey:key];
+-                [self.sharedEventSignals removeObjectForKey:key];
+-                return;
+-            }
+-            sharedEvent = [self.device newSharedEventWithHandle:handle];
+-            if (!sharedEvent) {
+-                return;
+-            }
+-            self.sharedEventTable[key] = sharedEvent;
+-        }
+-        if ([sharedEvent respondsToSelector:@selector(setSignaledValue:)]) {
+-            sharedEvent.signaledValue = info.signal_value;
+-        }
+-        self.sharedEventSignals[key] = @(info.signal_value);
+-    }
+-#else
+-    (void)info;
+-#endif
+-}
+-
+-- (CAMetalLayer *)ensureLayerForScanout:(NSNumber *)key
+-                                   view:(NSView *)view
+-                                   size:(CGSize)size
+-                             pixelFormat:(MTLPixelFormat)pixelFormat {
+-    CAMetalLayer *layer = self.layerTable[key];
+-    if (!layer) {
+-        view.wantsLayer = YES;
+-        if ([view.layer isKindOfClass:[CAMetalLayer class]]) {
+-            layer = (CAMetalLayer *)view.layer;
+-        } else {
+-            layer = [CAMetalLayer layer];
+-            view.layer = layer;
+-        }
+-        self.layerTable[key] = layer;
+-    }
+-
+-    if (layer.device != self.device) {
+-        layer.device = self.device;
+-    }
+-    if (pixelFormat != MTLPixelFormatInvalid && layer.pixelFormat != pixelFormat) {
+-        layer.pixelFormat = pixelFormat;
+-    }
+-
+-    layer.frame = view.bounds;
+-    CGFloat scale = 1.0f;
+-    if (view.window) {
+-        scale = view.window.backingScaleFactor;
+-    } else if (NSScreen.mainScreen) {
+-        scale = NSScreen.mainScreen.backingScaleFactor;
+-    }
+-    layer.contentsScale = scale;
+-    layer.drawableSize = size;
+-    if (@available(macOS 10.13, *)) {
+-        layer.maximumDrawableCount = 3;
+-        layer.displaySyncEnabled = NO;
+-    }
+-
+-    return layer;
+-}
+-
+-- (void)presentSurfaceInfo:(const struct vrend_metal_scanout_surface_info)info onLayer:(CAMetalLayer *)layer {
+-    if (!self.device || !self.commandQueue) {
+-        return;
+-    }
+-
+-    IOSurfaceRef surface = IOSurfaceLookup(info.iosurface_id);
+-    if (!surface) {
+-        return;
+-    }
+-
+-    MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)info.metal_pixel_format
+-                                                                                           width:info.width
+-                                                                                          height:info.height
+-                                                                                       mipmapped:NO];
+-    descriptor.storageMode = MTLStorageModeShared;
+-    descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageBlitSource;
+-
+-    id<MTLTexture> sourceTexture = [self.device newTextureWithDescriptor:descriptor iosurface:surface plane:0];
+-    if (!sourceTexture) {
+-        CFRelease(surface);
+-        return;
+-    }
+-
+-    id<CAMetalDrawable> drawable = [layer nextDrawable];
+-    if (!drawable) {
+-        CFRelease(surface);
+-        return;
+-    }
+-
+-    id<MTLCommandBuffer> commandBuffer = [self.commandQueue commandBuffer];
+-    id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
+-    MTLOrigin origin = {0, 0, 0};
+-    MTLSize size = {info.width, info.height, 1};
+-    [blit copyFromTexture:sourceTexture
+-              sourceSlice:0
+-              sourceLevel:0
+-             sourceOrigin:origin
+-               sourceSize:size
+-                toTexture:drawable.texture
+-         destinationSlice:0
+-         destinationLevel:0
+-        destinationOrigin:origin];
+-    [blit endEncoding];
+-    [commandBuffer presentDrawable:drawable];
+-    [commandBuffer commit];
+-
+-    CFRelease(surface);
+-}
+-
+-- (void)presentImmediate:(struct vrend_metal_scanout_surface_info)info {
+-    NSNumber *key = @(info.scanout_id);
+-    NSNumber *lastFrame = self.frameIdTable[key];
+-    if (info.frame_id && lastFrame && lastFrame.unsignedLongLongValue == info.frame_id) {
+-        return;
+-    }
+-
+-    NSView *view = self.viewTable[key];
+-    if (!view) {
+-        return;
+-    }
+-
+-    CGSize desiredSize = CGSizeMake(info.width, info.height);
+-    CAMetalLayer *layer = [self ensureLayerForScanout:key
+-                                                 view:view
+-                                                 size:desiredSize
+-                                           pixelFormat:(MTLPixelFormat)info.metal_pixel_format];
+-    if (!layer) {
+-        return;
+-    }
+-
+-    [self presentSurfaceInfo:info onLayer:layer];
+-    self.frameIdTable[key] = @(info.frame_id);
+-}
+-
+-- (void)startDisplayLink {
+-    if (!self.vsyncEnabled || self.displayLink) {
+-        return;
+-    }
+-    CVDisplayLinkRef link = NULL;
+-    if (CVDisplayLinkCreateWithActiveCGDisplays(&link) == kCVReturnSuccess) {
+-        CVDisplayLinkSetOutputCallback(link, &_CocoaDisplayLinkCallback, (__bridge void *)self);
+-        if (CVDisplayLinkStart(link) == kCVReturnSuccess) {
+-            self.displayLink = link;
+-            CVTimeStamp period = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(link);
+-            if (period.videoTimeScale != 0 && period.videoRefreshPeriod != 0) {
+-                double hz = (double)period.videoTimeScale / (double)period.videoRefreshPeriod;
+-                [self setTargetFrameRate:hz];
+-            }
+-        } else {
+-            CVDisplayLinkRelease(link);
+-        }
+-    }
+-}
+-
+-- (void)stopDisplayLink {
+-    if (!self.displayLink) {
+-        return;
+-    }
+-    CVDisplayLinkStop(self.displayLink);
+-    CVDisplayLinkRelease(self.displayLink);
+-    self.displayLink = NULL;
+-}
+-
+-- (void)displayLinkDidFire {
+-    if (!self.vsyncEnabled) {
+-        return;
+-    }
+-    NSDictionary<NSNumber *, NSData *> *snapshot = nil;
+-    [_pendingLock lock];
+-    if (_pendingInfo.count) {
+-        snapshot = [_pendingInfo copy];
+-        [_pendingInfo removeAllObjects];
+-    }
+-    [_pendingLock unlock];
+-    if (!snapshot.count) {
+-        return;
+-    }
+-
+-    dispatch_async(dispatch_get_main_queue(), ^{
+-        [snapshot enumerateKeysAndObjectsUsingBlock:^(NSNumber *key, NSData *data, BOOL *stop) {
+-            struct vrend_metal_scanout_surface_info info;
+-            if (data.length == sizeof(info)) {
+-                [data getBytes:&info length:sizeof(info)];
+-                [self presentImmediate:info];
+-            }
+-        }];
+-    });
+-}
+-
+-- (void)applyThrottleForScanout:(uint32_t)scanout {
+-    double fps = (self.vsyncEnabled && self.targetFrameRate > 0.0) ? self.targetFrameRate : 0.0;
+-    virtio_gpu_metal_set_scanout_throttle(scanout, fps);
+-}
+-
+-- (void)applyThrottleForAllScanouts {
+-    NSArray<NSNumber *> *keys = [self.viewTable allKeys];
+-    for (NSNumber *key in keys) {
+-        [self applyThrottleForScanout:key.unsignedIntValue];
+-    }
+-}
+-
+-@end
+-
+-static void cocoa_iosurface_consumer(const struct vrend_metal_scanout_surface_info *info, void *opaque) {
+-    CocoaMetalPresenter *presenter = (__bridge CocoaMetalPresenter *)opaque;
+-    if (!presenter || !info) {
+-        return;
+-    }
+-
+-    struct vrend_metal_scanout_surface_info copied = *info;
+-    dispatch_async(dispatch_get_main_queue(), ^{
+-        [presenter handleIOSurfaceInfo:copied];
+-    });
+-}
+-
+-static void cocoa_shared_event_consumer(const struct vrend_metal_shared_event_info *info, void *opaque) {
+-    CocoaMetalPresenter *presenter = (__bridge CocoaMetalPresenter *)opaque;
+-    if (!presenter || !info) {
+-        return;
+-    }
+-    struct vrend_metal_shared_event_info copied = *info;
+-    dispatch_async(dispatch_get_main_queue(), ^{
+-        [presenter handleSharedEventInfoStruct:copied];
+-    });
+-}
+-
+-static CVReturn _CocoaDisplayLinkCallback(CVDisplayLinkRef displayLink,
+-                                          const CVTimeStamp *now,
+-                                          const CVTimeStamp *outputTime,
+-                                          CVOptionFlags flagsIn,
+-                                          CVOptionFlags *flagsOut,
+-                                          void *displayLinkContext) {
+-    @autoreleasepool {
+-        CocoaMetalPresenter *presenter = (__bridge CocoaMetalPresenter *)displayLinkContext;
+-        [presenter displayLinkDidFire];
+-    }
+-    return kCVReturnSuccess;
+-}
+-
+-static CocoaMetalPresenter *gSharedPresenter = nil;
+-
+-static void RunOnMain(dispatch_block_t block) {
+-    if (!block) {
+-        return;
+-    }
+-    if ([NSThread isMainThread]) {
+-        block();
+-    } else {
+-        dispatch_async(dispatch_get_main_queue(), block);
+-    }
+-}
+-
+-static CocoaMetalPresenter *EnsurePresenter(void) {
+-    if (!gSharedPresenter) {
+-        gSharedPresenter = [[CocoaMetalPresenter alloc] initWithMaxScanouts:VIRTIO_GPU_MAX_SCANOUTS];
+-        [gSharedPresenter registerWithMetalBridge];
+-        [gSharedPresenter setVsyncEnabled:YES];
+-    }
+-    return gSharedPresenter;
+-}
+-
+-void cocoa_metal_presenter_start(void) {
+-    RunOnMain(^{
+-        (void)EnsurePresenter();
+-    });
+-}
+-
+-void cocoa_metal_presenter_stop(void) {
+-    RunOnMain(^{
+-        if (!gSharedPresenter) {
+-            return;
+-        }
+-        [gSharedPresenter unregisterFromMetalBridge];
+-        gSharedPresenter = nil;
+-    });
+-}
+-
+-void cocoa_metal_presenter_attach_view(NSView *view, uint32_t scanout) {
+-    if (!view) {
+-        return;
+-    }
+-    RunOnMain(^{
+-        CocoaMetalPresenter *presenter = EnsurePresenter();
+-        [presenter setView:view forScanout:scanout];
+-    });
+-}
+-
+-void cocoa_metal_presenter_detach_view(uint32_t scanout) {
+-    RunOnMain(^{
+-        if (!gSharedPresenter) {
+-            return;
+-        }
+-        [gSharedPresenter detachScanout:scanout];
+-    });
+-}
+-
+-void cocoa_metal_presenter_layout_views(void) {
+-    RunOnMain(^{
+-        if (!gSharedPresenter) {
+-            return;
+-        }
+-        [gSharedPresenter layoutLayers];
+-    });
+-}
+-
+-void cocoa_metal_presenter_set_vsync(bool enabled) {
+-    RunOnMain(^{
+-        CocoaMetalPresenter *presenter = EnsurePresenter();
+-        [presenter setVsyncEnabled:enabled ? YES : NO];
+-    });
+-}
+-
+-void cocoa_metal_presenter_set_target_frame_rate(double hz) {
+-    RunOnMain(^{
+-        CocoaMetalPresenter *presenter = EnsurePresenter();
+-        [presenter setTargetFrameRate:hz];
+-    });
+-}
+diff --git a/hw/display/virgl_metal_scanout_bridge.c b/hw/display/virgl_metal_scanout_bridge.c
+index 235be840a4..f477e626ee 100644
+--- a/hw/display/virgl_metal_scanout_bridge.c
++++ b/hw/display/virgl_metal_scanout_bridge.c
+@@ -7,47 +7,13 @@
+  */
+ 
+ #include <string.h>
++#include <stdio.h>
++#include <stdlib.h>
+ 
+ #include "virgl_metal_scanout_bridge.h"
+ #include "ui/console.h"
+ 
+-#ifndef VREND_METAL_BRIDGE_HAS_NATIVE_HEADER
+-bool vrend_metal_scanout_supports_iosurface(void)
+-{
+-    return false;
+-}
+-
+-int vrend_metal_get_scanout_iosurface(uint32_t scanout_id,
+-                                      struct vrend_metal_scanout_surface_info *info)
+-{
+-    (void)scanout_id;
+-    if (info) {
+-        memset(info, 0, sizeof(*info));
+-    }
+-    return -1;
+-}
+-
+-void vrend_metal_register_scanout_callback(vrend_metal_scanout_callback callback,
+-                                           void *userdata)
+-{
+-    (void)callback;
+-    (void)userdata;
+-}
+-
+-void vrend_metal_register_shared_event_listener(
+-    vrend_metal_shared_event_listener listener,
+-    void *userdata)
+-{
+-    (void)listener;
+-    (void)userdata;
+-}
+-
+-void vrend_metal_set_scanout_throttle(uint32_t scanout_id, double max_fps)
+-{
+-    (void)scanout_id;
+-    (void)max_fps;
+-}
+-#endif /* !VREND_METAL_BRIDGE_HAS_NATIVE_HEADER */
++/* Real implementations are now exported from virglrenderer library */
+ 
+ #if defined(__has_include)
+ #  if __has_include("hw/display/virtio-gpu.h")
+@@ -85,6 +51,11 @@ static VirtioMetalIOSurfaceConsumer g_iosurface_consumer;
+ static void *g_iosurface_consumer_opaque;
+ static VirtioMetalSharedEventConsumer g_shared_event_consumer;
+ static void *g_shared_event_consumer_opaque;
++static bool g_logged_surface_info[METAL_BRIDGE_MAX_SCANOUTS];
++static bool g_logged_iosurface_query_fail[METAL_BRIDGE_MAX_SCANOUTS];
++static bool g_logged_iosurface_query_success[METAL_BRIDGE_MAX_SCANOUTS];
++static bool g_logged_iosurface_listener_missing;
++static bool g_dumped_surface_ppm;
+ 
+ static inline uint32_t clamp_dimension(uint32_t value, uint32_t limit) {
+     return (value > limit) ? limit : value;
+@@ -98,6 +69,11 @@ static void metal_publish_iosurface(uint32_t scanout_id) {
+     struct MetalScanoutState *state = &g_scanout_states[scanout_id];
+     struct vrend_metal_scanout_surface_info info = {0};
+     if (vrend_metal_get_scanout_iosurface(scanout_id, &info) != 0) {
++        if (!g_logged_iosurface_query_fail[scanout_id]) {
++            g_logged_iosurface_query_fail[scanout_id] = true;
++            fprintf(stderr, "[Bridge] IOSurface query failed for scanout %u (supported=%d)\n",
++                    scanout_id, g_iosurface_supported);
++        }
+         if (state->has_iosurface_info) {
+             state->has_iosurface_info = false;
+                 state->last_ctx_id = 0;
+@@ -116,6 +92,21 @@ static void metal_publish_iosurface(uint32_t scanout_id) {
+         return;
+     }
+ 
++    if (!g_logged_iosurface_query_success[scanout_id]) {
++        g_logged_iosurface_query_success[scanout_id] = true;
++        fprintf(stderr,
++                "[Bridge] IOSurface ready scanout=%u ctx=%u iosurface_id=%u metal_fmt=%u fourcc=%u size=%ux%u stride=%u frame=%llu\n",
++                scanout_id,
++                info.ctx_id,
++                info.iosurface_id,
++                info.metal_pixel_format,
++                info.pixel_format_fourcc,
++                info.width,
++                info.height,
++                info.bytes_per_row,
++                (unsigned long long)info.frame_id);
++    }
++
+     state->last_iosurface_info = info;
+     state->has_iosurface_info = true;
+     state->last_ctx_id = info.ctx_id;
+@@ -189,16 +180,116 @@ static void metal_scanout_present(
+     uint8_t *dst_base = surface_data(state->surface);
+     const uint8_t *src_base = pixels;
+ 
++        if (!g_logged_surface_info[scanout_id]) {
++        g_logged_surface_info[scanout_id] = true;
++        fprintf(stderr,
++            "[Bridge] Surface scanout %u surface=%p format=%d bpp=%d stride=%u dims=%ux%u\n",
++            scanout_id,
++            (void *)state->surface,
++            surface_format(state->surface),
++            surface_bits_per_pixel(state->surface),
++            dst_stride,
++            dst_max_w,
++            dst_max_h);
++        fprintf(stderr,
++            "[Bridge] Surface scanout %u data=%p\n",
++            scanout_id,
++            (void *)dst_base);
++        }
++
++    static int copy_log_count = 0;
++    bool log_now = (copy_log_count < 20) || (copy_log_count % 120 == 0);
++    const uint32_t *src_pixels = (const uint32_t *)pixels;
++    uint32_t *dst_pixels = (uint32_t *)dst_base;
++
++    if (log_now) {
++        fprintf(stderr,
++                "[Bridge] Present scanout %u frame=%llu region=(%u,%u %ux%u) src_first=0x%08x dst_before=0x%08x src_stride=%u dst_stride=%u width=%u height=%u\n",
++                scanout_id,
++                (unsigned long long)frame,
++                dest_x,
++                dest_y,
++                clamped_width,
++                clamped_height,
++                src_pixels ? src_pixels[0] : 0,
++                dst_pixels ? dst_pixels[0] : 0,
++                bytes_per_row,
++                dst_stride,
++                width,
++                height);
++    }
++
+     for (uint32_t row = 0; row < clamped_height; row++) {
+         uint8_t *dst_row = dst_base + (dest_y + row) * dst_stride + dest_x * 4;
+         const uint8_t *src_row = src_base + row * bytes_per_row;
+         memcpy(dst_row, src_row, clamped_width * 4);
+     }
+ 
+-    dpy_gfx_update(state->con, dest_x, dest_y, clamped_width, clamped_height);
++    if (log_now && dst_pixels) {
++        uint32_t sample0 = dst_pixels[0];
++        uint32_t sample_a = dst_base && dst_stride >= 4 ? *(uint32_t *)(dst_base + dest_y * dst_stride + dest_x * 4) : 0;
++        uint32_t sample_b = 0;
++        uint32_t sample_c = 0;
++        uint32_t max_x = dst_max_w ? dst_max_w - 1 : 0;
++        uint32_t max_y = dst_max_h ? dst_max_h - 1 : 0;
++        if (dst_base && dst_stride) {
++            uint32_t px_bx = max_x / 2;
++            uint32_t px_by = max_y / 2;
++            uint32_t px_cx = max_x;
++            uint32_t px_cy = max_y;
++            sample_b = *(uint32_t *)(dst_base + px_by * dst_stride + px_bx * 4);
++            sample_c = *(uint32_t *)(dst_base + px_cy * dst_stride + px_cx * 4);
++        }
++        fprintf(stderr,
++                "[Bridge] Present scanout %u done dst_after=0x%08x console=%p samples tl=0x%08x mid=0x%08x br=0x%08x\n",
++                scanout_id,
++                sample0,
++                (void *)state->con,
++                sample_a,
++                sample_b,
++                sample_c);
++
++        if (!g_dumped_surface_ppm) {
++            bool full_frame = (clamped_width == dst_max_w && clamped_height == dst_max_h);
++            bool has_src = src_pixels && src_pixels[0];
++            if (full_frame && has_src) {
++                g_dumped_surface_ppm = true;
++                const char *ppm_path = "/private/tmp/bridge-dump.ppm";
++                FILE *f = fopen(ppm_path, "wb");
++                if (f) {
++                    uint32_t dump_w = clamped_width;
++                    uint32_t dump_h = clamped_height;
++                    fprintf(f, "P6\n%u %u\n255\n", dump_w, dump_h);
++                    for (uint32_t y = 0; y < dump_h; y++) {
++                        const uint8_t *row = dst_base + (dest_y + y) * dst_stride + dest_x * 4;
++                        for (uint32_t x = 0; x < dump_w; x++) {
++                            uint32_t px = *(const uint32_t *)(row + x * 4);
++                            uint8_t b = (uint8_t)(px & 0xff);
++                            uint8_t g = (uint8_t)((px >> 8) & 0xff);
++                            uint8_t r = (uint8_t)((px >> 16) & 0xff);
++                            fputc(r, f);
++                            fputc(g, f);
++                            fputc(b, f);
++                        }
++                    }
++                    fclose(f);
++                    fprintf(stderr, "[Bridge] Wrote surface dump to %s (%ux%u)\n", ppm_path, dump_w, dump_h);
++                } else {
++                    fprintf(stderr, "[Bridge] Failed to open %s for surface dump\n", ppm_path);
++                }
++            } else {
++                fprintf(stderr, "[Bridge] Skipping PPM dump (full_frame=%d has_src=%d)\n", full_frame, has_src);
++            }
++        }
++    }
++    copy_log_count++;
+ 
+     qemu_mutex_unlock(&state->lock);
+ 
++    /* dpy_gfx_update requires BQL, which we already have since this callback
++     * is invoked from virtio-gpu command processing */
++    dpy_gfx_update(state->con, dest_x, dest_y, clamped_width, clamped_height);
++
+     metal_publish_iosurface(scanout_id);
+ }
+ 
+@@ -207,8 +298,16 @@ void virtio_gpu_metal_scanout_init(struct VirtIOGPU *g) {
+         return;
+     }
+ 
++    if (!virtio_gpu_metal_scanout_enabled_env()) {
++        fprintf(stderr, "[Bridge] Metal scanout skipped (VIRGL_DISABLE_METAL set)\n");
++        return;
++    }
++
+     g_scanout_count = MIN(g->parent_obj.conf.max_outputs, METAL_BRIDGE_MAX_SCANOUTS);
+     g_iosurface_supported = vrend_metal_scanout_supports_iosurface();
++    fprintf(stderr, "[Bridge] Metal scanout init: outputs=%u iosurface_supported=%d\n",
++            g_scanout_count, g_iosurface_supported);
++    g_logged_iosurface_listener_missing = false;
+     for (uint32_t i = 0; i < g_scanout_count; i++) {
+         struct MetalScanoutState *state = &g_scanout_states[i];
+         state->con = g->parent_obj.scanout[i].con;
+@@ -220,6 +319,8 @@ void virtio_gpu_metal_scanout_init(struct VirtIOGPU *g) {
+         state->has_iosurface_info = false;
+         memset(&state->last_iosurface_info, 0, sizeof(state->last_iosurface_info));
+         state->last_ctx_id = 0;
++        g_logged_iosurface_query_fail[i] = false;
++        g_logged_iosurface_query_success[i] = false;
+     }
+ 
+     vrend_metal_register_scanout_callback(metal_scanout_present, g_scanout_states);
+@@ -253,6 +354,11 @@ void virtio_gpu_metal_register_iosurface_consumer(VirtioMetalIOSurfaceConsumer c
+     g_iosurface_consumer = cb;
+     g_iosurface_consumer_opaque = opaque;
+ 
++    if (!g_iosurface_consumer && !g_logged_iosurface_listener_missing) {
++        g_logged_iosurface_listener_missing = true;
++        fprintf(stderr, "[Bridge] IOSurface listener unregistered\n");
++    }
++
+     if (!g_bridge_registered || !g_iosurface_supported || !g_iosurface_consumer) {
+         return;
+     }
+@@ -275,3 +381,12 @@ void virtio_gpu_metal_register_shared_event_consumer(VirtioMetalSharedEventConsu
+ void virtio_gpu_metal_set_scanout_throttle(uint32_t scanout_id, double max_fps) {
+     vrend_metal_set_scanout_throttle(scanout_id, max_fps);
+ }
++
++bool virtio_gpu_metal_scanout_active(void) {
++    return g_bridge_registered;
++}
++
++bool virtio_gpu_metal_scanout_enabled_env(void) {
++    const char *v = getenv("VIRGL_DISABLE_METAL");
++    return !(v && !(v[0] == '0' && v[1] == '\0'));
++}
+diff --git a/hw/display/virgl_metal_scanout_bridge.h b/hw/display/virgl_metal_scanout_bridge.h
+index 66e4ccec94..e150f9b6c9 100644
+--- a/hw/display/virgl_metal_scanout_bridge.h
++++ b/hw/display/virgl_metal_scanout_bridge.h
+@@ -3,13 +3,8 @@
+ 
+ #include "qemu/osdep.h"
+ 
+-#if defined(__has_include)
+-#  if __has_include("virglrenderer-metal/vrend_metal.h")
+-#    include "virglrenderer-metal/vrend_metal.h"
+-#    define VREND_METAL_BRIDGE_HAS_NATIVE_HEADER 1
+-#  endif
+-#endif
+-
++/* Don't try to include internal virglrenderer headers - use fallback definitions
++ * to avoid pulling in many internal dependencies that are not installed */
+ #ifndef VREND_METAL_BRIDGE_HAS_NATIVE_HEADER
+ #include <stdint.h>
+ #include <stdbool.h>
+@@ -66,6 +61,11 @@ void vrend_metal_register_shared_event_listener(
+ 	void *userdata);
+ void vrend_metal_set_scanout_throttle(uint32_t scanout_id, double max_fps);
+ 
++/* Additional Metal backend functions */
++struct virgl_context;
++int vrend_metal_set_scanout(uint32_t scanout_id, uint32_t resource_id, const struct virgl_box *box);
++int vrend_metal_flush_resource(struct virgl_context *vctx, uint32_t resource_id, const struct virgl_box *box);
++
+ #endif /* !VREND_METAL_BRIDGE_HAS_NATIVE_HEADER */
+ 
+ #ifdef __cplusplus
+@@ -81,6 +81,8 @@ void virtio_gpu_metal_register_iosurface_consumer(VirtioMetalIOSurfaceConsumer c
+ typedef void (*VirtioMetalSharedEventConsumer)(const struct vrend_metal_shared_event_info *info, void *opaque);
+ void virtio_gpu_metal_register_shared_event_consumer(VirtioMetalSharedEventConsumer cb, void *opaque);
+ void virtio_gpu_metal_set_scanout_throttle(uint32_t scanout_id, double max_fps);
++bool virtio_gpu_metal_scanout_active(void);
++bool virtio_gpu_metal_scanout_enabled_env(void);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/hw/display/virtio-gpu-virgl.c b/hw/display/virtio-gpu-virgl.c
+index f21dcf6f78..5d6bff4ccc 100644
+--- a/hw/display/virtio-gpu-virgl.c
++++ b/hw/display/virtio-gpu-virgl.c
+@@ -23,6 +23,7 @@
+ #include "ui/egl-helpers.h"
+ 
+ #include <virglrenderer.h>
++#include "virgl_metal_scanout_bridge.h"
+ 
+ struct virtio_gpu_virgl_resource {
+     struct virtio_gpu_simple_resource base;
+@@ -384,10 +385,27 @@ static void virgl_cmd_resource_flush(VirtIOGPU *g,
+     struct virtio_gpu_resource_flush rf;
+     int i;
+ 
++    bool metal_active = false;
++#ifdef CONFIG_COCOA
++    metal_active = virtio_gpu_metal_scanout_active();
++#endif
++
+     VIRTIO_GPU_FILL_CMD(rf);
+     trace_virtio_gpu_cmd_res_flush(rf.resource_id,
+                                    rf.r.width, rf.r.height, rf.r.x, rf.r.y);
+ 
++    if (metal_active) {
++        /* Call Metal backend flush function */
++        struct virgl_box box = {
++            .x = rf.r.x,
++            .y = rf.r.y,
++            .w = rf.r.width,
++            .h = rf.r.height,
++            .d = 1
++        };
++        vrend_metal_flush_resource(NULL, rf.resource_id, &box);
++    }
++
+     for (i = 0; i < g->parent_obj.conf.max_outputs; i++) {
+         if (g->parent_obj.scanout[i].resource_id != rf.resource_id) {
+             continue;
+@@ -445,15 +463,38 @@ static void virgl_cmd_set_scanout(VirtIOGPU *g,
+     }
+     g->parent_obj.enable = 1;
+ 
++    bool metal_active = false;
++#ifdef CONFIG_COCOA
++    metal_active = virtio_gpu_metal_scanout_active();
++#endif
++
+     if (ss.resource_id && ss.r.width && ss.r.height) {
+         qemu_console_resize(g->parent_obj.scanout[ss.scanout_id].con,
+                             ss.r.width, ss.r.height);
+         virgl_renderer_force_ctx_0();
++        
++        if (metal_active) {
++            /* Call Metal backend scanout function */
++            struct virgl_box box = {
++                .x = ss.r.x,
++                .y = ss.r.y,
++                .w = ss.r.width,
++                .h = ss.r.height,
++                .d = 1
++            };
++            vrend_metal_set_scanout(ss.scanout_id, ss.resource_id, &box);
++        }
++        
+         dpy_gl_scanout_texture(
+             g->parent_obj.scanout[ss.scanout_id].con, ss.resource_id,
+             virgl_borrow_texture_for_scanout,
+             ss.r.x, ss.r.y, ss.r.width, ss.r.height);
+     } else {
++        /* Disable scanout */
++        if (metal_active) {
++            vrend_metal_set_scanout(ss.scanout_id, 0, NULL);
++        }
++        
+         dpy_gfx_replace_surface(
+             g->parent_obj.scanout[ss.scanout_id].con, NULL);
+         dpy_gl_scanout_disable(g->parent_obj.scanout[ss.scanout_id].con);
+@@ -508,6 +549,9 @@ static void virgl_cmd_transfer_to_host_2d(VirtIOGPU *g,
+     box.h = t2d.r.height;
+     box.d = 1;
+ 
++    qemu_log("[QEMU] TRANSFER_TO_HOST_2D: resource=%u region=(%u,%u %ux%u)\n",
++             t2d.resource_id, box.x, box.y, box.w, box.h);
++
+     virgl_renderer_transfer_write_iov(t2d.resource_id,
+                                       0,
+                                       0,
+@@ -630,6 +674,10 @@ static void virgl_cmd_get_capset_info(VirtIOGPU *g,
+ 
+     VIRTIO_GPU_FILL_CMD(info);
+ 
++    fprintf(stderr, "[QEMU] get_capset_info: index=%u (total capsets=%u)\n",
++            info.capset_index, g->capset_ids->len);
++    fflush(stderr);
++
+     memset(&resp, 0, sizeof(resp));
+ 
+     if (info.capset_index < g->capset_ids->len) {
+@@ -638,6 +686,12 @@ static void virgl_cmd_get_capset_info(VirtIOGPU *g,
+         virgl_renderer_get_cap_set(resp.capset_id,
+                                    &resp.capset_max_version,
+                                    &resp.capset_max_size);
++        fprintf(stderr, "[QEMU] Returning capset_id=%u max_ver=%u max_size=%u\n",
++                resp.capset_id, resp.capset_max_version, resp.capset_max_size);
++        fflush(stderr);
++    } else {
++        fprintf(stderr, "[QEMU] Index out of range!\n");
++        fflush(stderr);
+     }
+     resp.hdr.type = VIRTIO_GPU_RESP_OK_CAPSET_INFO;
+     virtio_gpu_ctrl_response(g, cmd, &resp.hdr, sizeof(resp));
+@@ -651,18 +705,34 @@ static void virgl_cmd_get_capset(VirtIOGPU *g,
+     uint32_t max_ver, max_size;
+     VIRTIO_GPU_FILL_CMD(gc);
+ 
++    fprintf(stderr, "[QEMU] virgl_cmd_get_capset: capset_id=%u capset_version=%u\n", 
++            gc.capset_id, gc.capset_version);
++    fflush(stderr);
++
+     virgl_renderer_get_cap_set(gc.capset_id, &max_ver,
+                                &max_size);
++    fprintf(stderr, "[QEMU] After get_cap_set: max_ver=%u max_size=%u\n", max_ver, max_size);
++    fflush(stderr);
++    
+     if (!max_size) {
++        fprintf(stderr, "[QEMU] ERROR: max_size is zero, returning error!\n");
++        fflush(stderr);
+         cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER;
+         return;
+     }
+ 
++    fprintf(stderr, "[QEMU] About to call virgl_renderer_fill_caps\n");
++    fflush(stderr);
++    
+     resp = g_malloc0(sizeof(*resp) + max_size);
+     resp->hdr.type = VIRTIO_GPU_RESP_OK_CAPSET;
+     virgl_renderer_fill_caps(gc.capset_id,
+                              gc.capset_version,
+                              (void *)resp->capset_data);
++    
++    fprintf(stderr, "[QEMU] fill_caps completed, sending response\n");
++    fflush(stderr);
++    
+     virtio_gpu_ctrl_response(g, cmd, &resp->hdr, sizeof(*resp) + max_size);
+     g_free(resp);
+ }
+diff --git a/hw/display/virtio-gpu.c b/hw/display/virtio-gpu.c
+index 59a1c91912..8fa3871323 100644
+--- a/hw/display/virtio-gpu.c
++++ b/hw/display/virtio-gpu.c
+@@ -1526,7 +1526,11 @@ void virtio_gpu_device_realize(DeviceState *qdev, Error **errp)
+     QTAILQ_INIT(&g->fenceq);
+ 
+ #ifdef CONFIG_COCOA
+-    virtio_gpu_metal_scanout_init(g);
++    if (virtio_gpu_metal_scanout_enabled_env()) {
++        virtio_gpu_metal_scanout_init(g);
++    } else {
++        fprintf(stderr, "[Bridge] Metal scanout init skipped (VIRGL_DISABLE_METAL set)\n");
++    }
+ #endif
+ }
+ 
+diff --git a/meson.build b/meson.build
+index 79b91341d3..b5742a06f4 100644
+--- a/meson.build
++++ b/meson.build
+@@ -861,6 +861,8 @@ elif host_os == 'darwin'
+   host_dsosuf = '.dylib'
+   pvg = dependency('appleframeworks', modules: ['ParavirtualizedGraphics', 'Metal'],
+                    required: get_option('pvg'))
++  metal = dependency('appleframeworks', modules: 'Metal', required: false)
++  iosurface = dependency('appleframeworks', modules: 'IOSurface', required: false)
+ elif host_os == 'sunos'
+   socket = [cc.find_library('socket'),
+             cc.find_library('nsl'),
+diff --git a/ui/cocoa.m b/ui/cocoa.m
+index 781359ec32..cfd2671562 100644
+--- a/ui/cocoa.m
++++ b/ui/cocoa.m
+@@ -52,9 +52,9 @@
+ #include "qemu/error-report.h"
+ #include <Carbon/Carbon.h>
+ #include "hw/core/cpu.h"
+-#ifdef CONFIG_VIRGL_RENDERER
++#if VIRGL_VERSION_MAJOR >= 1
+ #include "hw/display/virgl_metal_scanout_bridge.h"
+-#import "cocoa_metal_presenter.h"
++#import "hw/display/cocoa_metal_presenter.h"
+ #endif
+ 
+ #ifdef CONFIG_EGL
+@@ -111,6 +111,7 @@ @interface QemuCGLLayer : CAOpenGLLayer
+ static uint32_t gl_scanout_id;
+ static DisplayGLTextureBorrower gl_scanout_borrow;
+ static QEMUGLContext gl_view_ctx;
++static GHashTable *ns_gl_contexts;
+ 
+ #ifdef CONFIG_EGL
+ static EGLSurface egl_surface;
+@@ -131,6 +132,12 @@ static QEMUGLContext cocoa_gl_create_context(DisplayGLCtx *dgc,
+ 
+ static int cocoa_gl_make_context_current(DisplayGLCtx *dgc, QEMUGLContext ctx);
+ 
++#if defined(__APPLE__)
++static bool cocoa_gl_is_nscontext(QEMUGLContext ctx);
++static void cocoa_gl_register_nscontext(QEMUGLContext ctx);
++static void cocoa_gl_unregister_nscontext(QEMUGLContext ctx);
++#endif
++
+ static const DisplayGLCtxOps dgc_ops = {
+     .dpy_gl_ctx_is_compatible_dcl = cocoa_gl_is_compatible_dcl,
+     .dpy_gl_ctx_create            = cocoa_gl_create_context,
+@@ -277,7 +284,7 @@ @interface QemuCocoaView : NSView
+     int mouseX;
+     int mouseY;
+     bool mouseOn;
+-#ifdef CONFIG_VIRGL_RENDERER
++#if VIRGL_VERSION_MAJOR >= 1
+     uint32_t metal_scanout_id;
+     bool metal_view_attached;
+ #endif
+@@ -291,7 +298,7 @@ - (bool) handleEventLocked:(NSEvent *)event;
+ - (void) notifyMouseModeChange;
+ - (BOOL) isMouseGrabbed;
+ - (void) raiseAllKeys;
+-#ifdef CONFIG_VIRGL_RENDERER
++#if VIRGL_VERSION_MAJOR >= 1
+ - (void)refreshMetalAttachment;
+ #endif
+ @end
+@@ -351,7 +358,7 @@ - (id)initWithFrame:(NSRect)frameRect
+         [cursorLayer setAnchorPoint:CGPointMake(0, 1)];
+         [cursorLayer setZPosition:1];
+         [[self layer] addSublayer:cursorLayer];
+-    #ifdef CONFIG_VIRGL_RENDERER
++    #if VIRGL_VERSION_MAJOR >= 1
+         metal_scanout_id = UINT32_MAX;
+         metal_view_attached = false;
+     #endif
+@@ -371,7 +378,7 @@ - (void) dealloc
+     CGColorSpaceRelease(colorspace);
+     [cursorLayer release];
+     cursor_unref(cursor);
+-#ifdef CONFIG_VIRGL_RENDERER
++#if VIRGL_VERSION_MAJOR >= 1
+     if (metal_view_attached) {
+         cocoa_metal_presenter_detach_view(metal_scanout_id);
+         metal_view_attached = false;
+@@ -388,7 +395,11 @@ - (BOOL) isOpaque
+ #ifdef CONFIG_OPENGL
+ - (BOOL)wantsUpdateLayer
+ {
+-    return display_opengl;
++    /* Return NO so that drawRect: is called even in OpenGL mode.
++     * This allows virglrenderer Metal backend pixel callback to work
++     * by rendering through the standard drawRect: path.
++     */
++    return NO;
+ }
+ #endif
+ 
+@@ -410,7 +421,7 @@ - (void) selectConsoleLocked:(unsigned int)index
+     register_displaychangelistener(&dcl);
+     [self notifyMouseModeChange];
+     [self updateUIInfo];
+-#ifdef CONFIG_VIRGL_RENDERER
++#if VIRGL_VERSION_MAJOR >= 1
+     [self refreshMetalAttachment];
+ #endif
+ }
+@@ -510,11 +521,21 @@ - (void)setCursor:(QEMUCursor *)given_cursor
+ 
+ - (void) drawRect:(NSRect) rect
+ {
+-    COCOA_DEBUG("QemuCocoaView: drawRect\n");
++    static int draw_count = 0;
++    COCOA_DEBUG("QemuCocoaView: drawRect - display_opengl=%d\n", display_opengl);
+ 
+     // get CoreGraphic context
+     CGContextRef viewContextRef = [[NSGraphicsContext currentContext] CGContext];
+     BQL_LOCK_GUARD();
++    
++    if (draw_count++ < 3) {
++        int w = surface_width(surface);
++        int h = surface_height(surface);
++        void *data = surface_data(surface);
++        uint32_t *pixels = (uint32_t *)data;
++        NSLog(@"[Cocoa] drawRect #%d: surface=%p size=%dx%d data=%p first_pixel=0x%08x", 
++              draw_count, surface, w, h, data, pixels ? pixels[0] : 0);
++    }
+ 
+     CGContextSetInterpolationQuality(viewContextRef,
+                                      zoom_interpolation ? kCGInterpolationLow :
+@@ -522,6 +543,11 @@ - (void) drawRect:(NSRect) rect
+     CGContextSetShouldAntialias (viewContextRef, NO);
+ 
+     // draw screen bitmap directly to Core Graphics context
++    if (!surface) {
++        NSLog(@"[Cocoa] drawRect ERROR: surface is NULL!");
++        return;
++    }
++    
+     int w = surface_width(surface);
+     int h = surface_height(surface);
+     int bitsPerPixel = PIXMAN_FORMAT_BPP(surface_format(surface));
+@@ -630,7 +656,7 @@ - (void) resizeWindow
+     } else {
+         [[self window] setContentSize:[self fixAspectRatio:[self frame].size]];
+     }
+-#ifdef CONFIG_VIRGL_RENDERER
++#if VIRGL_VERSION_MAJOR >= 1
+     cocoa_metal_presenter_layout_views();
+ #endif
+ }
+@@ -644,7 +670,7 @@ - (void) updateScale
+     }
+ 
+     [self updateCursorLayout];
+-#ifdef CONFIG_VIRGL_RENDERER
++#if VIRGL_VERSION_MAJOR >= 1
+     cocoa_metal_presenter_layout_views();
+ #endif
+ }
+@@ -719,15 +745,12 @@ - (void) updateUIInfo
+     });
+ }
+ 
+-        #ifdef CONFIG_VIRGL_RENDERER
+-        cocoa_metal_presenter_layout_views();
+-        #endif
+ - (void) updateScreenWidth:(int)w height:(int)h
+ {
+     COCOA_DEBUG("QemuCocoaView: updateScreenWidth:height:\n");
+ 
+     if (w != screen.width || h != screen.height) {
+-        #ifdef CONFIG_VIRGL_RENDERER
++        #if VIRGL_VERSION_MAJOR >= 1
+         cocoa_metal_presenter_layout_views();
+         #endif
+         COCOA_DEBUG("updateScreenWidth:height: new size %d x %d\n", w, h);
+@@ -1247,6 +1270,31 @@ - (void) raiseAllButtons
+         qemu_input_queue_btn(dcl.con, INPUT_BUTTON_MIDDLE, false);
+     });
+ }
++
++#if VIRGL_VERSION_MAJOR >= 1
++- (void)refreshMetalAttachment
++{
++    uint32_t console_index = qemu_console_get_index(dcl.con);
++    
++    /* Detach old scanout if attached */
++    if (metal_view_attached && metal_scanout_id != console_index) {
++        cocoa_metal_presenter_detach_view(metal_scanout_id);
++        metal_view_attached = false;
++    }
++    
++    /* Attach current scanout */
++    if (!metal_view_attached) {
++        cocoa_metal_presenter_attach_view(self, console_index);
++        metal_view_attached = true;
++        metal_scanout_id = console_index;
++        NSLog(@"[Cocoa] Attached Metal view for scanout %u", console_index);
++    }
++    
++    /* Layout views after attachment */
++    cocoa_metal_presenter_layout_views();
++}
++#endif
++
+ @end
+ 
+ 
+@@ -1348,14 +1396,36 @@ - (void) dealloc
+ 
+ - (void)applicationDidFinishLaunching: (NSNotification *) note
+ {
++    NSLog(@"===== APPLICATION DID FINISH LAUNCHING =====");
+     COCOA_DEBUG("QemuCocoaAppController: applicationDidFinishLaunching\n");
+     allow_events = true;
++
++    const char *disable_metal = g_getenv("VIRGL_DISABLE_METAL");
++    bool metal_disabled = disable_metal && disable_metal[0] != '\0';
++
++    if (metal_disabled) {
++        NSLog(@"[Cocoa] Metal presenter skipped (VIRGL_DISABLE_METAL set)");
++    } else {
++        NSLog(@"===== ABOUT TO START METAL PRESENTER =====");
++        /* Start Metal presenter for virglrenderer scanout */
++        cocoa_metal_presenter_start();
++        NSLog(@"[Cocoa] Metal presenter started");
++        NSLog(@"===== METAL PRESENTER START COMPLETED =====");
++    }
+ }
+ 
+ - (void)applicationWillTerminate:(NSNotification *)aNotification
+ {
+     COCOA_DEBUG("QemuCocoaAppController: applicationWillTerminate\n");
+ 
++    /* Stop Metal presenter if it was started */
++    const char *disable_metal = g_getenv("VIRGL_DISABLE_METAL");
++    bool metal_disabled = disable_metal && disable_metal[0] != '\0';
++    if (!metal_disabled) {
++        cocoa_metal_presenter_stop();
++        NSLog(@"[Cocoa] Metal presenter stopped");
++    }
++
+     with_bql(^{
+         shutdown_action = SHUTDOWN_ACTION_POWEROFF;
+         qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_UI);
+@@ -2139,6 +2209,70 @@ static CGLPixelFormatObj cocoa_gl_create_cgl_pixel_format(int bpp)
+     return pix;
+ }
+ 
++#if defined(__APPLE__)
++static bool cocoa_gl_is_nscontext(QEMUGLContext ctx)
++{
++    if (!ctx || !ns_gl_contexts) {
++        return false;
++    }
++    return g_hash_table_contains(ns_gl_contexts, ctx);
++}
++
++static void cocoa_gl_register_nscontext(QEMUGLContext ctx)
++{
++    if (!ctx) {
++        return;
++    }
++    if (!ns_gl_contexts) {
++        ns_gl_contexts = g_hash_table_new(g_direct_hash, g_direct_equal);
++    }
++    g_hash_table_add(ns_gl_contexts, ctx);
++}
++
++static void cocoa_gl_unregister_nscontext(QEMUGLContext ctx)
++{
++    if (!ctx || !ns_gl_contexts) {
++        return;
++    }
++    g_hash_table_remove(ns_gl_contexts, ctx);
++}
++
++static QEMUGLContext cocoa_gl_create_nscontext(int bpp)
++{
++    /*
++     * Request a macOS core-profile GL context (3.2 core, exposed as GL 4.1 on Apple).
++     * - Virglrenderer on macOS needs a core context to avoid legacy/compat limits and to
++     *   expose GLSL 410; we also disable the Metal backend via env (VIRGL_DISABLE_METAL)
++     *   so desktop GL is the only path.
++     * - Core profile is required for the Cocoa GL path to work with virgl in core mode
++     *   (GL_MODE=core), matching the virgl log lines like "Detected GL version: 41".
++     * - Double buffering is kept; depth/stencil are configured elsewhere. If Apple ever
++     *   drops core 3.2, this will need to follow their replacement profile.
++     */
++    NSOpenGLPixelFormatAttribute attrs[] = {
++        NSOpenGLPFAOpenGLProfile, NSOpenGLProfileVersion3_2Core,
++        NSOpenGLPFAColorSize, (NSOpenGLPixelFormatAttribute)bpp,
++        NSOpenGLPFADoubleBuffer,
++        0
++    };
++
++    NSOpenGLPixelFormat *pf = [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
++    if (!pf) {
++        return NULL;
++    }
++
++    NSOpenGLContext *ctx = [[NSOpenGLContext alloc] initWithFormat:pf shareContext:nil];
++    [pf release];
++    if (!ctx) {
++        return NULL;
++    }
++
++    QEMUGLContext qctx = (QEMUGLContext)[ctx retain];
++    cocoa_gl_register_nscontext(qctx);
++    return qctx;
++}
++#endif
++
+ static int cocoa_gl_make_context_current(DisplayGLCtx *dgc, QEMUGLContext ctx)
+ {
+ #ifdef CONFIG_EGL
+@@ -2148,6 +2282,17 @@ static int cocoa_gl_make_context_current(DisplayGLCtx *dgc, QEMUGLContext ctx)
+     }
+ #endif
+ 
++#if defined(__APPLE__)
++    if (cocoa_gl_is_nscontext(ctx)) {
++        if (ctx) {
++            [(NSOpenGLContext *)ctx makeCurrentContext];
++        } else {
++            [NSOpenGLContext clearCurrentContext];
++        }
++        return 0;
++    }
++#endif
++
+     return CGLSetCurrentContext((CGLContextObj)ctx);
+ }
+ 
+@@ -2167,6 +2312,14 @@ static QEMUGLContext cocoa_gl_create_context(DisplayGLCtx *dgc,
+ #endif
+ 
+     bpp = PIXMAN_FORMAT_BPP(surface_format(surface));
++
++#if defined(__APPLE__)
++    QEMUGLContext nsctx = cocoa_gl_create_nscontext(bpp);
++    if (nsctx) {
++        return nsctx;
++    }
++#endif
++
+     format = cocoa_gl_create_cgl_pixel_format(bpp);
+     CGLCreateContext(format, gl_view_ctx, &ctx);
+     CGLDestroyPixelFormat(format);
+@@ -2183,16 +2336,25 @@ static void cocoa_gl_destroy_context(DisplayGLCtx *dgc, QEMUGLContext ctx)
+     }
+ #endif
+ 
++    if (cocoa_gl_is_nscontext(ctx)) {
++        cocoa_gl_unregister_nscontext(ctx);
++        [(NSOpenGLContext *)ctx release];
++        return;
++    }
++
+     CGLDestroyContext(ctx);
+ }
+ 
+ static void cocoa_gl_update(DisplayChangeListener *dcl,
+                             int x, int y, int w, int h)
+ {
+-    with_gl_view_ctx(^{
+-        surface_gl_update_texture(dgc.gls, surface, x, y, w, h);
+-        gl_dirty = true;
+-    });
++    /* For virglrenderer Metal backend, we render from the pixel buffer
++     * written by the scanout callback, not from an OpenGL texture.
++     * Force immediate display to show the freshly copied pixels.
++     */
++    NSRect rect = NSMakeRect(x, surface_height(surface) - y - h, w, h);
++    [cocoaView setNeedsDisplayInRect:rect];
++    [cocoaView displayIfNeeded];
+ }
+ 
+ static void cocoa_gl_switch(DisplayChangeListener *dcl,
+@@ -2332,6 +2494,12 @@ static void cocoa_display_init(DisplayState *ds, DisplayOptions *opts)
+     controller = [[QemuCocoaAppController alloc] init];
+ #endif
+     [NSApp setDelegate:controller];
++    
++    /* Application already finished launching before delegate was set,
++     * so manually trigger the delegate method */
++    [controller applicationDidFinishLaunching:
++        [NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification
++                                      object:NSApp]];
+ 
+     if (display_opengl) {
+ #ifdef CONFIG_OPENGL
+diff --git a/ui/meson.build b/ui/meson.build
+index 5cec9019e8..8527caed95 100644
+--- a/ui/meson.build
++++ b/ui/meson.build
+@@ -27,6 +27,11 @@ if host_os == 'linux'
+   system_ss.add(files('input-linux.c', 'udmabuf.c'))
+ endif
+ system_ss.add(when: cocoa, if_true: files('cocoa.m'))
++# Add Metal presenter for virglrenderer on macOS
++if host_os == 'darwin'
++  system_ss.add(files('../hw/display/cocoa_metal_presenter.m'))
++  system_ss.add(when: [metal, iosurface], if_true: [metal, iosurface])
++endif
+ 
+ vnc_ss = ss.source_set()
+ vnc_ss.add(files(

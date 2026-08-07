@@ -8,6 +8,7 @@
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/graphics/IOAccelerator.h>
 
+class IOFramebuffer;
 class VMQemuVGA;
 class VMVirtIOGPU;
 class VMShaderManager;
@@ -78,7 +79,7 @@ class VMQemuVGAAccelerator : public IOAccelerator
 protected:
     // Protected so subclasses (e.g. VMVirtIOGPUAccelerator) can access core
     // accelerator state (GPU device, workloop, command gate, etc.).
-    VMQemuVGA* m_framebuffer;
+    IOFramebuffer* m_framebuffer;  // Base class - supports both VMQemuVGA and VMVirtIOFramebuffer
     VMVirtIOGPU* m_gpu_device;
     IOWorkLoop* m_workloop;
     IOCommandGate* m_command_gate;
@@ -91,7 +92,6 @@ protected:
     VMMetalBridge* m_metal_bridge;
     VMMetalPlugin* m_metal_plugin;
     
-    // Phase 3 Integration Manager
     VMPhase3Manager* m_phase3_manager;
     
     // Context management
@@ -179,8 +179,8 @@ public:
     uint32_t getMaxTextureSize() const;
     uint32_t getMaxRenderTargets() const;
     
-    // Integration with framebuffer
-    VMQemuVGA* getFramebuffer() const { return m_framebuffer; }
+    // Integration with framebuffer  - returns IOFramebuffer base class (supports both QXL and VirtIO)
+    IOFramebuffer* getFramebuffer() const { return m_framebuffer; }
     VMVirtIOGPU* getGPUDevice() const { return m_gpu_device; }
     
     // Advanced 3D subsystems
@@ -216,7 +216,6 @@ public:
     IOReturn drawIndexedPrimitives(uint32_t context_id, uint32_t primitive_type,
                                   uint32_t index_count, uint32_t first_index);
     
-    // Phase 3 Advanced API Integration
     VMPhase3Manager* getPhase3Manager() { return m_phase3_manager; }
     VMMetalBridge* getMetalBridge() { return m_metal_bridge; }
     VMVirtIOGPU* getGPUDevice() { return m_gpu_device; }
@@ -276,6 +275,27 @@ public:
     
     // Power management
     IOReturn setPowerState(unsigned long powerState, IOService* whatDevice) override;
+    
+    // ========================================================================
+    // WindowServer 2D Acceleration API
+    // These methods are called by IOGraphicsFamily for desktop operations
+    // ========================================================================
+    
+    // Surface-to-surface hardware blit (used for window dragging, scrolling)
+    IOReturn blitSurfaceAccelerated(IOAccelSurfaceInformation* src,
+                                   IOAccelSurfaceInformation* dest,
+                                   IOAccelBounds* srcRect,
+                                   IOAccelBounds* destRect,
+                                   IOOptionBits options);
+    
+    // Fill rectangle with solid color (used for window clearing, backgrounds)
+    IOReturn fillSurfaceAccelerated(IOAccelSurfaceInformation* surface,
+                                   IOAccelBounds* rect,
+                                   uint32_t color,
+                                   IOOptionBits options);
+    
+    // Synchronize all pending accelerated operations
+    IOReturn synchronizeAccelerator(IOOptionBits options);
 };
 
 // User client for 3D acceleration

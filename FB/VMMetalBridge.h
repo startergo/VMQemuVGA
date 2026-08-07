@@ -351,7 +351,6 @@ public:
     void logMetalBridgeState();
     
     // Advanced GPU Memory Synchronization and DMA Management System v7.0 - Method declarations
-    // Enterprise GPU memory synchronization with comprehensive DMA management
     IOReturn performAdvancedGPUMemorySynchronization(uint32_t buffer_id, const void* data, 
                                                      uint32_t offset, uint32_t size, 
                                                      IOBufferMemoryDescriptor* buffer);
@@ -409,7 +408,6 @@ private:
     void generateCommandBufferAnalyticsReport();
     
     // Advanced Command Buffer Resource Dependency Management System v8.0 - Method declarations
-    // Enterprise-level dependency tracking and synchronization infrastructure
     IOReturn initializeAdvancedDependencyTracking(uint32_t buffer_id);
     IOReturn analyzeCommandBufferResourceDependencies(uint32_t buffer_id, VMMetalCommandBufferInfo* cmd_info);
     IOReturn constructDependencyGraph(uint32_t buffer_id, VMMetalCommandBufferInfo* cmd_info);

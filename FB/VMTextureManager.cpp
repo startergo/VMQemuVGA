@@ -2,6 +2,9 @@
 #include "VMQemuVGAAccelerator.h"
 #include <IOKit/IOLib.h>
 
+// Disable verbose diagnostic output (set to 1 to enable for debugging)
+#define VERBOSE_DIAGNOSTICS 0
+
 #define CLASS VMTextureManager
 #define super OSObject
 
@@ -30,11 +33,25 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     m_accelerator = accelerator;
     m_gpu_device = m_accelerator->getGPUDevice();
     
-    // Advanced Texture Manager Initialization System - Comprehensive Resource Management
+    // Essential initialization (ALWAYS executed)
+    m_textures = OSArray::withCapacity(64);
+    m_texture_map = OSDictionary::withCapacity(64);
+    m_samplers = OSArray::withCapacity(32);
+    m_texture_cache = OSArray::withCapacity(128);
+    m_texture_lock = IOLockAlloc();
+    
+    if (!m_textures || !m_texture_map || !m_samplers || !m_texture_lock) {
+        IOLog("VMTextureManager: ERROR - Failed to allocate essential resources\n");
+        return false;
+    }
+    
+    // Initialize memory tracking
+    m_texture_memory_usage = 0;
+    m_cache_memory_used = 0;
+    
+#if VERBOSE_DIAGNOSTICS
     IOLog("VMTextureManager: Initiating advanced texture management system initialization\n");
     
-    // Phase 1: Core Data Structure Allocation with Advanced Configuration
-    IOLog("  Phase 1: Advanced core data structure allocation and configuration\n");
     
     // Advanced Texture Array Initialization with Optimized Capacity Management
     struct TextureArrayConfiguration {
@@ -66,13 +83,8 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     IOLog("      Dynamic Expansion: %s\n", texture_config.supports_dynamic_expansion ? "ENABLED" : "DISABLED");
     IOLog("      Memory Compaction: %s\n", texture_config.supports_memory_compaction ? "ENABLED" : "DISABLED");
     
-    // Advanced Texture Array Creation with Comprehensive Error Handling
-    m_textures = OSArray::withCapacity(texture_config.base_texture_capacity);
-    if (!m_textures) {
-        IOLog("    ERROR: Failed to allocate primary texture array with capacity %d\n", 
-              texture_config.base_texture_capacity);
-        return false;
-    }
+    // Note: m_textures already allocated before verbose block
+    IOLog("    Texture array: Already allocated with capacity %d\n", m_textures ? m_textures->getCapacity() : 0);
     
     // Advanced Sampler Array Configuration and Initialization
     struct SamplerArrayConfiguration {
@@ -103,17 +115,8 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     IOLog("      Custom Sampler Support: %s\n", sampler_config.supports_custom_samplers ? "ENABLED" : "DISABLED");
     IOLog("      Sampler State Caching: %s\n", sampler_config.supports_sampler_caching ? "ENABLED" : "DISABLED");
     
-    // Advanced Sampler Array Creation with Validation
-    m_samplers = OSArray::withCapacity(sampler_config.base_sampler_capacity);
-    if (!m_samplers) {
-        IOLog("    ERROR: Failed to allocate sampler array with capacity %d\n", 
-              sampler_config.base_sampler_capacity);
-        if (m_textures) {
-            m_textures->release();
-            m_textures = nullptr;
-        }
-        return false;
-    }
+    // Note: m_samplers already allocated before verbose block
+    IOLog("    Sampler array: Already allocated with capacity %d\n", m_samplers ? m_samplers->getCapacity() : 0);
     
     // Advanced Texture Cache Configuration and Initialization
     struct TextureCacheConfiguration {
@@ -150,21 +153,8 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     IOLog("      Cache Prefetch: %s\n", cache_config.supports_cache_prefetch ? "ENABLED" : "DISABLED");
     IOLog("      Target Hit Ratio: %.1f%%\n", cache_config.cache_hit_target_ratio * 100.0f);
     
-    // Advanced Texture Cache Creation with Comprehensive Validation
-    m_texture_cache = OSArray::withCapacity(cache_config.base_cache_capacity);
-    if (!m_texture_cache) {
-        IOLog("    ERROR: Failed to allocate texture cache with capacity %d\n", 
-              cache_config.base_cache_capacity);
-        if (m_textures) {
-            m_textures->release();
-            m_textures = nullptr;
-        }
-        if (m_samplers) {
-            m_samplers->release();
-            m_samplers = nullptr;
-        }
-        return false;
-    }
+    // Note: m_texture_cache already allocated before verbose block
+    IOLog("    Texture cache: Already allocated with capacity %d\n", m_texture_cache ? m_texture_cache->getCapacity() : 0);
     
     // Advanced Texture Mapping Dictionary Configuration
     struct TextureMapConfiguration {
@@ -196,28 +186,9 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     IOLog("      Reverse Mapping: %s\n", map_config.supports_reverse_mapping ? "ENABLED" : "DISABLED");
     IOLog("      Load Factor Threshold: %.1f%%\n", map_config.load_factor_threshold * 100.0f);
     
-    // Advanced Texture Map Creation with Optimization
-    m_texture_map = OSDictionary::withCapacity(map_config.base_mapping_capacity);
-    if (!m_texture_map) {
-        IOLog("    ERROR: Failed to allocate texture mapping dictionary with capacity %d\n", 
-              map_config.base_mapping_capacity);
-        if (m_textures) {
-            m_textures->release();
-            m_textures = nullptr;
-        }
-        if (m_samplers) {
-            m_samplers->release();
-            m_samplers = nullptr;
-        }
-        if (m_texture_cache) {
-            m_texture_cache->release();
-            m_texture_cache = nullptr;
-        }
-        return false;
-    }
+    // Note: m_texture_map already allocated before verbose block
+    IOLog("    Texture map: Already allocated with capacity %d\n", m_texture_map ? m_texture_map->getCapacity() : 0);
     
-    // Phase 2: Advanced Memory Management Configuration and Validation
-    IOLog("  Phase 2: Advanced memory management and resource allocation validation\n");
     
     // Advanced Memory Configuration Structure
     struct AdvancedMemoryConfiguration {
@@ -274,8 +245,6 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
         return false;
     }
     
-    // Phase 3: Advanced Counter and Resource Limit Configuration
-    IOLog("  Phase 3: Advanced counter initialization and resource limit configuration\n");
     
     // Advanced Counter Configuration Structure
     struct AdvancedCounterConfiguration {
@@ -371,8 +340,6 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     m_cache_memory_limit = memory_tracking.cache_memory_limit;
     m_cache_memory_used = 0; // Start with empty cache
     
-    // Phase 4: Advanced Synchronization and Thread Safety Configuration
-    IOLog("  Phase 4: Advanced synchronization and thread safety initialization\n");
     
     // Advanced Lock Configuration Structure
     struct LockConfiguration {
@@ -402,32 +369,9 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     IOLog("      Contention Threshold: %d\n", lock_config.lock_contention_threshold);
     IOLog("      Efficiency Target: %.1f%%\n", lock_config.lock_efficiency_target * 100.0f);
     
-    // Create advanced texture management lock
-    m_texture_lock = IOLockAlloc();
-    if (!m_texture_lock) {
-        IOLog("    ERROR: Failed to allocate texture management lock\n");
-        // Cleanup previously allocated resources
-        if (m_textures) {
-            m_textures->release();
-            m_textures = nullptr;
-        }
-        if (m_samplers) {
-            m_samplers->release();
-            m_samplers = nullptr;
-        }
-        if (m_texture_cache) {
-            m_texture_cache->release();
-            m_texture_cache = nullptr;
-        }
-        if (m_texture_map) {
-            m_texture_map->release();
-            m_texture_map = nullptr;
-        }
-        return false;
-    }
+    // Note: m_texture_lock already allocated before verbose block
+    IOLog("    Texture lock: Already allocated at %p\n", m_texture_lock);
     
-    // Phase 5: Comprehensive Initialization Validation and System Health Check
-    IOLog("  Phase 5: Comprehensive initialization validation and system health verification\n");
     
     // Advanced Validation Structure
     struct InitializationValidation {
@@ -514,7 +458,6 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
         return false;
     }
     
-    IOLog("VMTextureManager: ========== Advanced Texture Management System Initialized ==========\n");
     IOLog("  System Status: OPERATIONAL\n");
     IOLog("  Texture Capacity: %d entries\n", texture_config.base_texture_capacity);
     IOLog("  Sampler Capacity: %d entries\n", sampler_config.base_sampler_capacity);
@@ -523,6 +466,7 @@ bool CLASS::init(VMQemuVGAAccelerator* accelerator)
     IOLog("  Cache Memory: %llu MB\n", memory_config.cache_memory_allocation / (1024 * 1024));
     IOLog("  Initialization Completeness: %.1f%%\n", validation.initialization_completeness * 100.0f);
     IOLog("================================================================================\n");
+#endif  // VERBOSE_DIAGNOSTICS
     
     return (m_textures && m_texture_map && m_samplers && m_texture_lock);
 }
@@ -535,8 +479,6 @@ void CLASS::free()
         // Advanced Texture Manager Cleanup System - Comprehensive Resource Deallocation
         IOLog("VMTextureManager: Initiating advanced texture management system cleanup\n");
         
-        // Phase 1: Pre-Cleanup System State Analysis and Resource Inventory
-        IOLog("  Phase 1: Pre-cleanup system state analysis and resource inventory\n");
         
         // Advanced Cleanup State Analysis Structure
         struct CleanupStateAnalysis {
@@ -581,8 +523,6 @@ void CLASS::free()
         IOLog("      Requires Memory Cleanup: %s\n", cleanup_state.requires_memory_cleanup ? "YES" : "NO");
         IOLog("      Requires Cache Flush: %s\n", cleanup_state.requires_cache_flush ? "YES" : "NO");
         
-        // Phase 2: Advanced Texture Array Cleanup with Resource Tracking
-        IOLog("  Phase 2: Advanced texture array cleanup with comprehensive resource tracking\n");
         
         if (m_textures) {
             // Advanced Texture Cleanup Configuration
@@ -626,8 +566,6 @@ void CLASS::free()
             IOLog("    Texture array: NULL (no cleanup required)\n");
         }
         
-        // Phase 3: Advanced Sampler Array Cleanup with State Management
-        IOLog("  Phase 3: Advanced sampler array cleanup with comprehensive state management\n");
         
         if (m_samplers) {
             // Advanced Sampler Cleanup Configuration
@@ -671,8 +609,6 @@ void CLASS::free()
             IOLog("    Sampler array: NULL (no cleanup required)\n");
         }
         
-        // Phase 4: Advanced Cache Cleanup with Memory Reclamation
-        IOLog("  Phase 4: Advanced cache cleanup with comprehensive memory reclamation\n");
         
         if (m_texture_cache) {
             // Advanced Cache Cleanup Configuration
@@ -723,8 +659,6 @@ void CLASS::free()
             IOLog("    Texture cache: NULL (no cleanup required)\n");
         }
         
-        // Phase 5: Advanced Texture Map Cleanup with ID Management
-        IOLog("  Phase 5: Advanced texture map cleanup with comprehensive ID management\n");
         
         if (m_texture_map) {
             // Advanced Map Cleanup Configuration
@@ -768,8 +702,6 @@ void CLASS::free()
             IOLog("    Texture map: NULL (no cleanup required)\n");
         }
         
-        // Phase 6: Memory Usage Reset and Final State Cleanup
-        IOLog("  Phase 6: Memory usage reset and final system state cleanup\n");
         
         // Advanced Memory Reset Configuration
         struct MemoryResetConfiguration {
@@ -810,8 +742,6 @@ void CLASS::free()
         m_next_texture_id = 1; // Reset to initial value
         m_next_sampler_id = 1; // Reset to initial value
         
-        // Phase 7: Comprehensive Cleanup Validation and Final Status Report
-        IOLog("  Phase 7: Comprehensive cleanup validation and final status verification\n");
         
         // Advanced Cleanup Validation Structure
         struct CleanupValidation {
@@ -899,7 +829,6 @@ void CLASS::free()
         
         // Final cleanup status report
         if (cleanup_validation.cleanup_successful) {
-            IOLog("VMTextureManager: ========== Advanced Texture Management System Cleanup Complete ==========\n");
             IOLog("  Cleanup Status: SUCCESS\n");
             IOLog("  Resources Cleaned: %d textures, %d samplers, %d cache entries, %d mappings\n",
                   cleanup_state.active_textures_count, cleanup_state.active_samplers_count,
@@ -921,7 +850,6 @@ void CLASS::free()
     super::free();
 }
 
-// Advanced Texture Management Implementation - Comprehensive Resource Operations
 
 IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
                              IOMemoryDescriptor* initial_data,
@@ -944,8 +872,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     
     IOLog("VMTextureManager::createTexture: Initiating advanced texture creation process\n");
     
-    // Phase 1: Comprehensive Texture Descriptor Validation
-    IOLog("  Phase 1: Comprehensive texture descriptor validation and compatibility analysis\n");
     
     struct TextureValidationResult {
         bool dimensions_valid;
@@ -1061,8 +987,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         return kIOReturnBadArgument;
     }
     
-    // Phase 2: Advanced Memory Allocation and Resource Management
-    IOLog("  Phase 2: Advanced memory allocation and comprehensive resource management\n");
     
     struct MemoryAllocationPlan {
         uint64_t primary_texture_memory;
@@ -1117,8 +1041,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         return kIOReturnNoMemory;
     }
     
-    // Phase 3: Advanced Texture Object Creation and Initialization
-    IOLog("  Phase 3: Advanced texture object creation and comprehensive initialization\n");
     
     struct TextureObjectConfiguration {
         uint32_t assigned_texture_id;
@@ -1173,8 +1095,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     IOLog("      Cache Optimization: %s\n", texture_object.supports_cache_optimization ? "ENABLED" : "DISABLED");
     IOLog("      Creation Efficiency Target: %.1f%%\n", texture_object.creation_efficiency * 100.0f);
     
-    // Phase 4: Initial Data Processing and GPU Resource Allocation
-    IOLog("  Phase 4: Initial data processing and comprehensive GPU resource allocation\n");
     
     if (initial_data) {
         struct InitialDataProcessing {
@@ -2016,8 +1936,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         IOLog("        GPU Resident: NO (will be allocated on first use)\n");
     }
     
-    // Phase 5: Registration and Memory Tracking Update
-    IOLog("  Phase 5: System registration and comprehensive memory tracking update\n");
     
     // Add texture to managed array
     if (!m_textures) {
@@ -2070,8 +1988,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     IOLog("        Thread Safety: %s\n", wrapper_config.supports_thread_safety ? "ENABLED" : "DISABLED");
     IOLog("        Efficiency Target: %.1f%%\n", wrapper_config.wrapper_efficiency_target * 100.0f);
     
-    // Phase 1: Advanced OSObject Allocation with Validation
-    IOLog("      Phase 1: Advanced OSObject allocation with comprehensive validation\n");
     
     struct OSObjectAllocationStrategy {
         uint32_t allocation_method;
@@ -2166,8 +2082,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     IOLog("        Executing OSObject allocation...\n");
     texture_obj = OSTypeAlloc(OSObject); // Standard OSObject allocation
     
-    // Phase 2: Post-Allocation Validation and Enhancement
-    IOLog("      Phase 2: Post-allocation validation and comprehensive enhancement\n");
     
     if (!texture_obj) {
         IOLog("        ERROR: OSObject allocation failed\n");
@@ -2236,8 +2150,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     IOLog("          Reference Count: %d\n", object_validation.object_reference_count);
     IOLog("          Required Operations: %s\n", object_validation.object_supports_required_operations ? "SUPPORTED" : "UNSUPPORTED");
     
-    // Phase 3: Advanced Object Enhancement and Metadata Integration
-    IOLog("      Phase 3: Advanced object enhancement and comprehensive metadata integration\n");
     
     struct ObjectEnhancementSystem {
         bool metadata_integration_enabled;
@@ -2304,7 +2216,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     
     // Apply object enhancements (comprehensive implementation with real property modifications)
     if (enhancement_system.metadata_integration_enabled) {
-        IOLog("          Phase 1/5: Advanced metadata integration implementation\n");
         
         struct MetadataIntegrationSystem {
             uint32_t metadata_version;
@@ -2356,7 +2267,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         
         IOLog("              Executing metadata attachment...\n");
         
-        // Advanced Metadata Allocation and Management System - Enterprise Implementation
         IOLog("              === Advanced Metadata Allocation and Management System ===\n");
         
         struct MetadataAllocationSubsystem {
@@ -2411,8 +2321,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         IOLog("                  Retry Limit: %d attempts\n", metadata_allocation.allocation_retry_limit);
         IOLog("                  Allocation Timeout: %d ms\n", metadata_allocation.allocation_timeout_ms);
         
-        // Phase 1: Advanced Memory Pool Management and Allocation Planning
-        IOLog("                Phase 1: Advanced memory pool management and allocation planning\n");
         
         struct MemoryPoolManagement {
             uint32_t pool_manager_version;
@@ -2485,8 +2393,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
                   pool_management.active_allocations_count, pool_management.maximum_allocations_supported);
         }
         
-        // Phase 2: Advanced Metadata Structure Creation and Initialization
-        IOLog("                Phase 2: Advanced metadata structure creation and initialization\n");
         
         struct MetadataStructureDefinition {
             uint32_t structure_format_version;
@@ -2638,8 +2544,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         
         allocation_end_time = 0; // mach_absolute_time()
         
-        // Phase 3: Post-Allocation Validation and Structure Initialization
-        IOLog("                Phase 3: Post-allocation validation and structure initialization\n");
         
         attachment_process.metadata_allocation_successful = allocation_successful;
         
@@ -2683,17 +2587,13 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
             // Execute initialization phases
             IOLog("                    Executing structure initialization phases...\n");
             
-            // Phase 1: Zero memory initialization
             if (init_system.zero_memory_initialization) {
-                IOLog("                      Phase 1/5: Zero memory initialization\n");
                 // In real implementation: memset(metadata_structure_ptr, 0, metadata_allocation.aligned_metadata_size);
                 init_system.completed_initialization_phases++;
                 IOLog("                        Memory zeroed: %llu bytes\n", metadata_allocation.aligned_metadata_size);
             }
             
-            // Phase 2: Field default value setup
             if (init_system.field_default_value_setup) {
-                IOLog("                      Phase 2/5: Field default value setup\n");
                 // In real implementation: Set up default values for each field in the structure
                 for (uint32_t field_idx = 0; field_idx < structure_definition.field_count; field_idx++) {
                     // Would set default values for each field
@@ -2707,9 +2607,7 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
                 IOLog("                        Default values configured: %d fields\n", structure_definition.field_count);
             }
             
-            // Phase 3: Structure header creation
             if (init_system.structure_header_creation) {
-                IOLog("                      Phase 3/5: Structure header creation\n");
                 // In real implementation: Create and populate structure header
                 struct MetadataStructureHeader {
                     uint32_t magic_number;
@@ -2737,9 +2635,7 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
                       header.structure_size, header.field_count, header.header_checksum);
             }
             
-            // Phase 4: Validation markers insertion
             if (init_system.validation_markers_insertion) {
-                IOLog("                      Phase 4/5: Validation markers insertion\n");
                 // In real implementation: Insert validation markers throughout structure
                 uint32_t validation_markers_inserted = 0;
                 uint32_t validation_marker_interval = (uint32_t)(structure_definition.base_structure_size / 8); // Every 32 bytes
@@ -2756,9 +2652,7 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
                 IOLog("                        Marker interval: %d bytes\n", validation_marker_interval);
             }
             
-            // Phase 5: Checksum calculation
             if (init_system.checksum_calculation) {
-                IOLog("                      Phase 5/5: Structure checksum calculation\n");
                 // In real implementation: Calculate checksum of entire structure
                 uint32_t calculated_checksum = 0x12345678; // Simulated checksum calculation
                 
@@ -2821,7 +2715,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     }
     
     if (enhancement_system.performance_optimization_applied) {
-        IOLog("          Phase 2/5: Advanced performance optimization implementation\n");
         
         struct PerformanceOptimizationSystem {
             uint32_t optimization_level;
@@ -2943,7 +2836,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     }
     
     if (enhancement_system.security_hardening_applied) {
-        IOLog("          Phase 3/5: Advanced security hardening implementation\n");
         
         struct SecurityHardeningSystem {
             uint32_t security_level;
@@ -3061,7 +2953,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     }
     
     if (enhancement_system.debugging_support_enabled) {
-        IOLog("          Phase 4/5: Advanced debugging support integration\n");
         
         struct DebuggingSupportSystem {
             bool breakpoint_support_enabled;
@@ -3094,7 +2985,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         
         IOLog("              Integrating debugging support...\n");
         
-        // Advanced Debugging Features Integration System - Comprehensive Diagnostic Architecture
         IOLog("                === Advanced Debugging Features Integration System ===\n");
         
         struct AdvancedDebuggingArchitecture {
@@ -3132,9 +3022,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         debug_architecture.debugging_performance_impact_percentage = 5.0f; // 5% performance impact
         debug_architecture.debugging_architecture_initialized = false;
         
-        IOLog("                Advanced Debugging Architecture Configuration:\n");
-        IOLog("                  Framework Version: 0x%04X (v2.5 Enterprise)\n", debug_architecture.debugging_framework_version);
-        IOLog("                  Architecture Type: 0x%02X (Enterprise Debugging)\n", debug_architecture.debugging_architecture_type);
         IOLog("                  Real-time Breakpoints: %s\n", debug_architecture.supports_real_time_breakpoints ? "SUPPORTED" : "UNSUPPORTED");
         IOLog("                  Memory Watchpoints: %s\n", debug_architecture.supports_memory_watchpoints ? "SUPPORTED" : "UNSUPPORTED");
         IOLog("                  Execution Tracing: %s\n", debug_architecture.supports_execution_tracing ? "SUPPORTED" : "UNSUPPORTED");
@@ -3148,8 +3035,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         IOLog("                  Memory Overhead: %llu bytes (%.1f KB)\n", debug_architecture.debugging_memory_overhead_bytes, debug_architecture.debugging_memory_overhead_bytes / 1024.0f);
         IOLog("                  Performance Impact: %.1f%%\n", debug_architecture.debugging_performance_impact_percentage);
         
-        // Phase 1: Advanced Breakpoint Management System
-        IOLog("                Phase 1: Advanced breakpoint management system initialization\n");
         
         struct BreakpointManagementSystem {
             uint32_t breakpoint_system_version;
@@ -3253,8 +3138,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
             breakpoint_system.breakpoint_system_operational = false;
         }
         
-        // Phase 2: Advanced Memory Watchpoint System
-        IOLog("                Phase 2: Advanced memory watchpoint system initialization\n");
         
         struct MemoryWatchpointSystem {
             uint32_t watchpoint_system_version;
@@ -3363,8 +3246,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
             watchpoint_system.watchpoint_system_operational = false;
         }
         
-        // Phase 3: Advanced Execution Tracing and Call Stack System
-        IOLog("                Phase 3: Advanced execution tracing and call stack system initialization\n");
         
         struct ExecutionTracingSystem {
             uint32_t tracing_system_version;
@@ -3484,8 +3365,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
             tracing_system.tracing_system_operational = false;
         }
         
-        // Phase 4: Advanced Performance Profiling and Metrics System
-        IOLog("                Phase 4: Advanced performance profiling and metrics system initialization\n");
         
         struct PerformanceProfilingSystem {
             uint32_t profiling_system_version;
@@ -3598,8 +3477,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
             profiling_system.profiling_system_operational = false;
         }
         
-        // Phase 5: Advanced Error Reporting and Crash Analysis System
-        IOLog("                Phase 5: Advanced error reporting and crash analysis system initialization\n");
         
         struct ErrorReportingSystem {
             uint32_t error_system_version;
@@ -3764,8 +3641,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         float overall_debugging_efficiency = (efficiency_contributors > 0) ? (combined_efficiency / efficiency_contributors) : 0.0f;
         
         IOLog("                === Advanced Debugging Features Integration Results ===\n");
-        IOLog("                  Framework Version: 0x%04X (v2.5 Enterprise)\n", debug_architecture.debugging_framework_version);
-        IOLog("                  Architecture Type: 0x%02X (Enterprise Debugging)\n", debug_architecture.debugging_architecture_type);
         IOLog("                  Operational Systems: %d/%d (%.1f%%)\n", operational_systems, total_systems, (float)operational_systems / (float)total_systems * 100.0f);
         IOLog("                  System Status Summary:\n");
         IOLog("                    Breakpoint Management: %s\n", breakpoint_system.breakpoint_system_operational ? "OPERATIONAL" : "INACTIVE");
@@ -3829,7 +3704,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         IOLog("                    Profiling Hooks: %s\n", debug_integration.profiling_hooks_installed ? "INSTALLED" : "SKIPPED");
         IOLog("                    Enhanced Error Handlers: %s\n", debug_integration.error_handlers_enhanced ? "INSTALLED" : "SKIPPED");
         IOLog("                    Inspection Interface: %s\n", debug_integration.inspection_interface_created ? "CREATED" : "SKIPPED");
-        IOLog("                  Advanced Debugging Systems Status:\n");
         IOLog("                    Breakpoint Management System: %s\n", debug_integration.breakpoint_system_integrated ? "INTEGRATED" : "INACTIVE");
         IOLog("                    Memory Watchpoint System: %s\n", debug_integration.watchpoint_system_integrated ? "INTEGRATED" : "INACTIVE");
         IOLog("                    Execution Tracing System: %s\n", debug_integration.tracing_system_integrated ? "INTEGRATED" : "INACTIVE");
@@ -3851,7 +3725,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     }
     
     if (enhancement_system.runtime_inspection_enabled) {
-        IOLog("          Phase 5/5: Advanced runtime inspection system integration\n");
         
         struct RuntimeInspectionSystem {
             bool property_inspection_enabled;
@@ -3963,8 +3836,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     IOLog("          Overall Validation Score: %.1f%% (%d/%d criteria met)\n", 
           object_validation.object_validation_score * 100.0f, validation_criteria_met, total_validation_criteria);
     
-    // Phase 4: Advanced Wrapper Integration and Binding
-    IOLog("      Phase 4: Advanced wrapper integration and comprehensive texture binding\n");
     
     struct WrapperIntegrationSystem {
         bool texture_binding_successful;
@@ -3995,7 +3866,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     IOLog("          Target Efficiency: %.1f%%\n", wrapper_integration.integration_efficiency * 100.0f);
     
     // Advanced Texture Binding System - Comprehensive OSObject Integration Architecture
-    IOLog("        === Advanced Texture Binding System - Enterprise OSObject Integration ===\n");
     
     struct TextureBindingArchitecture {
         uint32_t binding_system_version;
@@ -4027,8 +3897,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     binding_architecture.binding_system_initialized = false;
     
     IOLog("        Advanced Texture Binding Architecture Configuration:\n");
-    IOLog("          Binding System Version: 0x%04X (v3.0 Enterprise)\n", binding_architecture.binding_system_version);
-    IOLog("          Architecture Type: 0x%02X (Enterprise Architecture)\n", binding_architecture.binding_architecture_type);
     IOLog("          Complexity Level: %d (Maximum)\n", binding_architecture.integration_complexity_level);
     IOLog("          Managed Texture Storage: %s\n", binding_architecture.supports_managed_texture_storage ? "SUPPORTED" : "UNSUPPORTED");
     IOLog("          Reference Lifecycle Management: %s\n", binding_architecture.supports_reference_lifecycle_management ? "SUPPORTED" : "UNSUPPORTED");
@@ -4039,8 +3907,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     IOLog("          Maximum Concurrent Bindings: %d\n", binding_architecture.maximum_concurrent_bindings);
     IOLog("          Memory Overhead per Binding: %llu bytes\n", binding_architecture.binding_memory_overhead_bytes);
     
-    // Phase 1: Advanced OSObject Storage Container Creation
-    IOLog("        Phase 1: Advanced OSObject storage container creation and initialization\n");
     
     struct OSObjectStorageContainer {
         uint32_t container_type;
@@ -4136,8 +4002,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         return kIOReturnNoMemory;
     }
     
-    // Phase 2: Advanced ManagedTexture Serialization and Storage
-    IOLog("        Phase 2: Advanced ManagedTexture serialization and comprehensive storage\n");
     
     struct ManagedTextureSerializationSystem {
         uint32_t serialization_format_version;
@@ -4252,8 +4116,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         return kIOReturnIOError;
     }
     
-    // Phase 3: Advanced Reference Lifecycle Management Integration
-    IOLog("        Phase 3: Advanced reference lifecycle management and binding state persistence\n");
     
     struct ReferenceLifecycleManager {
         uint32_t lifecycle_management_version;
@@ -4365,8 +4227,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
         return kIOReturnError;
     }
     
-    // Phase 4: Advanced Cross-Object Linking and Binding Completion
-    IOLog("        Phase 4: Advanced cross-object linking and comprehensive binding finalization\n");
     
     struct CrossObjectLinkingSystem {
         bool supports_bidirectional_linking;
@@ -4491,7 +4351,6 @@ IOReturn CLASS::createTexture(const VMTextureDescriptor* descriptor,
     
     // Final binding system validation and summary
     IOLog("        === Advanced Texture Binding System Complete ===\n");
-    IOLog("          System Version: 0x%04X (Enterprise Architecture)\n", binding_architecture.binding_system_version);
     IOLog("          Storage Container: %s (%d/%d bytes used)\n", storage_container.container_initialization_successful ? "ACTIVE" : "FAILED", storage_container.current_storage_usage_bytes, storage_container.storage_capacity_bytes);
     IOLog("          Serialization System: %s (%.1f KB serialized)\n", serialization_system.serialization_successful ? "ACTIVE" : "FAILED", serialization_system.actual_serialized_size_bytes / 1024.0f);
     IOLog("          Lifecycle Manager: %s (%d active references)\n", lifecycle_manager.lifecycle_manager_initialized ? "ACTIVE" : "FAILED", lifecycle_init.active_reference_count);
@@ -4690,8 +4549,6 @@ IOReturn CLASS::getTextureDescriptor(uint32_t texture_id, VMTextureDescriptor* d
     
     IOLog("VMTextureManager::getTextureDescriptor: Initiating advanced texture descriptor retrieval (ID: %d)\n", texture_id);
     
-    // Phase 1: Advanced Texture ID Validation and Existence Verification
-    IOLog("  Phase 1: Advanced texture ID validation and comprehensive existence verification\n");
     
     struct TextureValidationContext {
         uint32_t requested_texture_id;
@@ -4785,8 +4642,6 @@ IOReturn CLASS::getTextureDescriptor(uint32_t texture_id, VMTextureDescriptor* d
         return kIOReturnNotPermitted;
     }
     
-    // Phase 2: Advanced Descriptor Construction and Data Population
-    IOLog("  Phase 2: Advanced descriptor construction and comprehensive data population\n");
     
     struct DescriptorConstructionPlan {
         bool use_cached_descriptor;
@@ -4823,8 +4678,6 @@ IOReturn CLASS::getTextureDescriptor(uint32_t texture_id, VMTextureDescriptor* d
     IOLog("    Initializing comprehensive texture descriptor\n");
     bzero(descriptor, sizeof(VMTextureDescriptor));
     
-    // Phase 3: Advanced Texture Properties Analysis and Determination
-    IOLog("  Phase 3: Advanced texture properties analysis and intelligent determination\n");
     
     struct TexturePropertiesAnalysis {
         // Dimensional properties
@@ -4917,8 +4770,6 @@ IOReturn CLASS::getTextureDescriptor(uint32_t texture_id, VMTextureDescriptor* d
     IOLog("      Rendering Optimized: %s\n", properties_analysis.optimized_for_rendering ? "YES" : "NO");
     IOLog("      Analysis Confidence: %.1f%%\n", properties_analysis.analysis_confidence * 100.0f);
     
-    // Phase 4: Comprehensive Descriptor Population and Validation
-    IOLog("  Phase 4: Comprehensive descriptor population and advanced validation\n");
     
     // Populate core dimensional properties
     descriptor->texture_type = properties_analysis.texture_type_classification;
@@ -4983,8 +4834,6 @@ IOReturn CLASS::getTextureDescriptor(uint32_t texture_id, VMTextureDescriptor* d
         return kIOReturnInvalid;
     }
     
-    // Phase 5: Access Tracking and System State Update
-    IOLog("  Phase 5: Access tracking and comprehensive system state update\n");
     
     struct AccessTrackingUpdate {
         uint64_t access_timestamp;
@@ -5071,8 +4920,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
     IOLog("  Target Texture ID: %d\n", texture_id);
     IOLog("  Target Mip Level: %d\n", mip_level);
     
-    // Phase 1: Advanced Texture Validation and Existence Verification
-    IOLog("  Phase 1: Advanced texture validation and comprehensive existence verification\n");
     
     struct TextureUpdateValidation {
         uint32_t target_texture_id;
@@ -5163,8 +5010,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
         return kIOReturnBadArgument;
     }
     
-    // Phase 2: Advanced Data Transfer Analysis and Planning
-    IOLog("  Phase 2: Advanced data transfer analysis and comprehensive planning\n");
     
     struct DataTransferPlan {
         uint64_t source_data_size;
@@ -5246,8 +5091,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
     IOLog("      Estimated Transfer Time: %llu μs\n", transfer_plan.estimated_transfer_time_microseconds);
     IOLog("      Transfer Efficiency: %.1f%%\n", transfer_plan.transfer_efficiency * 100.0f);
     
-    // Phase 3: Advanced Memory Transfer Execution with Optimization
-    IOLog("  Phase 3: Advanced memory transfer execution with comprehensive optimization\n");
     
     struct TransferExecution {
         bool transfer_initiated;
@@ -5548,8 +5391,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
         IOLog("          Performance Multiplier: %.1fx\n", copy_engine.performance_multiplier);
         IOLog("          Capabilities Flags: 0x%02X\n", copy_engine.engine_capabilities_flags);
         
-        // Phase 1: Advanced Memory Alignment Analysis and Optimization Planning
-        IOLog("        Phase 1: Advanced memory alignment analysis and optimization planning\n");
         
         struct MemoryAlignmentAnalysis {
             uint64_t source_memory_address;
@@ -5628,8 +5469,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
         IOLog("            Alignment Efficiency: %.1f%% (%d/3 factors optimal)\n", 
               alignment_analysis.alignment_efficiency_score * 100.0f, alignment_factors_optimal);
         
-        // Phase 2: High-Performance Block Transfer Strategy Implementation
-        IOLog("        Phase 2: High-performance block transfer strategy implementation\n");
         
         struct BlockTransferStrategy {
             uint32_t strategy_version;
@@ -5707,8 +5546,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
               block_strategy.use_parallel_processing ? "ENABLED" : "DISABLED", block_strategy.processing_threads);
         IOLog("            Block Processing Efficiency: %.1f%%\n", block_strategy.block_processing_efficiency * 100.0f);
         
-        // Phase 3: Advanced SIMD Copy Engine Execution with Real-Time Monitoring
-        IOLog("        Phase 3: Advanced SIMD copy engine execution with real-time monitoring\n");
         
         struct SIMDCopyExecution {
             uint64_t execution_start_time;
@@ -5873,8 +5710,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
         IOLog("            CPU Utilization: %.1f%%\n", simd_execution.cpu_utilization_percentage);
         IOLog("            Execution Success: %s\n", simd_execution.execution_successful ? "SUCCESS" : "FAILED");
         
-        // Phase 4: Post-Copy Validation and Performance Analysis
-        IOLog("        Phase 4: Post-copy validation and comprehensive performance analysis\n");
         
         struct PostCopyAnalysis {
             bool data_integrity_verified;
@@ -6035,8 +5870,6 @@ IOReturn CLASS::updateTexture(uint32_t texture_id, uint32_t mip_level,
         return kIOReturnIOError;
     }
     
-    // Phase 4: Post-Transfer Validation and System State Update
-    IOLog("  Phase 4: Post-transfer validation and comprehensive system state update\n");
     
     struct PostTransferValidation {
         bool data_integrity_verified;
@@ -6128,8 +5961,6 @@ IOReturn CLASS::readTexture(uint32_t texture_id, uint32_t mip_level,
     IOLog("VMTextureManager::readTexture: Initiating advanced texture reading process (ID: %d, Mip: %d)\n", 
           texture_id, mip_level);
     
-    // Phase 1: Comprehensive Texture Validation and Read Access Verification
-    IOLog("  Phase 1: Comprehensive texture validation and read access verification\n");
     
     struct ReadValidationContext {
         uint32_t target_texture_id;
@@ -6244,8 +6075,6 @@ IOReturn CLASS::readTexture(uint32_t texture_id, uint32_t mip_level,
         return kIOReturnBadArgument;
     }
     
-    // Phase 2: Advanced Read Strategy Planning and Optimization
-    IOLog("  Phase 2: Advanced read strategy planning and transfer optimization\n");
     
     struct ReadStrategyPlan {
         uint32_t read_strategy_type;
@@ -6309,8 +6138,6 @@ IOReturn CLASS::readTexture(uint32_t texture_id, uint32_t mip_level,
     IOLog("      Estimated Read Time: %d μs\n", read_strategy.estimated_read_time_us);
     IOLog("      Cache Optimization: 0x%02llX\n", read_strategy.cache_optimization_flags);
     
-    // Phase 3: Advanced Data Read Execution and Transfer Management
-    IOLog("  Phase 3: Advanced data read execution and comprehensive transfer management\n");
     
     struct ReadExecutionContext {
         uint64_t total_bytes_read;
@@ -6392,8 +6219,6 @@ IOReturn CLASS::readTexture(uint32_t texture_id, uint32_t mip_level,
     IOLog("      Read Completed: %s\n", read_execution.read_completed_successfully ? "YES" : "NO");
     IOLog("      Data Integrity: %s\n", read_execution.data_integrity_verified ? "VERIFIED" : "UNVERIFIED");
     
-    // Phase 4: Post-Read Validation and System State Update
-    IOLog("  Phase 4: Post-read validation and comprehensive system state update\n");
     
     struct PostReadValidation {
         bool output_data_populated;
@@ -6486,8 +6311,6 @@ IOReturn CLASS::copyTexture(uint32_t source_texture_id, uint32_t dest_texture_id
     IOLog("VMTextureManager::copyTexture: Initiating advanced texture copy operation (Source: %d, Dest: %d)\n", 
           source_texture_id, dest_texture_id);
     
-    // Phase 1: Comprehensive Source and Destination Texture Validation
-    IOLog("  Phase 1: Comprehensive source and destination texture validation\n");
     
     struct CopyValidationContext {
         uint32_t source_texture_id;
@@ -6638,8 +6461,6 @@ IOReturn CLASS::copyTexture(uint32_t source_texture_id, uint32_t dest_texture_id
         return kIOReturnBadArgument;
     }
     
-    // Phase 2: Advanced Copy Strategy Planning and Optimization
-    IOLog("  Phase 2: Advanced copy strategy planning and transfer optimization\n");
     
     struct CopyStrategyPlan {
         uint32_t copy_strategy_type;
@@ -6708,8 +6529,6 @@ IOReturn CLASS::copyTexture(uint32_t source_texture_id, uint32_t dest_texture_id
     IOLog("      Estimated Copy Time: %d μs\n", copy_strategy.estimated_copy_time_us);
     IOLog("      Memory Overhead: %llu KB\n", copy_strategy.memory_overhead_bytes / 1024);
     
-    // Phase 3: Advanced Copy Execution and Transfer Management
-    IOLog("  Phase 3: Advanced copy execution and comprehensive transfer management\n");
     
     struct CopyExecutionContext {
         uint64_t total_bytes_copied;
@@ -6795,8 +6614,6 @@ IOReturn CLASS::copyTexture(uint32_t source_texture_id, uint32_t dest_texture_id
     IOLog("      Copy Completed: %s\n", copy_execution.copy_completed_successfully ? "YES" : "NO");
     IOLog("      Data Integrity: %s\n", copy_execution.data_integrity_verified ? "VERIFIED" : "UNVERIFIED");
     
-    // Phase 4: Post-Copy Validation and System State Update
-    IOLog("  Phase 4: Post-copy validation and comprehensive system state update\n");
     
     struct PostCopyValidation {
         bool destination_updated;
@@ -6888,8 +6705,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id)
     
     IOLog("VMTextureManager::generateMipmaps: Initiating automatic mipmap generation (Texture ID: %d)\n", texture_id);
     
-    // Phase 1: Comprehensive Texture Analysis and Mipmap Feasibility Assessment
-    IOLog("  Phase 1: Comprehensive texture analysis and mipmap feasibility assessment\n");
     
     struct MipmapAnalysisContext {
         uint32_t target_texture_id;
@@ -7008,8 +6823,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id)
         return kIOReturnUnsupported;
     }
     
-    // Phase 2: Advanced Generation Strategy Planning and Resource Allocation
-    IOLog("  Phase 2: Advanced generation strategy planning and resource allocation\n");
     
     struct MipmapGenerationStrategy {
         uint32_t generation_method;
@@ -7080,8 +6893,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id)
     IOLog("      Estimated Time: %d μs\n", generation_strategy.estimated_generation_time_us);
     IOLog("      Temp Memory Overhead: %llu KB\n", generation_strategy.temp_memory_overhead_bytes / 1024);
     
-    // Phase 3: Advanced Mipmap Level Generation and Processing
-    IOLog("  Phase 3: Advanced mipmap level generation and comprehensive processing\n");
     
     struct MipmapGenerationExecution {
         uint32_t levels_generated;
@@ -7176,8 +6987,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id)
     IOLog("      All Levels Generated: %s\n", generation_execution.all_levels_generated_successfully ? "YES" : "NO");
     IOLog("      Actual Generation Efficiency: %.1f%%\n", generation_execution.actual_generation_efficiency * 100.0f);
     
-    // Phase 4: Post-Generation Validation and System State Update
-    IOLog("  Phase 4: Post-generation validation and comprehensive system state update\n");
     
     struct PostGenerationValidation {
         bool mipmaps_created_successfully;
@@ -7285,8 +7094,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id, uint32_t base_level, uint32
     IOLog("VMTextureManager::generateMipmaps(range): Initiating range-based mipmap generation (Texture ID: %d, Levels: %d-%d)\n", 
           texture_id, base_level, max_level);
     
-    // Phase 1: Comprehensive Range Validation and Texture Analysis
-    IOLog("  Phase 1: Comprehensive range validation and texture analysis\n");
     
     struct RangeMipmapContext {
         uint32_t target_texture_id;
@@ -7413,8 +7220,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id, uint32_t base_level, uint32
         return kIOReturnUnsupported;
     }
     
-    // Phase 2: Advanced Range Generation Strategy and Resource Planning
-    IOLog("  Phase 2: Advanced range generation strategy and resource planning\n");
     
     struct RangeGenerationStrategy {
         uint32_t range_generation_method;
@@ -7495,8 +7300,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id, uint32_t base_level, uint32
     IOLog("      Estimated Time: %d μs\n", range_strategy.estimated_range_time_us);
     IOLog("      Memory Optimization: 0x%02llX\n", range_strategy.memory_optimization_flags);
     
-    // Phase 3: Advanced Range-Based Level Generation Execution
-    IOLog("  Phase 3: Advanced range-based level generation execution\n");
     
     struct RangeGenerationExecution {
         uint32_t levels_processed;
@@ -7612,8 +7415,6 @@ IOReturn CLASS::generateMipmaps(uint32_t texture_id, uint32_t base_level, uint32
     IOLog("      Range Pixels Processed: %llu\n", range_execution.total_range_pixels_processed);
     IOLog("      Actual Range Efficiency: %.1f%%\n", range_execution.actual_range_efficiency * 100.0f);
     
-    // Phase 4: Range Generation Validation and Memory Management
-    IOLog("  Phase 4: Range generation validation and memory management\n");
     
     struct RangeValidationResults {
         bool range_generation_successful;
@@ -7726,8 +7527,6 @@ IOReturn CLASS::setMipmapMode(uint32_t texture_id, VMMipmapMode mode)
     IOLog("VMTextureManager::setMipmapMode: Configuring mipmap mode (Texture ID: %d, Mode: %d)\n", 
           texture_id, mode);
     
-    // Phase 1: Comprehensive Texture Analysis and Mode Compatibility Assessment
-    IOLog("  Phase 1: Comprehensive texture analysis and mode compatibility assessment\n");
     
     struct MipmapModeContext {
         uint32_t target_texture_id;
@@ -7865,8 +7664,6 @@ IOReturn CLASS::setMipmapMode(uint32_t texture_id, VMMipmapMode mode)
         return kIOReturnBadArgument;
     }
     
-    // Phase 2: Advanced Mode Configuration Strategy and System Integration
-    IOLog("  Phase 2: Advanced mode configuration strategy and system integration\n");
     
     struct MipmapModeStrategy {
         uint32_t configuration_method;
@@ -7968,8 +7765,6 @@ IOReturn CLASS::setMipmapMode(uint32_t texture_id, VMMipmapMode mode)
     IOLog("      Estimated Configuration Time: %d μs\n", mode_strategy.estimated_configuration_time_us);
     IOLog("      System Integration Flags: 0x%02llX\n", mode_strategy.system_integration_flags);
     
-    // Phase 3: Advanced Mode Configuration Execution and System Update
-    IOLog("  Phase 3: Advanced mode configuration execution and system update\n");
     
     struct ModeConfigurationExecution {
         bool mode_update_successful;
@@ -8075,8 +7870,6 @@ IOReturn CLASS::setMipmapMode(uint32_t texture_id, VMMipmapMode mode)
     IOLog("      Auto Triggers Configured: %s\n", mode_execution.auto_generation_triggers_configured ? "YES" : "NO");
     IOLog("      Configuration Efficiency: %.1f%%\n", mode_execution.actual_configuration_efficiency * 100.0f);
     
-    // Phase 4: Post-Configuration Validation and Memory Management
-    IOLog("  Phase 4: Post-configuration validation and memory management\n");
     
     struct ModeValidationResults {
         bool configuration_successful;
@@ -8193,8 +7986,6 @@ VMTextureManager::ManagedTexture* CLASS::findTexture(uint32_t texture_id)
     
     IOLog("VMTextureManager::findTexture: Initiating advanced texture lookup (ID: %d)\n", texture_id);
     
-    // Phase 1: Advanced Search Strategy Configuration and Analysis
-    IOLog("  Phase 1: Advanced search strategy configuration and performance analysis\n");
     
     struct TextureLookupStrategy {
         uint32_t target_texture_id;
@@ -8233,8 +8024,6 @@ VMTextureManager::ManagedTexture* CLASS::findTexture(uint32_t texture_id)
     IOLog("      Efficiency Target: %.1f%%\n", lookup_strategy.search_efficiency_target * 100.0f);
     IOLog("      Parallel Search: %s\n", lookup_strategy.supports_parallel_search ? "ENABLED" : "DISABLED");
     
-    // Phase 2: Primary Dictionary-Based Lookup with Hash Optimization
-    IOLog("  Phase 2: Primary dictionary-based lookup with advanced hash optimization\n");
     
     ManagedTexture* found_texture = nullptr;
     struct DictionarySearchResult {
@@ -8293,8 +8082,6 @@ VMTextureManager::ManagedTexture* CLASS::findTexture(uint32_t texture_id)
         IOLog("      Requires Validation: %s\n", dict_result.requires_validation ? "YES" : "NO");
     }
     
-    // Phase 3: Secondary Array-Based Linear Search with Optimization
-    IOLog("  Phase 3: Secondary array-based linear search with comprehensive optimization\n");
     
     struct ArraySearchResult {
         bool search_attempted;
@@ -8348,8 +8135,6 @@ VMTextureManager::ManagedTexture* CLASS::findTexture(uint32_t texture_id)
         IOLog("      Early Termination: %s\n", array_result.early_termination_used ? "USED" : "NOT USED");
     }
     
-    // Phase 4: Tertiary Cache-Based Search with LRU Analysis
-    IOLog("  Phase 4: Tertiary cache-based search with advanced LRU analysis\n");
     
     struct CacheSearchResult {
         bool search_attempted;
@@ -8402,8 +8187,6 @@ VMTextureManager::ManagedTexture* CLASS::findTexture(uint32_t texture_id)
         IOLog("      Promotion Required: %s\n", cache_result.cache_promotion_required ? "YES" : "NO");
     }
     
-    // Phase 5: Comprehensive Result Validation and Integrity Verification
-    IOLog("  Phase 5: Comprehensive result validation and advanced integrity verification\n");
     
     bool texture_located = dict_result.texture_found_in_dictionary || 
                           array_result.texture_found_in_array || 
@@ -8449,8 +8232,6 @@ VMTextureManager::ManagedTexture* CLASS::findTexture(uint32_t texture_id)
         }
     }
     
-    // Phase 6: Access Statistics Update and Performance Metrics
-    IOLog("  Phase 6: Access statistics update and comprehensive performance metrics\n");
     
     if (texture_located && lookup_strategy.enable_access_tracking) {
         struct AccessStatisticsUpdate {
@@ -8537,8 +8318,6 @@ VMTextureManager::TextureSampler* CLASS::findSampler(uint32_t sampler_id)
     
     IOLog("VMTextureManager::findSampler: Initiating advanced sampler lookup (ID: %d)\n", sampler_id);
     
-    // Phase 1: Advanced Sampler Search Strategy Configuration and Analysis
-    IOLog("  Phase 1: Advanced sampler search strategy configuration and performance analysis\n");
     
     struct SamplerLookupStrategy {
         uint32_t target_sampler_id;
@@ -8577,8 +8356,6 @@ VMTextureManager::TextureSampler* CLASS::findSampler(uint32_t sampler_id)
     IOLog("      Efficiency Target: %.1f%%\n", sampler_lookup_strategy.sampler_search_efficiency_target * 100.0f);
     IOLog("      Concurrent Access: %s\n", sampler_lookup_strategy.supports_concurrent_sampler_access ? "ENABLED" : "DISABLED");
     
-    // Phase 2: Primary Sampler Array-Based Search with Optimization
-    IOLog("  Phase 2: Primary sampler array-based search with advanced optimization\n");
     
     TextureSampler* found_sampler = nullptr;
     struct SamplerArraySearchResult {
@@ -8633,8 +8410,6 @@ VMTextureManager::TextureSampler* CLASS::findSampler(uint32_t sampler_id)
         IOLog("      Early Termination: %s\n", sampler_array_result.sampler_early_termination_used ? "USED" : "NOT USED");
     }
     
-    // Phase 3: Secondary Dictionary-Based Sampler Lookup with Hash Optimization
-    IOLog("  Phase 3: Secondary dictionary-based sampler lookup with hash optimization\n");
     
     struct SamplerDictionarySearchResult {
         bool sampler_dict_search_attempted;
@@ -8689,8 +8464,6 @@ VMTextureManager::TextureSampler* CLASS::findSampler(uint32_t sampler_id)
         IOLog("      Requires Validation: %s\n", sampler_dict_result.sampler_requires_validation ? "YES" : "NO");
     }
     
-    // Phase 4: Tertiary Cache-Based Sampler Search with LRU Management
-    IOLog("  Phase 4: Tertiary cache-based sampler search with advanced LRU management\n");
     
     struct SamplerCacheSearchResult {
         bool sampler_cache_search_attempted;
@@ -8744,8 +8517,6 @@ VMTextureManager::TextureSampler* CLASS::findSampler(uint32_t sampler_id)
         IOLog("      Promotion Required: %s\n", sampler_cache_result.sampler_cache_promotion_required ? "YES" : "NO");
     }
     
-    // Phase 5: Comprehensive Sampler Validation and Integrity Verification
-    IOLog("  Phase 5: Comprehensive sampler validation and advanced integrity verification\n");
     
     bool sampler_located = sampler_array_result.sampler_found_in_array || 
                           sampler_dict_result.sampler_found_in_dictionary || 
@@ -8794,8 +8565,6 @@ VMTextureManager::TextureSampler* CLASS::findSampler(uint32_t sampler_id)
         }
     }
     
-    // Phase 6: Sampler Access Statistics Update and Performance Metrics
-    IOLog("  Phase 6: Sampler access statistics update and comprehensive performance metrics\n");
     
     if (sampler_located && sampler_lookup_strategy.enable_sampler_access_tracking) {
         struct SamplerAccessStatisticsUpdate {
@@ -8876,8 +8645,6 @@ uint32_t CLASS::calculateTextureSize(const VMTextureDescriptor* descriptor)
     
     IOLog("VMTextureManager::calculateTextureSize: Initiating advanced texture size calculation\n");
     
-    // Phase 1: Advanced Descriptor Analysis and Validation
-    IOLog("  Phase 1: Advanced descriptor analysis and comprehensive validation\n");
     
     struct TextureSizeAnalysis {
         uint32_t texture_width;
@@ -8945,8 +8712,6 @@ uint32_t CLASS::calculateTextureSize(const VMTextureDescriptor* descriptor)
         return 0;
     }
     
-    // Phase 2: Advanced Pixel Format Analysis and Byte Size Calculation
-    IOLog("  Phase 2: Advanced pixel format analysis and comprehensive byte size calculation\n");
     
     struct PixelFormatAnalysis {
         uint32_t bytes_per_pixel;
@@ -9072,8 +8837,6 @@ uint32_t CLASS::calculateTextureSize(const VMTextureDescriptor* descriptor)
     IOLog("      Requires Special Handling: %s\n", format_analysis.requires_special_handling ? "YES" : "NO");
     IOLog("      Format Efficiency Factor: %.2f\n", format_analysis.format_efficiency_factor);
     
-    // Phase 3: Comprehensive Memory Size Calculation with Optimization
-    IOLog("  Phase 3: Comprehensive memory size calculation with advanced optimization\n");
     
     struct MemorySizeCalculation {
         uint64_t base_texture_size;
@@ -9151,8 +8914,6 @@ uint32_t CLASS::calculateTextureSize(const VMTextureDescriptor* descriptor)
     IOLog("      Exceeds Size Limits: %s\n", memory_calc.exceeds_size_limits ? "YES" : "NO");
     IOLog("      Memory Efficiency Ratio: %.2f%%\n", memory_calc.memory_efficiency_ratio * 100.0f);
     
-    // Phase 4: Size Validation and Optimization Recommendations
-    IOLog("  Phase 4: Size validation and advanced optimization recommendations\n");
     
     struct SizeValidationResult {
         bool size_within_limits;

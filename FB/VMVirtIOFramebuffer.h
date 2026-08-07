@@ -11,6 +11,7 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/IOUserClient.h>
 #include <IOKit/graphics/IOAccelerator.h>
+#include <IOKit/IOTimerEventSource.h>
 
 // Forward declaration to avoid circular includes
 class VMVirtIOGPU;
@@ -25,6 +26,7 @@ private:
     IOPCIDevice*           m_pci_device;        // PCI device for VRAM access
     IODeviceMemory*        m_vram_range;        // VRAM memory range
     VMVirtIOAGDC*          m_agdc_service;      // AGDC service for WindowServer
+    class VMQemuVGAAccelerator* m_accelerator;  // IOAccelerator child service
     
     // Display configuration
     uint32_t               m_width;             // Display width
@@ -36,9 +38,22 @@ private:
     IOItemCount            m_mode_count;
     IODisplayModeID        m_current_mode;
     
+    // Display mode tracking (like QXL)
+    IODisplayModeID        m_display_mode;      // Current mode ID (for IOGraphicsFamily)
+    IOIndex                m_depth_mode;        // Current depth index
+    
+    // Display refresh timer for VirtIO GPU updates
+    IOTimerEventSource*    m_refresh_timer;     // Periodic display refresh timer
+    uint32_t               m_scanout_resource_id; // VirtIO GPU scanout resource ID
+    bool                   m_scanout_taken_over_by_3d; // True when 3D app controls scanout
+    
     void initDisplayModes();
     IOReturn createAGDCService();
     void destroyAGDCService();
+    
+    // Display refresh callback
+    static void displayRefreshTimer(OSObject* owner, IOTimerEventSource* sender);
+    void refreshDisplay();
     
 public:
     // IOService overrides
@@ -50,6 +65,7 @@ public:
     
     // IOFramebuffer required pure virtual methods
     virtual IODeviceMemory* getApertureRange(IOPixelAperture aperture) override;
+    virtual IODeviceMemory* getVRAMRange(void) override;  // CRITICAL: WindowServer needs this to get framebuffer memory!
     virtual const char* getPixelFormats(void) override;
     virtual IOItemCount getDisplayModeCount(void) override;
     virtual IOReturn getDisplayModes(IODisplayModeID* allDisplayModes) override;
@@ -68,6 +84,7 @@ public:
     virtual IOReturn setDisplayMode(IODisplayModeID displayMode, IOIndex depth) override;
     virtual IOReturn setupForCurrentConfig() override;  // CRITICAL: Console-to-GUI transition
     virtual IOItemCount getConnectionCount(void) override;
+    virtual IOReturn getDisplayStatus(void* connectFlags);  // CRITICAL: Tell IOGraphicsFamily display is connected
     virtual bool isConsoleDevice(void) override;  // CRITICAL: Enable console device capability
     
     // CRITICAL: Safe open method override for WindowServer connection handling
@@ -79,11 +96,15 @@ public:
     virtual IOReturn setAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t value) override;
     virtual IOReturn connectFlags(IOIndex connectIndex, IODisplayModeID displayMode, IOOptionBits* flags) override;
     
+    // 3D scanout management - called by VMVirtIOGPU when 3D resources take over display
+    void setScanoutTakenOverBy3D(bool taken_over);
+    
     // Power management
     virtual IOReturn setPowerState(unsigned long powerStateOrdinal, IOService* whatDevice) override;
     
-    // User client support for Metal/acceleration
-    virtual IOReturn newUserClient(task_t owningTask, void* security_id, UInt32 type, IOUserClient** clientH) override;
+    // CRITICAL: Override newUserClient to provide VMQemuVGAClient for WindowServer
+    // This is required because programmatically created services don't get personality properties
+    virtual IOReturn newUserClient(task_t owningTask, void* securityID, UInt32 type, IOUserClient** handler) override;
     
     // CRITICAL: Cursor support methods (required for GUI mode)
     virtual IOReturn setCursorImage(void* cursorImage) override;
@@ -101,6 +122,9 @@ public:
     // virtual IOReturn releaseMap(IOMemoryMap* map);
     // virtual IOReturn locateServiceDependencies(void* dependencies_buffer, uint32_t buffer_size);
     virtual IOReturn setInterruptState(void* interruptRef, UInt32 state) override;
+    
+    // Accessor for VirtIO GPU device (for accelerator)
+    VMVirtIOGPU* getGPUDevice() const { return m_gpu_driver; }
 };
 
 #endif /* __VMVirtIOFramebuffer_H__ */

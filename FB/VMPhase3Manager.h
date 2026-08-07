@@ -15,7 +15,6 @@ class VMOpenGLBridge;
 class VMCoreAnimationAccelerator;
 class VMIOSurfaceManager;
 
-// Phase 3 feature flags
 typedef enum {
     VM_PHASE3_METAL_BRIDGE = 0x01,
     VM_PHASE3_OPENGL_BRIDGE = 0x02,
@@ -86,9 +85,7 @@ typedef struct {
 
 /**
  * @class VMPhase3Manager
- * @brief Phase 3 Integration Manager for VMQemuVGA Advanced Features
  * 
- * This class manages the integration of all Phase 3 components including
  * Metal bridge, OpenGL compatibility, CoreAnimation acceleration, and
  * IOSurface management to provide a unified advanced 3D acceleration
  * system with full API integration and production-ready performance.
@@ -103,13 +100,11 @@ private:
     VMVirtIOGPU* m_gpu_device;
     IORecursiveLock* m_lock;
     
-    // Phase 3 component bridges
     VMMetalBridge* m_metal_bridge;
     VMOpenGLBridge* m_opengl_bridge;
     VMCoreAnimationAccelerator* m_coreanimation_accelerator;
     VMIOSurfaceManager* m_iosurface_manager;
     
-    // Additional Phase 3 components
     class VMShaderManager* m_shader_manager;
     class VMTextureManager* m_texture_manager;
     class VMCommandBufferPool* m_command_buffer_pool;
@@ -128,10 +123,6 @@ private:
     uint32_t m_primary_display_id;
     bool m_multi_display_enabled;
     bool m_hdr_enabled;
-    
-    // Display scaling management
-    void* m_scaling_config;
-    float m_current_scale_factor;
     
     // Performance monitoring
     VMPhase3Statistics m_statistics;

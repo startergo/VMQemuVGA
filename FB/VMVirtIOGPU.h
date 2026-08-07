@@ -22,6 +22,7 @@
 // Forward declarations
 class VMVirtIOGPUAccelerator;
 class VMMetalPlugin;
+class VMVirtIOFramebuffer;
 
 // MUST inherit from IOAccelerator for WindowServer to create IOAccelerationUserClient
 // We provide minimal stub implementation to satisfy WindowServer without actual Metal support
@@ -39,10 +40,15 @@ private:
     // VirtIO transport device handle
     IOService* m_virtio_device;
     
+    // Framebuffer reference for scanout coordination
+    VMVirtIOFramebuffer* m_framebuffer;
+    
     // VirtIO GPU configuration
     uint32_t m_max_scanouts;
     uint32_t m_num_capsets;
     uint64_t m_fence_id;    // VirtIO 1.2: Fence ID counter for command synchronization
+    bool m_is_virtio_gpu_pci;  // true = pure GPU mode (no VGA), false = VGA-compatible mode
+    bool m_is_mock_device;     // true = mock device for QXL compatibility, false = real VirtIO GPU
     
     // Command queue management
     IOBufferMemoryDescriptor* m_control_queue;
@@ -99,8 +105,7 @@ private:
     IOReturn detachBacking(uint32_t resource_id);
     
     // 3D operations (private)
-    IOReturn create3DContext(uint32_t context_id);
-    IOReturn destroy3DContext(uint32_t context_id);
+    // Note: create3DContext and destroy3DContext are declared in the public section (line ~296)
     IOReturn submit3DCommand(uint32_t context_id, IOMemoryDescriptor* commands, size_t size);
     
     // PCI configuration space reading (private)
@@ -110,7 +115,6 @@ private:
     gpu_resource* findResource(uint32_t resource_id);
     gpu_3d_context* findContext(uint32_t context_id);
     
-    // Phase 4: Advanced Queue State Management
     IOReturn advancedQueueStateManagement();
     
 public:
@@ -119,6 +123,9 @@ public:
     virtual void stop(IOService* provider) override;
     virtual bool init(OSDictionary* properties = nullptr) override;
     virtual void free() override;
+    
+    // Manual initialization without IOService registration (for programmatic instantiation)
+    bool initializeWithPCIDevice(IOPCIDevice* pciDevice);
     
     // IONDRVFramebuffer blocking
     void terminateIONDRVFramebuffers();
@@ -135,11 +142,21 @@ public:
     IOReturn setscanout(uint32_t scanout_id, uint32_t resource_id,
                        uint32_t x, uint32_t y, uint32_t width, uint32_t height);
     
+    // 3D context management (public interface for UserClient)
+    IOReturn create3DContext(uint32_t* context_id);
+    IOReturn destroy3DContext(uint32_t context_id);
+    
     // Display content operations (public interface for framebuffer)
     IOReturn flushResource(uint32_t resource_id, uint32_t x, uint32_t y,
                           uint32_t width, uint32_t height);
     IOReturn transferToHost2D(uint32_t resource_id, uint64_t offset,
                              uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+    IOReturn transferToHost3D(uint32_t resource_id, uint32_t level,
+                             uint32_t x, uint32_t y, uint32_t z,
+                             uint32_t width, uint32_t height, uint32_t depth);
+    IOReturn transferFromHost3D(uint32_t resource_id, uint32_t level,
+                               uint32_t x, uint32_t y, uint32_t z,
+                               uint32_t width, uint32_t height, uint32_t depth);
     
     // 3D acceleration interface
     IOReturn allocateResource3D(uint32_t* resource_id, uint32_t target, uint32_t format,
@@ -162,6 +179,9 @@ public:
     // Framebuffer communication interface - allows VMVirtIOFramebuffer to send commands to VirtIO hardware
     IOReturn sendDisplayCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size, 
                                virtio_gpu_ctrl_hdr* resp, size_t resp_size);
+    
+    // Framebuffer reference management
+    void setFramebuffer(VMVirtIOFramebuffer* framebuffer);
     
     // VirtIO 1.2 command header initialization (per specification)
     void initializeCommandHeader(virtio_gpu_ctrl_hdr* hdr, uint32_t cmd_type, 
@@ -215,6 +235,31 @@ public:
     // Display output control
     IOReturn setupDisplayResource(uint32_t width, uint32_t height, uint32_t depth);
     IOReturn enableScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
+    
+    // ========================================================================
+    // 2D Acceleration Helper Methods
+    // Used by VMQemuVGAAccelerator for WindowServer operations
+    // ========================================================================
+    
+    // Hardware-accelerated rectangle blit
+    IOReturn blitRect(uint32_t srcX, uint32_t srcY,
+                     uint32_t destX, uint32_t destY,
+                     uint32_t width, uint32_t height,
+                     uint32_t srcRowBytes, uint32_t destRowBytes);
+    
+    // Hardware-accelerated rectangle fill
+    IOReturn fillRect(uint32_t x, uint32_t y,
+                     uint32_t width, uint32_t height,
+                     uint32_t color);
+    
+    // Flush all pending GPU commands
+    IOReturn flushCommands();
+    
+    // Wait for GPU to become idle
+    IOReturn waitForIdle();
+    
+    // Check if this is a mock device (no real hardware)
+    bool isMockDevice() const { return m_is_mock_device; }
 };
 
 // Custom IOAccelerator subclass with newUserClient support

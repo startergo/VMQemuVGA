@@ -1,9 +1,7 @@
 /*
  * VMIOSurfaceManager Helper Methods Implementation
- * Part of VMQemuVGA Phase 3 project
  * 
  * This file contains the helper method implementations for VMIOSurfaceManager
- * that were expanded from stub implementations into production-quality code.
  */
 
 #include "VMIOSurfaceManager.h"
@@ -12,13 +10,10 @@
 
 #define CLASS VMIOSurfaceManager
 
-// MARK: - Advanced IOSurface Discovery Management System v4.0
 
 /*
  * Advanced IOSurface Discovery Management System v4.0
  * 
- * This system provides enterprise-level surface discovery capabilities with:
- * - Multi-phase discovery pipeline (Validation → Optimization → Discovery → Analytics)
  * - Advanced caching with hit/miss analytics and performance optimization
  * - Surface memory prefetching and search acceleration
  * - Real-time access statistics and usage pattern analysis
@@ -61,7 +56,6 @@ OSObject* CLASS::findSurface(uint32_t surface_id)
     uint64_t discovery_start_time = 0;
     clock_get_uptime(&discovery_start_time);
     
-    // Phase 1: Surface Discovery Validation Pipeline
     if (!m_surface_map) {
         IOLog("VMIOSurfaceManager: Discovery validation failed - surface map not initialized\n");
         g_discovery_stats.total_lookups++;
@@ -86,7 +80,6 @@ OSObject* CLASS::findSurface(uint32_t surface_id)
     
     g_discovery_stats.total_lookups++;
     
-    // Phase 2: Cache Acceleration and Optimization Engine
     
     // 2.1: Fast cache lookup for recently accessed surfaces
     for (uint32_t i = 0; i < g_cache_size; i++) {
@@ -135,7 +128,6 @@ OSObject* CLASS::findSurface(uint32_t surface_id)
         }
     }
     
-    // Phase 3: Advanced Discovery Processing Core
     
     // 3.1: High-performance string key generation with optimization
     char key_str[32];
@@ -178,7 +170,6 @@ OSObject* CLASS::findSurface(uint32_t surface_id)
         // Continue with discovery but log the warning
     }
     
-    // Phase 4: Real-time Analytics and Statistics System
     
     // 4.1: Cache management and optimization
     bool added_to_cache = false;
@@ -284,7 +275,6 @@ OSObject* CLASS::findSurface(uint32_t surface_id)
 
 /*
  * Advanced IOSurface Discovery Analytics and Management API
- * Provides enterprise-level surface discovery statistics and cache management
  */
 
 // Get current discovery system statistics
@@ -529,26 +519,78 @@ uint32_t CLASS::calculateSurfaceSize(const VMIOSurfaceDescriptor* descriptor)
 uint32_t CLASS::getBytesPerPixel(VMIOSurfacePixelFormat format)
 {
     switch (format) {
-        case VM_IOSURFACE_PIXEL_FORMAT_ARGB32:
+        // 32-bit formats (4 bytes per pixel)
         case VM_IOSURFACE_PIXEL_FORMAT_BGRA32:
         case VM_IOSURFACE_PIXEL_FORMAT_RGBA32:
+        case VM_IOSURFACE_PIXEL_FORMAT_ARGB32:
         case VM_IOSURFACE_PIXEL_FORMAT_ABGR32:
             return 4;
-            
+
+        // 24-bit formats (3 bytes per pixel)
+        case VM_IOSURFACE_PIXEL_FORMAT_RGB:
+        case VM_IOSURFACE_PIXEL_FORMAT_BGR:
         case VM_IOSURFACE_PIXEL_FORMAT_RGB24:
             return 3;
-            
+
+        // 16-bit formats (2 bytes per pixel)
         case VM_IOSURFACE_PIXEL_FORMAT_RGB565:
+        case VM_IOSURFACE_PIXEL_FORMAT_B565:
+        case VM_IOSURFACE_PIXEL_FORMAT_R555:
+        case VM_IOSURFACE_PIXEL_FORMAT_B555:
             return 2;
-            
+
+        // 8-bit luminance (1 byte per pixel)
+        case VM_IOSURFACE_PIXEL_FORMAT_L8:
+            return 1;
+
+        // 16-bit luminance + alpha (2 bytes per pixel)
+        case VM_IOSURFACE_PIXEL_FORMAT_LA8:
+            return 2;
+
+        // YUV 4:2:0 family (base plane, ~1.5 bpp; simplified)
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV4:
+        case VM_IOSURFACE_PIXEL_FORMAT_YV12:
+        case VM_IOSURFACE_PIXEL_FORMAT_I420:
+        case VM_IOSURFACE_PIXEL_FORMAT_IYUV:
+        case VM_IOSURFACE_PIXEL_FORMAT_YV02:
         case VM_IOSURFACE_PIXEL_FORMAT_YUV420:
         case VM_IOSURFACE_PIXEL_FORMAT_NV12:
-            return 1; // Base plane, additional planes calculated separately
-            
+            return 1;
+
+        // 10-bit YUV (2 bpp)
         case VM_IOSURFACE_PIXEL_FORMAT_P010:
-            return 2; // 10-bit format
-            
+            return 2;
+
+        // YUV 4:2:2 family (2 bpp average)
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YVU2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YUY2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YVYU:
+        case VM_IOSURFACE_PIXEL_FORMAT_UYVY:
+            return 2;
+
+        // YUV 4:4:4 (3 bpp)
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV444:
+            return 3;
+
+        // Compressed formats — variable size, return 0
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT1:
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT3:
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT5:
+        case VM_IOSURFACE_PIXEL_FORMAT_ETC1:
+        case VM_IOSURFACE_PIXEL_FORMAT_ETC2:
+        case VM_IOSURFACE_PIXEL_FORMAT_PVRT:
+            return 0;
+
+        // Video codec formats — variable size, return 0
+        case VM_IOSURFACE_PIXEL_FORMAT_H264:
+        case VM_IOSURFACE_PIXEL_FORMAT_H265:
+        case VM_IOSURFACE_PIXEL_FORMAT_AVC1:
+        case VM_IOSURFACE_PIXEL_FORMAT_HVC1:
+            return 0;
+
         default:
+            IOLog("VMIOSurfaceManager: Unknown pixel format for bytes per pixel: %08X\n", format);
             return 0;
     }
 }
@@ -556,23 +598,64 @@ uint32_t CLASS::getBytesPerPixel(VMIOSurfacePixelFormat format)
 uint32_t CLASS::getPlaneCount(VMIOSurfacePixelFormat format)
 {
     switch (format) {
-        case VM_IOSURFACE_PIXEL_FORMAT_ARGB32:
+        // Single-plane RGB and luminance
         case VM_IOSURFACE_PIXEL_FORMAT_BGRA32:
         case VM_IOSURFACE_PIXEL_FORMAT_RGBA32:
+        case VM_IOSURFACE_PIXEL_FORMAT_ARGB32:
         case VM_IOSURFACE_PIXEL_FORMAT_ABGR32:
+        case VM_IOSURFACE_PIXEL_FORMAT_RGB:
+        case VM_IOSURFACE_PIXEL_FORMAT_BGR:
         case VM_IOSURFACE_PIXEL_FORMAT_RGB24:
         case VM_IOSURFACE_PIXEL_FORMAT_RGB565:
+        case VM_IOSURFACE_PIXEL_FORMAT_B565:
+        case VM_IOSURFACE_PIXEL_FORMAT_R555:
+        case VM_IOSURFACE_PIXEL_FORMAT_B555:
+        case VM_IOSURFACE_PIXEL_FORMAT_L8:
+        case VM_IOSURFACE_PIXEL_FORMAT_LA8:
             return 1;
-            
+
+        // Packed YUV 4:2:2 (single plane, multi-component)
+        case VM_IOSURFACE_PIXEL_FORMAT_YUY2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YVYU:
+        case VM_IOSURFACE_PIXEL_FORMAT_UYVY:
+            return 1;
+
+        // Semi-planar YUV (2 planes: Y + UV interleaved)
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YVU2:
         case VM_IOSURFACE_PIXEL_FORMAT_NV12:
         case VM_IOSURFACE_PIXEL_FORMAT_P010:
             return 2;
-            
+
+        // Planar YUV (3 planes: Y + U + V)
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV4:
         case VM_IOSURFACE_PIXEL_FORMAT_YUV420:
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV444:
+        case VM_IOSURFACE_PIXEL_FORMAT_YV12:
+        case VM_IOSURFACE_PIXEL_FORMAT_I420:
+        case VM_IOSURFACE_PIXEL_FORMAT_IYUV:
+        case VM_IOSURFACE_PIXEL_FORMAT_YV02:
             return 3;
-            
-        default:
+
+        // Compressed formats (single logical plane)
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT1:
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT3:
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT5:
+        case VM_IOSURFACE_PIXEL_FORMAT_ETC1:
+        case VM_IOSURFACE_PIXEL_FORMAT_ETC2:
+        case VM_IOSURFACE_PIXEL_FORMAT_PVRT:
             return 1;
+
+        // Video codec formats (single coded plane)
+        case VM_IOSURFACE_PIXEL_FORMAT_H264:
+        case VM_IOSURFACE_PIXEL_FORMAT_H265:
+        case VM_IOSURFACE_PIXEL_FORMAT_AVC1:
+        case VM_IOSURFACE_PIXEL_FORMAT_HVC1:
+            return 1;
+
+        default:
+            IOLog("VMIOSurfaceManager: Unknown pixel format for plane count: %08X\n", format);
+            return 1; // Default to single plane
     }
 }
 
@@ -581,20 +664,53 @@ uint32_t CLASS::getPlaneCount(VMIOSurfacePixelFormat format)
 IOReturn CLASS::validatePixelFormat(VMIOSurfacePixelFormat format)
 {
     switch (format) {
-        case VM_IOSURFACE_PIXEL_FORMAT_ARGB32:
+        // RGB formats — always supported
         case VM_IOSURFACE_PIXEL_FORMAT_BGRA32:
         case VM_IOSURFACE_PIXEL_FORMAT_RGBA32:
+        case VM_IOSURFACE_PIXEL_FORMAT_ARGB32:
         case VM_IOSURFACE_PIXEL_FORMAT_ABGR32:
+        case VM_IOSURFACE_PIXEL_FORMAT_RGB:
+        case VM_IOSURFACE_PIXEL_FORMAT_BGR:
         case VM_IOSURFACE_PIXEL_FORMAT_RGB24:
         case VM_IOSURFACE_PIXEL_FORMAT_RGB565:
+        case VM_IOSURFACE_PIXEL_FORMAT_B565:
+        case VM_IOSURFACE_PIXEL_FORMAT_R555:
+        case VM_IOSURFACE_PIXEL_FORMAT_B555:
             return kIOReturnSuccess;
-            
+
+        // Luminance formats — always supported
+        case VM_IOSURFACE_PIXEL_FORMAT_L8:
+        case VM_IOSURFACE_PIXEL_FORMAT_LA8:
+            return kIOReturnSuccess;
+
+        // YUV formats — gated on m_supports_yuv_surfaces
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV4:
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YUV444:
+        case VM_IOSURFACE_PIXEL_FORMAT_YVU2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YV02:
+        case VM_IOSURFACE_PIXEL_FORMAT_YV12:
+        case VM_IOSURFACE_PIXEL_FORMAT_I420:
+        case VM_IOSURFACE_PIXEL_FORMAT_IYUV:
+        case VM_IOSURFACE_PIXEL_FORMAT_YUY2:
+        case VM_IOSURFACE_PIXEL_FORMAT_YVYU:
+        case VM_IOSURFACE_PIXEL_FORMAT_UYVY:
         case VM_IOSURFACE_PIXEL_FORMAT_YUV420:
         case VM_IOSURFACE_PIXEL_FORMAT_NV12:
         case VM_IOSURFACE_PIXEL_FORMAT_P010:
             return m_supports_yuv_surfaces ? kIOReturnSuccess : kIOReturnUnsupported;
-            
+
+        // Compressed formats — always supported (caller should handle 0-bpp case)
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT1:
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT3:
+        case VM_IOSURFACE_PIXEL_FORMAT_DXT5:
+        case VM_IOSURFACE_PIXEL_FORMAT_ETC1:
+        case VM_IOSURFACE_PIXEL_FORMAT_ETC2:
+        case VM_IOSURFACE_PIXEL_FORMAT_PVRT:
+            return kIOReturnSuccess;
+
         default:
+            IOLog("VMIOSurfaceManager: Unsupported pixel format: %08X\n", format);
             return kIOReturnUnsupported;
     }
 }
