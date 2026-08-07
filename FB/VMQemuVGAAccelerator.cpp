@@ -1,11 +1,13 @@
 #include "VMQemuVGAAccelerator.h"
 #include "VMQemuVGA.h"
+#include "VMVirtIOFramebuffer.h"
 #include "VMVirtIOGPU.h"
 #include "VMShaderManager.h"
 #include "VMTextureManager.h"
 #include "VMCommandBuffer.h"
 #include "VMMetalPlugin.h"
 #include "VMCGLContext.h"
+#include "VMAccelSurfaceClient.h"
 #include "virgl_protocol.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -16,6 +18,12 @@
 #define super IOAccelerator
 
 OSDefineMetaClassAndStructors(VMQemuVGAAccelerator, IOAccelerator);
+
+static inline void* ioMallocZero(vm_size_t size) {
+    void* p = IOMalloc(size);
+    if (p) bzero(p, size);
+    return p;
+}
 
 bool CLASS::init(OSDictionary* properties)
 {
@@ -34,8 +42,12 @@ bool CLASS::init(OSDictionary* properties)
     m_metal_bridge = nullptr;
     m_phase3_manager = nullptr;
     
-    m_contexts = OSArray::withCapacity(16);
-    m_surfaces = OSArray::withCapacity(64);
+    m_context_pool = (AccelContext**)ioMallocZero(kInitialContextCapacity * sizeof(AccelContext*));
+    m_surface_pool = (AccelSurface**)ioMallocZero(kInitialSurfaceCapacity * sizeof(AccelSurface*));
+    m_context_count = 0;
+    m_surface_count = 0;
+    m_context_capacity = m_context_pool ? kInitialContextCapacity : 0;
+    m_surface_capacity = m_surface_pool ? kInitialSurfaceCapacity : 0;
     m_next_context_id = 1;
     m_next_surface_id = 1;
     
@@ -46,8 +58,8 @@ bool CLASS::init(OSDictionary* properties)
     m_commands_submitted = 0;
     m_memory_allocated = 0;
     m_metal_compatible = false;
-    
-    return (m_lock && m_contexts && m_surfaces);
+
+    return (m_lock && m_context_pool && m_surface_pool);
 }
 
 void CLASS::free()
@@ -73,8 +85,40 @@ void CLASS::free()
         m_lock = nullptr;
     }
     
-    OSSafeReleaseNULL(m_contexts);
-    OSSafeReleaseNULL(m_surfaces);
+    if (m_context_pool) {
+        for (uint32_t i = 0; i < m_context_capacity; i++) {
+            AccelContext* c = m_context_pool[i];
+            if (c) {
+                if (c->bound_surface_ids) {
+                    IOFree(c->bound_surface_ids, c->bound_surface_capacity * sizeof(uint32_t));
+                }
+                IOFree(c, sizeof(AccelContext));
+                m_context_pool[i] = nullptr;
+            }
+        }
+        IOFree(m_context_pool, m_context_capacity * sizeof(AccelContext*));
+        m_context_pool = nullptr;
+        m_context_capacity = 0;
+        m_context_count = 0;
+    }
+
+    if (m_surface_pool) {
+        for (uint32_t i = 0; i < m_surface_capacity; i++) {
+            AccelSurface* s = m_surface_pool[i];
+            if (s) {
+                if (s->backing_memory) {
+                    s->backing_memory->release();
+                    s->backing_memory = nullptr;
+                }
+                IOFree(s, sizeof(AccelSurface));
+                m_surface_pool[i] = nullptr;
+            }
+        }
+        IOFree(m_surface_pool, m_surface_capacity * sizeof(AccelSurface*));
+        m_surface_pool = nullptr;
+        m_surface_capacity = 0;
+        m_surface_count = 0;
+    }
     
     super::free();
 }
@@ -86,16 +130,32 @@ bool CLASS::start(IOService* provider)
     if (!super::start(provider))
         return false;
     
-    m_framebuffer = OSDynamicCast(VMQemuVGA, provider);
+    // Support both VMQemuVGA (QXL) and VMVirtIOFramebuffer (VirtIO GPU)
+    m_framebuffer = OSDynamicCast(IOFramebuffer, provider);
     if (!m_framebuffer) {
-        IOLog("VMQemuVGAAccelerator: Provider is not VMQemuVGA\n");
+        IOLog("VMQemuVGAAccelerator: Provider is not IOFramebuffer\n");
         return false;
     }
     
-    m_gpu_device = m_framebuffer->getGPUDevice();
-    if (!m_gpu_device) {
-        IOLog("VMQemuVGAAccelerator: No GPU device available\n");
-        return false;
+    // Try to get GPU device - both VMQemuVGA and VMVirtIOFramebuffer now have getGPUDevice()
+    VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, provider);
+    VMVirtIOFramebuffer* virtio_fb = OSDynamicCast(VMVirtIOFramebuffer, provider);
+    
+    if (qxl_fb) {
+        IOLog("VMQemuVGAAccelerator: Attached to VMQemuVGA (QXL) framebuffer\n");
+        m_gpu_device = qxl_fb->getGPUDevice();
+        if (!m_gpu_device) {
+            IOLog("VMQemuVGAAccelerator: WARNING - QXL framebuffer has no GPU device\n");
+        }
+    } else if (virtio_fb) {
+        IOLog("VMQemuVGAAccelerator: Attached to VMVirtIOFramebuffer (VirtIO GPU)\n");
+        m_gpu_device = virtio_fb->getGPUDevice();
+        if (!m_gpu_device) {
+            IOLog("VMQemuVGAAccelerator: WARNING - VirtIO framebuffer has no GPU device\n");
+        }
+    } else {
+        IOLog("VMQemuVGAAccelerator: ERROR - Unknown framebuffer type\n");
+        m_gpu_device = nullptr;
     }
     
     // Create workloop and command gate
@@ -113,23 +173,33 @@ bool CLASS::start(IOService* provider)
     
     m_workloop->addEventSource(m_command_gate);
     
-    // Initialize advanced 3D managers
-    m_shader_manager = VMShaderManager::withAccelerator(this);
-    if (!m_shader_manager) {
-        IOLog("VMQemuVGAAccelerator: Failed to create shader manager\n");
-        return false;
-    }
-    
-    m_texture_manager = VMTextureManager::withAccelerator(this);
-    if (!m_texture_manager) {
-        IOLog("VMQemuVGAAccelerator: Failed to create texture manager\n");
-        return false;
-    }
-    
-    m_command_pool = VMCommandBufferPool::withAccelerator(this, 0, 16);
-    if (!m_command_pool) {
-        IOLog("VMQemuVGAAccelerator: Failed to create command buffer pool\n");
-        return false;
+    // Initialize advanced 3D managers (only for QXL/Hyper-V DDA mode)
+    // VirtIO GPU handles rendering internally through VirtIOGPU helper
+    if (m_gpu_device) {
+        m_shader_manager = VMShaderManager::withAccelerator(this);
+        if (!m_shader_manager) {
+            IOLog("VMQemuVGAAccelerator: Failed to create shader manager\n");
+            return false;
+        }
+        
+        m_texture_manager = VMTextureManager::withAccelerator(this);
+        if (!m_texture_manager) {
+            IOLog("VMQemuVGAAccelerator: Failed to create texture manager\n");
+            return false;
+        }
+        
+        m_command_pool = VMCommandBufferPool::withAccelerator(this, 0, 16);
+        if (!m_command_pool) {
+            IOLog("VMQemuVGAAccelerator: Failed to create command buffer pool\n");
+            return false;
+        }
+        
+        IOLog("VMQemuVGAAccelerator: 3D managers initialized for QXL/Hyper-V DDA mode\n");
+    } else {
+        IOLog("VMQemuVGAAccelerator: VirtIO GPU mode - skipping QXL-specific managers\n");
+        m_shader_manager = nullptr;
+        m_texture_manager = nullptr;
+        m_command_pool = nullptr;
     }
     
     // d65: Create and start Metal plugin for WindowServer compatibility (macOS 10.11+)
@@ -161,25 +231,15 @@ bool CLASS::start(IOService* provider)
     
     // Set device properties
     setProperty("IOClass", "VMQemuVGAAccelerator");
-    setProperty("3D Hardware Acceleration", true);
-    setProperty("Max Contexts", 16U, 32);
-    setProperty("Max Surfaces", 64U, 32);
-    setProperty("Supports Shaders", supportsShaders());
-    setProperty("Max Texture Size", getMaxTextureSize(), 32);
-    setProperty("Shader Manager", "Enabled");
-    setProperty("Texture Manager", "Enabled");
-    setProperty("Command Buffer Pool", "Enabled");
-    setProperty("Advanced Features", "Phase 2 Complete");
     
     // CRITICAL: CGL OpenGL Renderer Discovery Properties (Snow Leopard + Catalina)
     // These properties tell CGL that we support hardware-accelerated OpenGL rendering
     // Without these, CGL reports "accelerated=0" even though the accelerator is registered
     
     // OpenGL renderer identification - tells CGL this is a real OpenGL accelerator
-    // NOTE: "GLEngine" is Apple's software renderer. Hardware acceleration would require
-    // a custom OpenGL bundle (ATIRadeonGLDriver, GeForceGLDriver, etc.) which is extremely
-    // complex to implement. Current setup provides working GUI with software OpenGL.
-    setProperty("IOGLBundleName", "GLEngine");           // Software renderer (functional)
+    // NOTE: Using our custom VMVirtIOGLEngine bundle for hardware-accelerated rendering
+    // via VirtIO GPU. This replaces the software "GLEngine" renderer.
+    setProperty("IOGLBundleName", "VMVirtIOGLEngine");   // Hardware renderer (VirtIO GPU)
     setProperty("IOGLContext", "IOAcceleratorContext");  // Context type for OpenGL
     setProperty("IOOpenGLRenderer", kOSBooleanTrue);     // Mark as OpenGL renderer
     
@@ -222,7 +282,19 @@ bool CLASS::start(IOService* provider)
         accelTypes->release();
     }
     
+    // CRITICAL: Set IOAccelIndex and IOAccelRevision for CGL discovery
+    // CGL queries IORegistry for IOAccelerator services and uses IOAccelIndex to identify them
+    setProperty("IOAccelIndex", (uint32_t)0, 32);      // Primary accelerator index
+    setProperty("IOAccelRevision", (uint32_t)2, 32);   // Accelerator API revision
+    
     IOLog("VMQemuVGAAccelerator: Started successfully with OpenGL renderer properties\n");
+    IOLog("VMQemuVGAAccelerator: IOAccelIndex=0, IOAccelRevision=2, RendererID=0x00024600\n");
+    
+    // CRITICAL: Call registerService() to make this accelerator discoverable by CGL
+    // Without this, CGL won't query our properties and can't find the renderer
+    registerService();
+    IOLog("VMQemuVGAAccelerator: Registered service for CGL discovery\n");
+    
     return true;
 }
 
@@ -232,28 +304,27 @@ void CLASS::stop(IOService* provider)
     
     // Clean up all contexts and surfaces
     IOLockLock(m_lock);
-    
-    // Destroy all contexts
-    while (m_contexts->getCount() > 0) {
-        AccelContext* context = (AccelContext*)m_contexts->getObject(0);
+
+    for (uint32_t i = 0; i < m_context_capacity; i++) {
+        AccelContext* context = m_context_pool[i];
         if (context) {
             destroyContextInternal(context->context_id);
         }
-        m_contexts->removeObject(0);
     }
-    
-    // Clean up surfaces
-    while (m_surfaces->getCount() > 0) {
-        AccelSurface* surface = (AccelSurface*)m_surfaces->getObject(0);
+
+    for (uint32_t i = 0; i < m_surface_capacity; i++) {
+        AccelSurface* surface = m_surface_pool[i];
         if (surface) {
             if (surface->backing_memory) {
                 surface->backing_memory->release();
+                surface->backing_memory = nullptr;
             }
             IOFree(surface, sizeof(AccelSurface));
+            m_surface_pool[i] = nullptr;
         }
-        m_surfaces->removeObject(0);
     }
-    
+    m_surface_count = 0;
+
     IOLockUnlock(m_lock);
     
     if (m_command_gate && m_workloop) {
@@ -276,14 +347,52 @@ IOReturn CLASS::newUserClient(task_t owningTask, void* securityID,
     IOReturn ret = kIOReturnSuccess;
     IOUserClient* client = nullptr;
     
-    // Type 0 = Standard 3D user client
+    // Type 0 = kIOAccelSurfaceClientType (WindowServer 2D surface operations)
     // Type 1 = CGL (Core Graphics Layer) context user client
-    if (type > 1) {
+    // Type 2 = Standard 3D acceleration user client (VMQemuVGA3DUserClient)
+    // Type 4 = VMVirtIOGPUUserClient (VirtIO GPU commands)
+    if (type > 4 || type == 3) {
         return kIOReturnBadArgument;
     }
     
+    // Type 0 - kIOAccelSurfaceClientType for WindowServer 2D operations
+    // TEMPORARILY DISABLED: Surface client implementation incomplete - causes WindowServer crashes
+    // WindowServer will fall back to software rendering (which works perfectly)
+    if (type == 0) {
+        IOLog("VMQemuVGAAccelerator: VMAccelSurfaceClient disabled - WindowServer will use software rendering\n");
+        IOLog("VMQemuVGAAccelerator: (Surface lock operations need proper memory mapping implementation)\n");
+        return kIOReturnUnsupported;
+        
+        /* ORIGINAL CODE - DISABLED UNTIL MEMORY MAPPING IS IMPLEMENTED:
+        VMAccelSurfaceClient* surface_client = VMAccelSurfaceClient::withTask(owningTask);
+        if (!surface_client) {
+            return kIOReturnNoMemory;
+        }
+        
+        if (!surface_client->initWithTask(owningTask, securityID, type, nullptr)) {
+            surface_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!surface_client->attach(this)) {
+            surface_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!surface_client->start(this)) {
+            surface_client->detach(this);
+            surface_client->release();
+            return kIOReturnError;
+        }
+        
+        *handler = surface_client;
+        IOLog("VMQemuVGAAccelerator: ✅ VMAccelSurfaceClient created successfully\n");
+        return kIOReturnSuccess;
+        */
+    }
+    
+    // Type 1 - CGL context user client
     if (type == 1) {
-        // CGL is requesting an OpenGL context - return CGL user client
         IOLog("VMQemuVGAAccelerator: Creating CGL context user client for task %p\n", owningTask);
         
         VMCGLContext* cgl_client = new VMCGLContext;
@@ -312,7 +421,37 @@ IOReturn CLASS::newUserClient(task_t owningTask, void* securityID,
         return kIOReturnSuccess;
     }
     
-    // Type 0 - Standard 3D acceleration user client
+    // Type 4 - VMVirtIOGPUUserClient for VirtIO GPU commands
+    if (type == 4) {
+        IOLog("VMQemuVGAAccelerator: Creating VMVirtIOGPUUserClient\n");
+        
+        VMVirtIOGPUUserClient* virtio_client = OSTypeAlloc(VMVirtIOGPUUserClient);
+        if (!virtio_client) {
+            return kIOReturnNoMemory;
+        }
+        
+        if (!virtio_client->initWithTask(owningTask, securityID, type, nullptr)) {
+            virtio_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!virtio_client->attach(this)) {
+            virtio_client->release();
+            return kIOReturnError;
+        }
+        
+        if (!virtio_client->start(this)) {
+            virtio_client->detach(this);
+            virtio_client->release();
+            return kIOReturnError;
+        }
+        
+        *handler = virtio_client;
+        IOLog("VMQemuVGAAccelerator: ✅ VMVirtIOGPUUserClient created successfully\n");
+        return kIOReturnSuccess;
+    }
+    
+    // Type 2 - Standard 3D acceleration user client (VMQemuVGA3DUserClient)
     VMQemuVGA3DUserClient* accel_client = VMQemuVGA3DUserClient::withTask(owningTask);
     if (!accel_client) {
         ret = kIOReturnNoMemory;
@@ -358,25 +497,32 @@ IOReturn CLASS::create3DContext(uint32_t* context_id, task_t task)
     }
     
     // Create accelerator context
-    AccelContext* context = (AccelContext*)IOMalloc(sizeof(AccelContext));
+    AccelContext* context = (AccelContext*)ioMallocZero(sizeof(AccelContext));
     if (!context) {
         m_gpu_device->destroyRenderContext(gpu_context_id);
         IOLockUnlock(m_lock);
         return kIOReturnNoMemory;
     }
-    
+
     context->context_id = ++m_next_context_id;
     context->gpu_context_id = gpu_context_id;
     context->active = true;
-    context->surfaces = OSSet::withCapacity(8);
     context->command_buffer = nullptr;
     context->owning_task = task;
-    
-    m_contexts->setObject((OSObject*)context);
+    context->bound_surface_ids = nullptr;
+    context->bound_surface_count = 0;
+    context->bound_surface_capacity = 0;
+
+    if (!poolAddContext(context)) {
+        IOFree(context, sizeof(AccelContext));
+        m_gpu_device->destroyRenderContext(gpu_context_id);
+        IOLockUnlock(m_lock);
+        return kIOReturnNoMemory;
+    }
     *context_id = context->context_id;
-    
+
     IOLockUnlock(m_lock);
-    
+
     IOLog("VMQemuVGAAccelerator: Created 3D context %d\n", *context_id);
     return kIOReturnSuccess;
 }
@@ -407,20 +553,21 @@ IOReturn CLASS::create3DSurface(uint32_t context_id, VM3DSurfaceInfo* surface_in
     }
     
     // Create surface
-    AccelSurface* surface = (AccelSurface*)IOMalloc(sizeof(AccelSurface));
+    AccelSurface* surface = (AccelSurface*)ioMallocZero(sizeof(AccelSurface));
     if (!surface) {
         m_gpu_device->deallocateResource(gpu_resource_id);
         IOLockUnlock(m_lock);
         return kIOReturnNoMemory;
     }
-    
+
     surface->surface_id = ++m_next_surface_id;
     surface->gpu_resource_id = gpu_resource_id;
     surface->info = *surface_info;
     surface->info.surface_id = surface->surface_id;
     surface->backing_memory = nullptr;
     surface->is_render_target = false;
-    
+    surface->in_use = true;
+
     // Allocate backing memory
     ret = allocateSurfaceMemory(&surface->info, &surface->backing_memory);
     if (ret != kIOReturnSuccess) {
@@ -429,9 +576,15 @@ IOReturn CLASS::create3DSurface(uint32_t context_id, VM3DSurfaceInfo* surface_in
         IOLockUnlock(m_lock);
         return ret;
     }
-    
-    m_surfaces->setObject((OSObject*)surface);
-    context->surfaces->setObject((OSObject*)surface);
+
+    if (!poolAddSurface(surface)) {
+        if (surface->backing_memory) surface->backing_memory->release();
+        m_gpu_device->deallocateResource(gpu_resource_id);
+        IOFree(surface, sizeof(AccelSurface));
+        IOLockUnlock(m_lock);
+        return kIOReturnNoMemory;
+    }
+    contextBindSurface(context, surface->surface_id);
     
     m_memory_used += calculateSurfaceSize(&surface->info);
     
@@ -471,10 +624,142 @@ IOReturn CLASS::submit3DCommands(uint32_t context_id, IOMemoryDescriptor* comman
     return ret;
 }
 
+bool CLASS::poolGrowContext()
+{
+    uint32_t new_cap = m_context_capacity ? m_context_capacity * 2 : kInitialContextCapacity;
+    AccelContext** new_pool = (AccelContext**)ioMallocZero(new_cap * sizeof(AccelContext*));
+    if (!new_pool) {
+        IOLog("VMQemuVGAAccelerator: poolGrowContext FAILED — OOM at capacity=%u\n", m_context_capacity);
+        return false;
+    }
+    for (uint32_t i = 0; i < m_context_capacity; i++) {
+        new_pool[i] = m_context_pool[i];
+    }
+    IOFree(m_context_pool, m_context_capacity * sizeof(AccelContext*));
+    m_context_pool = new_pool;
+    m_context_capacity = new_cap;
+    return true;
+}
+
+bool CLASS::poolGrowSurface()
+{
+    uint32_t new_cap = m_surface_capacity ? m_surface_capacity * 2 : kInitialSurfaceCapacity;
+    AccelSurface** new_pool = (AccelSurface**)ioMallocZero(new_cap * sizeof(AccelSurface*));
+    if (!new_pool) {
+        IOLog("VMQemuVGAAccelerator: poolGrowSurface FAILED — OOM at capacity=%u\n", m_surface_capacity);
+        return false;
+    }
+    for (uint32_t i = 0; i < m_surface_capacity; i++) {
+        new_pool[i] = m_surface_pool[i];
+    }
+    IOFree(m_surface_pool, m_surface_capacity * sizeof(AccelSurface*));
+    m_surface_pool = new_pool;
+    m_surface_capacity = new_cap;
+    return true;
+}
+
+bool CLASS::poolAddContext(AccelContext* context)
+{
+    if (!context) return false;
+    for (uint32_t i = 0; i < m_context_capacity; i++) {
+        if (!m_context_pool[i]) {
+            m_context_pool[i] = context;
+            m_context_count++;
+            return true;
+        }
+    }
+    if (!poolGrowContext()) return false;
+    m_context_pool[m_context_count++] = context;
+    return true;
+}
+
+bool CLASS::poolAddSurface(AccelSurface* surface)
+{
+    if (!surface) return false;
+    for (uint32_t i = 0; i < m_surface_capacity; i++) {
+        if (!m_surface_pool[i]) {
+            m_surface_pool[i] = surface;
+            m_surface_count++;
+            return true;
+        }
+    }
+    if (!poolGrowSurface()) return false;
+    m_surface_pool[m_surface_count++] = surface;
+    return true;
+}
+
+void CLASS::poolRemoveContext(AccelContext* context)
+{
+    if (!context) return;
+    for (uint32_t i = 0; i < m_context_capacity; i++) {
+        if (m_context_pool[i] == context) {
+            m_context_pool[i] = nullptr;
+            if (m_context_count > 0) m_context_count--;
+            return;
+        }
+    }
+}
+
+void CLASS::poolRemoveSurface(AccelSurface* surface)
+{
+    if (!surface) return;
+    for (uint32_t i = 0; i < m_surface_capacity; i++) {
+        if (m_surface_pool[i] == surface) {
+            m_surface_pool[i] = nullptr;
+            if (m_surface_count > 0) m_surface_count--;
+            return;
+        }
+    }
+}
+
+bool CLASS::contextBindSurface(AccelContext* ctx, uint32_t surface_id)
+{
+    if (!ctx) return false;
+    for (uint32_t i = 0; i < ctx->bound_surface_count; i++) {
+        if (ctx->bound_surface_ids[i] == surface_id) return true;
+    }
+    if (ctx->bound_surface_count == ctx->bound_surface_capacity) {
+        uint32_t new_cap = ctx->bound_surface_capacity ? ctx->bound_surface_capacity * 2 : 8;
+        uint32_t* new_arr = (uint32_t*)IOMalloc(new_cap * sizeof(uint32_t));
+        if (!new_arr) {
+            IOLog("VMQemuVGAAccelerator: contextBindSurface FAILED — OOM ctx=%u cap=%u\n",
+                  ctx->context_id, ctx->bound_surface_capacity);
+            return false;
+        }
+        for (uint32_t i = 0; i < ctx->bound_surface_count; i++) new_arr[i] = ctx->bound_surface_ids[i];
+        if (ctx->bound_surface_ids) IOFree(ctx->bound_surface_ids, ctx->bound_surface_capacity * sizeof(uint32_t));
+        ctx->bound_surface_ids = new_arr;
+        ctx->bound_surface_capacity = new_cap;
+    }
+    ctx->bound_surface_ids[ctx->bound_surface_count++] = surface_id;
+    return true;
+}
+
+void CLASS::contextUnbindSurface(AccelContext* ctx, uint32_t surface_id)
+{
+    if (!ctx) return;
+    for (uint32_t i = 0; i < ctx->bound_surface_count; i++) {
+        if (ctx->bound_surface_ids[i] == surface_id) {
+            ctx->bound_surface_ids[i] = ctx->bound_surface_ids[ctx->bound_surface_count - 1];
+            ctx->bound_surface_count--;
+            return;
+        }
+    }
+}
+
+bool CLASS::contextHasSurface(AccelContext* ctx, uint32_t surface_id)
+{
+    if (!ctx) return false;
+    for (uint32_t i = 0; i < ctx->bound_surface_count; i++) {
+        if (ctx->bound_surface_ids[i] == surface_id) return true;
+    }
+    return false;
+}
+
 CLASS::AccelContext* CLASS::findContext(uint32_t context_id)
 {
-    for (unsigned int i = 0; i < m_contexts->getCount(); i++) {
-        AccelContext* context = (AccelContext*)m_contexts->getObject(i);
+    for (uint32_t i = 0; i < m_context_capacity; i++) {
+        AccelContext* context = m_context_pool[i];
         if (context && context->context_id == context_id) {
             return context;
         }
@@ -484,8 +769,8 @@ CLASS::AccelContext* CLASS::findContext(uint32_t context_id)
 
 CLASS::AccelSurface* CLASS::findSurface(uint32_t surface_id)
 {
-    for (unsigned int i = 0; i < m_surfaces->getCount(); i++) {
-        AccelSurface* surface = (AccelSurface*)m_surfaces->getObject(i);
+    for (uint32_t i = 0; i < m_surface_capacity; i++) {
+        AccelSurface* surface = m_surface_pool[i];
         if (surface && surface->surface_id == surface_id) {
             return surface;
         }
@@ -591,32 +876,30 @@ IOReturn CLASS::setPowerState(unsigned long powerState, IOService* whatDevice)
 
 IOReturn CLASS::destroyContextInternal(uint32_t context_id)
 {
-    // Find and remove context
-    for (unsigned int i = 0; i < m_contexts->getCount(); i++) {
-        AccelContext* context = (AccelContext*)m_contexts->getObject(i);
-        if (context && context->context_id == context_id) {
-            // Cleanup GPU context
-            if (m_gpu_device) {
-                m_gpu_device->destroyRenderContext(context->gpu_context_id);
-            }
-            
-            // Cleanup surfaces
-            if (context->surfaces) {
-                context->surfaces->release();
-            }
-            
-            // Cleanup command buffer
-            if (context->command_buffer) {
-                context->command_buffer->release();
-            }
-            
-            // Remove from array
-            m_contexts->removeObject(i);
-            IOFree(context, sizeof(AccelContext));
-            return kIOReturnSuccess;
-        }
+    AccelContext* context = findContext(context_id);
+    if (!context) {
+        return kIOReturnNotFound;
     }
-    return kIOReturnNotFound;
+
+    if (m_gpu_device) {
+        m_gpu_device->destroyRenderContext(context->gpu_context_id);
+    }
+
+    if (context->bound_surface_ids) {
+        IOFree(context->bound_surface_ids, context->bound_surface_capacity * sizeof(uint32_t));
+        context->bound_surface_ids = nullptr;
+        context->bound_surface_count = 0;
+        context->bound_surface_capacity = 0;
+    }
+
+    if (context->command_buffer) {
+        context->command_buffer->release();
+        context->command_buffer = nullptr;
+    }
+
+    poolRemoveContext(context);
+    IOFree(context, sizeof(AccelContext));
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::destroy3DContext(uint32_t context_id)
@@ -683,7 +966,8 @@ IOReturn CLASS::present3DSurface(uint32_t context_id, uint32_t surface_id)
                     uint32_t vram_size = static_cast<uint32_t>(vram->getLength());
                     
                     // For Hyper-V DDA, calculate proper offset based on current display mode
-                    QemuVGADevice* qemu_device = m_framebuffer->getDevice();
+                    VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                    QemuVGADevice* qemu_device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                     if (qemu_device) {
                         uint32_t current_width = qemu_device->getCurrentWidth();
                         uint32_t current_height = qemu_device->getCurrentHeight();
@@ -1053,7 +1337,8 @@ IOReturn CLASS::beginRenderPass(uint32_t context_id, uint32_t framebuffer_id)
         // Get VRAM information for framebuffer setup
         IODeviceMemory* vram = m_framebuffer->getVRAMRange();
         if (vram) {
-            QemuVGADevice* qemu_device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* qemu_device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (qemu_device) {
                 uint32_t fb_width = qemu_device->getCurrentWidth();
                 uint32_t fb_height = qemu_device->getCurrentHeight();
@@ -1182,7 +1467,8 @@ IOReturn CLASS::beginRenderPass(uint32_t context_id, uint32_t framebuffer_id)
         
         // Try to get actual framebuffer dimensions
         if (m_framebuffer) {
-            QemuVGADevice* device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (device) {
                 software_state.viewport[2] = static_cast<float>(device->getCurrentWidth());
                 software_state.viewport[3] = static_cast<float>(device->getCurrentHeight());
@@ -1290,7 +1576,8 @@ IOReturn CLASS::endRenderPass(uint32_t context_id)
             
             // Get actual display dimensions if available
             if (m_framebuffer) {
-                QemuVGADevice* device = m_framebuffer->getDevice();
+                VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                 if (device) {
                     gpu_finalize.present_cmd.r.width = static_cast<uint32_t>(device->getCurrentWidth());
                     gpu_finalize.present_cmd.r.height = static_cast<uint32_t>(device->getCurrentHeight());
@@ -1326,7 +1613,8 @@ IOReturn CLASS::endRenderPass(uint32_t context_id)
         // Get VRAM for final flush operations
         IODeviceMemory* vram = m_framebuffer->getVRAMRange();
         if (vram) {
-            QemuVGADevice* qemu_device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* qemu_device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (qemu_device) {
                 uint32_t fb_width = qemu_device->getCurrentWidth();
                 uint32_t fb_height = qemu_device->getCurrentHeight();
@@ -1634,9 +1922,9 @@ IOReturn CLASS::endRenderPass(uint32_t context_id)
             }
             
             // Method 2: Cross-reference with active surfaces that might be used as textures
-            if (!texture_was_bound && m_surfaces) {
-                for (unsigned int surf_idx = 0; surf_idx < m_surfaces->getCount(); surf_idx++) {
-                    AccelSurface* surface = (AccelSurface*)m_surfaces->getObject(surf_idx);
+            if (!texture_was_bound && m_surface_count > 0) {
+                for (unsigned int surf_idx = 0; surf_idx < m_surface_capacity; surf_idx++) {
+                    AccelSurface* surface = m_surface_pool[surf_idx];
                     if (surface && surface->gpu_resource_id != 0) {
                         // Enhanced texture binding tracking per unit
                         // Implementation: Track texture bindings using comprehensive state management
@@ -1706,9 +1994,8 @@ IOReturn CLASS::endRenderPass(uint32_t context_id)
                         }
                         
                         // Method 2c: Cross-reference with context's active surfaces
-                        if (!surface_potentially_bound && context && context->surfaces) {
-                            // Check if this surface belongs to the current context using OSSet methods
-                            if (context->surfaces->containsObject((OSObject*)surface)) {
+                        if (!surface_potentially_bound && context) {
+                            if (contextHasSurface(context, surface->surface_id)) {
                                 // Surface belongs to current context - likely to be used as texture
                                 binding_info.surface_id = surface->surface_id;
                                 binding_info.texture_unit = unit;
@@ -1922,8 +2209,8 @@ IOReturn CLASS::getPerformanceStats(void* stats_buffer, size_t* buffer_size)
         return kIOReturnNoSpace;
     }
     
-    stats.contexts_created = m_contexts ? m_contexts->getCount() : 0;
-    stats.surfaces_created = m_surfaces ? m_surfaces->getCount() : 0;
+    stats.contexts_created = m_context_count;
+    stats.surfaces_created = m_surface_count;
     stats.commands_submitted = m_commands_submitted;
     stats.draw_calls = m_draw_calls;
     stats.triangles_rendered = m_triangles_rendered;
@@ -1963,8 +2250,8 @@ void CLASS::logAcceleratorState()
 {
     IOLog("VMQemuVGAAccelerator State:\n");
     IOLog("  GPU Device: %s\n", m_gpu_device ? "Available" : "Not Available");
-    IOLog("  Active Contexts: %d\n", m_contexts ? m_contexts->getCount() : 0);
-    IOLog("  Active Surfaces: %d\n", m_surfaces ? m_surfaces->getCount() : 0);
+    IOLog("  Active Contexts: %u\n", m_context_count);
+    IOLog("  Active Surfaces: %u\n", m_surface_count);
     IOLog("  Commands Submitted: %u\n", m_commands_submitted);
     IOLog("  Draw Calls: %u\n", m_draw_calls);
     IOLog("  Triangles Rendered: %u\n", m_triangles_rendered);
@@ -2416,18 +2703,13 @@ IOReturn CLASS::enableDepthTest(uint32_t context_id, bool enable)
         bool needs_depth_buffer = true;
         
         // Check existing surfaces for a depth buffer
-        if (context->surfaces) {
-            OSCollectionIterator* surf_iter = OSCollectionIterator::withCollection(context->surfaces);
-            if (surf_iter) {
-                while (AccelSurface* surface = (AccelSurface*)surf_iter->getNextObject()) {
-                    if (surface && (surface->info.format == VM3D_FORMAT_X8R8G8B8 || // Use existing format as placeholder
-                                   surface->info.format == VM3D_FORMAT_A8R8G8B8)) {
-                        needs_depth_buffer = false;
-                        IOLog("VMQemuVGAAccelerator: Found existing depth buffer (surface %d)\n", surface->surface_id);
-                        break;
-                    }
-                }
-                surf_iter->release();
+        for (uint32_t si = 0; si < context->bound_surface_count; si++) {
+            AccelSurface* surface = findSurface(context->bound_surface_ids[si]);
+            if (surface && (surface->info.format == VM3D_FORMAT_X8R8G8B8 ||
+                            surface->info.format == VM3D_FORMAT_A8R8G8B8)) {
+                needs_depth_buffer = false;
+                IOLog("VMQemuVGAAccelerator: Found existing depth buffer (surface %u)\n", surface->surface_id);
+                break;
             }
         }
         
@@ -2439,7 +2721,8 @@ IOReturn CLASS::enableDepthTest(uint32_t context_id, bool enable)
             uint32_t depth_height = 768;
             
             if (m_framebuffer) {
-                QemuVGADevice* device = m_framebuffer->getDevice();
+                VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                 if (device) {
                     depth_width = device->getCurrentWidth();
                     depth_height = device->getCurrentHeight();
@@ -2565,7 +2848,8 @@ IOReturn CLASS::clearColorBuffer(uint32_t context_id, float r, float g, float b,
             if (vram_map) {
                 void* vram_ptr = (void*)vram_map->getVirtualAddress();
                 if (vram_ptr) {
-                    QemuVGADevice* device = m_framebuffer->getDevice();
+                    VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+                    QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
                     if (device) {
                         uint32_t fb_width = device->getCurrentWidth();
                         uint32_t fb_height = device->getCurrentHeight();
@@ -2675,7 +2959,8 @@ IOReturn CLASS::clearDepthBuffer(uint32_t context_id, float depth)
         
         // Try to get actual framebuffer dimensions
         if (m_framebuffer) {
-            QemuVGADevice* device = m_framebuffer->getDevice();
+            VMQemuVGA* qxl_fb = OSDynamicCast(VMQemuVGA, m_framebuffer);
+            QemuVGADevice* device = qxl_fb ? qxl_fb->getDevice() : nullptr;
             if (device) {
                 soft_clear.depth_buffer_width = device->getCurrentWidth();
                 soft_clear.depth_buffer_height = device->getCurrentHeight();
@@ -2700,18 +2985,14 @@ IOReturn CLASS::clearDepthBuffer(uint32_t context_id, float depth)
         
         // Check if context has existing surfaces that could serve as depth buffers
         uint32_t depth_surfaces_found = 0;
-        if (context->surfaces) {
-            OSCollectionIterator* surf_iter = OSCollectionIterator::withCollection(context->surfaces);
-            if (surf_iter) {
-                while (AccelSurface* surface = (AccelSurface*)surf_iter->getNextObject()) {
-                    if (surface && (surface->info.width >= soft_clear.depth_buffer_width * 0.8f) &&
-                        (surface->info.height >= soft_clear.depth_buffer_height * 0.8f)) {
-                        depth_surfaces_found++;
-                        IOLog("VMQemuVGAAccelerator: Found potential depth surface %d (%dx%d, format: %d)\n",
-                              surface->surface_id, surface->info.width, surface->info.height, surface->info.format);
-                    }
-                }
-                surf_iter->release();
+        for (uint32_t si = 0; si < context->bound_surface_count; si++) {
+            AccelSurface* surface = findSurface(context->bound_surface_ids[si]);
+            if (surface &&
+                (surface->info.width >= soft_clear.depth_buffer_width * 0.8f) &&
+                (surface->info.height >= soft_clear.depth_buffer_height * 0.8f)) {
+                depth_surfaces_found++;
+                IOLog("VMQemuVGAAccelerator: Found potential depth surface %u (%ux%u, format: %d)\n",
+                      surface->surface_id, surface->info.width, surface->info.height, surface->info.format);
             }
         }
         
@@ -2786,8 +3067,6 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     uint64_t freed_memory = 0;
     uint64_t collection_start_time = getCurrentTimestamp();
     
-    // Phase 1: Mark unused textures by checking reference counts
-    IOLog("VMQemuVGAAccelerator: Phase 1 - Scanning for unreferenced textures\n");
     
     struct {
         uint32_t total_textures_scanned;
@@ -2801,24 +3080,22 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     // Iterate through all contexts to check texture references
     IOLockLock(m_lock);
     
-    if (m_contexts && m_surfaces) {
-        phase1_stats.total_textures_scanned = m_surfaces->getCount();
-        phase1_stats.active_contexts_checked = m_contexts->getCount();
+    if (m_context_pool && m_surface_pool) {
+        phase1_stats.total_textures_scanned = m_surface_count;
+        phase1_stats.active_contexts_checked = m_context_count;
         
-        for (unsigned int ctx_idx = 0; ctx_idx < m_contexts->getCount(); ctx_idx++) {
-            AccelContext* context = (AccelContext*)m_contexts->getObject(ctx_idx);
+        for (uint32_t ctx_idx = 0; ctx_idx < m_context_capacity; ctx_idx++) {
+            AccelContext* context = m_context_pool[ctx_idx];
             if (!context || !context->active) {
                 continue;
             }
-            
-            // Check each surface/texture in this context
-            if (context->surfaces) {
-                OSCollectionIterator* surf_iter = OSCollectionIterator::withCollection(context->surfaces);
-                if (surf_iter) {
-                    while (AccelSurface* surface = (AccelSurface*)surf_iter->getNextObject()) {
-                        if (!surface) {
-                            continue;
-                        }
+
+            // Check each surface/texture bound to this context
+            for (uint32_t si = 0; si < context->bound_surface_count; si++) {
+                AccelSurface* surface = findSurface(context->bound_surface_ids[si]);
+                if (!surface) {
+                    continue;
+                }
                         
                         // Check if surface is still being used
                         bool is_referenced = false;
@@ -2967,18 +3244,17 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
                         uint32_t context_access_count = 0;
                         
                         // Check if any active contexts reference this surface
-                        for (unsigned int other_ctx_idx = 0; other_ctx_idx < m_contexts->getCount(); other_ctx_idx++) {
-                            AccelContext* other_context = (AccelContext*)m_contexts->getObject(other_ctx_idx);
+                        for (uint32_t other_ctx_idx = 0; other_ctx_idx < m_context_capacity; other_ctx_idx++) {
+                            AccelContext* other_context = m_context_pool[other_ctx_idx];
                             if (!other_context || !other_context->active) {
                                 continue;
                             }
-                            
-                            if (other_context->surfaces && other_context->surfaces->containsObject((OSObject*)surface)) {
+
+                            if (contextHasSurface(other_context, surface->surface_id)) {
                                 context_references_surface = true;
                                 context_access_count++;
-                                
-                                // If context is actively rendering, surface is highly referenced
-                                if (other_context->active && other_context->gpu_context_id != 0) {
+
+                                if (other_context->gpu_context_id != 0) {
                                     is_referenced = true;
                                     pattern_analysis.access_category = "CONTEXT_ACTIVE";
                                 }
@@ -3063,22 +3339,14 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
                         if (!is_referenced) {
                             phase1_stats.unreferenced_textures++;
                         }
-                    }
-                    surf_iter->release();
-                }
-            }
-        }
+                    }   // close inner surface loop
+        }   // close outer context loop
     }
     
     uint64_t phase1_end = getCurrentTimestamp();
     phase1_stats.scan_time_microseconds = convertToMicroseconds(phase1_end - phase1_start);
     
-    IOLog("VMQemuVGAAccelerator: Phase 1 complete - Scanned %d textures, found %d unreferenced (contexts: %d, time: %llu μs)\n",
-          phase1_stats.total_textures_scanned, phase1_stats.unreferenced_textures, 
-          phase1_stats.active_contexts_checked, phase1_stats.scan_time_microseconds);
     
-    // Phase 2: Free textures that exceed memory threshold or are truly unused
-    IOLog("VMQemuVGAAccelerator: Phase 2 - Freeing unused textures based on memory pressure\n");
     
     struct {
         uint32_t memory_threshold_kb;
@@ -3103,222 +3371,117 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
         IOLog("VMQemuVGAAccelerator: Memory threshold exceeded, aggressive cleanup enabled\n");
         
         // Strategy 1: Free largest textures first
-        OSCollectionIterator* surface_iter = OSCollectionIterator::withCollection(m_surfaces);
-        if (surface_iter) {
-            OSArray* surfaces_to_remove = OSArray::withCapacity(16);
-            
-            while (AccelSurface* surface = (AccelSurface*)surface_iter->getNextObject()) {
-                if (!surface || surface->is_render_target) {
-                    continue; // Skip render targets
-                }
-                
-                if (current_texture_memory <= (phase2_stats.memory_threshold_kb * 1024) / 2) {
-                    break; // Reached memory target
-                }
-                
-                uint32_t surface_size = calculateSurfaceSize(&surface->info);
-                
-                // Free large textures (> 1MB) more aggressively
-                if (surface_size > 1024 * 1024) {
-                    IOLog("VMQemuVGAAccelerator: Freeing large texture %d (%d KB)\n", 
-                          surface->surface_id, surface_size / 1024);
-                    
-                    // Actually free the texture resources
-                    if (surface->backing_memory) {
-                        surface->backing_memory->release();
-                        surface->backing_memory = nullptr;
-                    }
-                    
-                    if (m_gpu_device && surface->gpu_resource_id) {
-                        m_gpu_device->deallocateResource(surface->gpu_resource_id);
-                    }
-                    
-                    phase2_stats.textures_freed_by_size++;
-                    phase2_stats.total_memory_freed += surface_size;
-                    freed_count++;
-                    freed_memory += surface_size;
-                    current_texture_memory -= surface_size;
-                    
-                    // Mark for removal
-                    surfaces_to_remove->setObject((OSObject*)surface);
-                }
-            }
-            surface_iter->release();
-            
-            // Remove marked surfaces using OSArray index-based removal
-            // Sort indices in descending order to avoid index shifting issues
-            OSArray* indices_to_remove = OSArray::withCapacity(surfaces_to_remove->getCount());
-            if (indices_to_remove) {
-                for (unsigned int i = 0; i < surfaces_to_remove->getCount(); i++) {
-                    AccelSurface* surface_to_remove = (AccelSurface*)surfaces_to_remove->getObject(i);
-                    
-                    // Find index of this surface in m_surfaces
-                    for (unsigned int j = 0; j < m_surfaces->getCount(); j++) {
-                        AccelSurface* surface = (AccelSurface*)m_surfaces->getObject(j);
-                        if (surface == surface_to_remove) {
-                            OSNumber* index = OSNumber::withNumber(j, 32);
-                            if (index) {
-                                indices_to_remove->setObject(index);
-                                index->release();
-                            }
-                            break;
-                        }
-                    }
-                    IOFree(surface_to_remove, sizeof(AccelSurface));
-                }
-                
-                // Remove surfaces by index in descending order
-                for (int i = (int)indices_to_remove->getCount() - 1; i >= 0; i--) {
-                    OSNumber* index_num = (OSNumber*)indices_to_remove->getObject(i);
-                    if (index_num) {
-                        unsigned int index = index_num->unsigned32BitValue();
-                        if (index < m_surfaces->getCount()) {
-                            m_surfaces->removeObject(index);
-                        }
-                    }
-                }
-                indices_to_remove->release();
-            }
-            surfaces_to_remove->release();
-        }
-        
-        // Strategy 2: Age-based cleanup for medium-sized textures
-        surface_iter = OSCollectionIterator::withCollection(m_surfaces);
-        if (surface_iter) {
-            OSArray* medium_surfaces_to_remove = OSArray::withCapacity(16);
-            
-            while (AccelSurface* surface = (AccelSurface*)surface_iter->getNextObject()) {
-                if (!surface || surface->is_render_target) {
-                    continue;
-                }
-                
-                if (current_texture_memory <= (phase2_stats.memory_threshold_kb * 1024) * 3 / 4) {
-                    break; // Reached memory target
-                }
-                
-                uint32_t surface_size = calculateSurfaceSize(&surface->info);
-                
-                // Free medium textures (256KB - 1MB) based on heuristics
-                if (surface_size >= 256 * 1024 && surface_size <= 1024 * 1024) {
-                    // Simple age heuristic: if surface_id is lower, it's "older"
-                    static uint32_t gc_generation = 0;
-                    gc_generation++;
-                    
-                    if ((surface->surface_id % 3) == (gc_generation % 3)) {
-                        IOLog("VMQemuVGAAccelerator: Freeing medium texture %d (%d KB) due to age heuristic\n", 
-                              surface->surface_id, surface_size / 1024);
-                        
-                        if (surface->backing_memory) {
-                            surface->backing_memory->release();
-                            surface->backing_memory = nullptr;
-                        }
-                        
-                        if (m_gpu_device && surface->gpu_resource_id) {
-                            m_gpu_device->deallocateResource(surface->gpu_resource_id);
-                        }
-                        
-                        phase2_stats.textures_freed_by_age++;
-                        phase2_stats.total_memory_freed += surface_size;
-                        freed_count++;
-                        freed_memory += surface_size;
-                        current_texture_memory -= surface_size;
-                        
-                        medium_surfaces_to_remove->setObject((OSObject*)surface);
-                    }
-                }
-            }
-            surface_iter->release();
-            
-            // Remove marked surfaces using OSArray index-based removal
-            for (unsigned int i = 0; i < medium_surfaces_to_remove->getCount(); i++) {
-                AccelSurface* surface_to_remove = (AccelSurface*)medium_surfaces_to_remove->getObject(i);
-                
-                // Find and remove this surface from m_surfaces
-                for (unsigned int j = 0; j < m_surfaces->getCount(); j++) {
-                    AccelSurface* surface = (AccelSurface*)m_surfaces->getObject(j);
-                    if (surface == surface_to_remove) {
-                        m_surfaces->removeObject(j);
-                        IOFree(surface_to_remove, sizeof(AccelSurface));
-                        break;
-                    }
-                }
-            }
-            medium_surfaces_to_remove->release();
-        }
-    }
-    
-    // Strategy 3: Clean up any textures that have lost their context
-    OSCollectionIterator* surface_iter = OSCollectionIterator::withCollection(m_surfaces);
-    if (surface_iter) {
-        OSArray* orphaned_surfaces_to_remove = OSArray::withCapacity(16);
-        
-        while (AccelSurface* surface = (AccelSurface*)surface_iter->getNextObject()) {
-            if (!surface) {
-                continue;
-            }
-            
-            // Check if the surface belongs to an active context
-            bool has_active_context = false;
-            for (unsigned int ctx_idx = 0; ctx_idx < m_contexts->getCount(); ctx_idx++) {
-                AccelContext* context = (AccelContext*)m_contexts->getObject(ctx_idx);
-                if (context && context->surfaces && context->surfaces->containsObject((OSObject*)surface)) {
-                    has_active_context = true;
-                    break;
-                }
-            }
-            
-            if (!has_active_context) {
-                uint32_t surface_size = calculateSurfaceSize(&surface->info);
-                
-                IOLog("VMQemuVGAAccelerator: Freeing orphaned texture %d (%d KB) - no active context\n", 
+        for (uint32_t si = 0; si < m_surface_capacity; si++) {
+            AccelSurface* surface = m_surface_pool[si];
+            if (!surface || surface->is_render_target) continue;
+            if (current_texture_memory <= (phase2_stats.memory_threshold_kb * 1024) / 2) break;
+
+            uint32_t surface_size = calculateSurfaceSize(&surface->info);
+
+            if (surface_size > 1024 * 1024) {
+                IOLog("VMQemuVGAAccelerator: Freeing large texture %u (%u KB)\n",
                       surface->surface_id, surface_size / 1024);
-                
+
                 if (surface->backing_memory) {
                     surface->backing_memory->release();
                     surface->backing_memory = nullptr;
                 }
-                
                 if (m_gpu_device && surface->gpu_resource_id) {
                     m_gpu_device->deallocateResource(surface->gpu_resource_id);
                 }
-                
-                phase2_stats.textures_freed_by_memory++; // Count as memory cleanup
+
+                phase2_stats.textures_freed_by_size++;
                 phase2_stats.total_memory_freed += surface_size;
                 freed_count++;
                 freed_memory += surface_size;
-                
-                orphaned_surfaces_to_remove->setObject((OSObject*)surface);
+                current_texture_memory -= surface_size;
+
+                poolRemoveSurface(surface);
+                IOFree(surface, sizeof(AccelSurface));
             }
         }
-        surface_iter->release();
-        
-        // Remove orphaned surfaces using OSArray index-based removal
-        for (unsigned int i = 0; i < orphaned_surfaces_to_remove->getCount(); i++) {
-            AccelSurface* surface_to_remove = (AccelSurface*)orphaned_surfaces_to_remove->getObject(i);
-            
-            // Find and remove this surface from m_surfaces
-            for (unsigned int j = 0; j < m_surfaces->getCount(); j++) {
-                AccelSurface* surface = (AccelSurface*)m_surfaces->getObject(j);
-                if (surface == surface_to_remove) {
-                    m_surfaces->removeObject(j);
-                    IOFree(surface_to_remove, sizeof(AccelSurface));
-                    break;
+
+        // Strategy 2: Age-based cleanup for medium-sized textures
+        for (uint32_t si = 0; si < m_surface_capacity; si++) {
+            AccelSurface* surface = m_surface_pool[si];
+            if (!surface || surface->is_render_target) continue;
+            if (current_texture_memory <= (phase2_stats.memory_threshold_kb * 1024) * 3 / 4) break;
+
+            uint32_t surface_size = calculateSurfaceSize(&surface->info);
+
+            if (surface_size >= 256 * 1024 && surface_size <= 1024 * 1024) {
+                static uint32_t gc_generation = 0;
+                gc_generation++;
+
+                if ((surface->surface_id % 3) == (gc_generation % 3)) {
+                    IOLog("VMQemuVGAAccelerator: Freeing medium texture %u (%u KB) due to age heuristic\n",
+                          surface->surface_id, surface_size / 1024);
+
+                    if (surface->backing_memory) {
+                        surface->backing_memory->release();
+                        surface->backing_memory = nullptr;
+                    }
+                    if (m_gpu_device && surface->gpu_resource_id) {
+                        m_gpu_device->deallocateResource(surface->gpu_resource_id);
+                    }
+
+                    phase2_stats.textures_freed_by_age++;
+                    phase2_stats.total_memory_freed += surface_size;
+                    freed_count++;
+                    freed_memory += surface_size;
+                    current_texture_memory -= surface_size;
+
+                    poolRemoveSurface(surface);
+                    IOFree(surface, sizeof(AccelSurface));
                 }
             }
         }
-        orphaned_surfaces_to_remove->release();
+    }
+    
+    // Strategy 3: Clean up any textures that have lost their context
+    for (uint32_t si = 0; si < m_surface_capacity; si++) {
+        AccelSurface* surface = m_surface_pool[si];
+        if (!surface) continue;
+
+        bool has_active_context = false;
+        for (uint32_t ctx_idx = 0; ctx_idx < m_context_capacity; ctx_idx++) {
+            AccelContext* context = m_context_pool[ctx_idx];
+            if (context && contextHasSurface(context, surface->surface_id)) {
+                has_active_context = true;
+                break;
+            }
+        }
+
+        if (!has_active_context) {
+            uint32_t surface_size = calculateSurfaceSize(&surface->info);
+
+            IOLog("VMQemuVGAAccelerator: Freeing orphaned texture %u (%u KB) - no active context\n",
+                  surface->surface_id, surface_size / 1024);
+
+            if (surface->backing_memory) {
+                surface->backing_memory->release();
+                surface->backing_memory = nullptr;
+            }
+            if (m_gpu_device && surface->gpu_resource_id) {
+                m_gpu_device->deallocateResource(surface->gpu_resource_id);
+            }
+
+            phase2_stats.textures_freed_by_memory++;
+            phase2_stats.total_memory_freed += surface_size;
+            freed_count++;
+            freed_memory += surface_size;
+
+            poolRemoveSurface(surface);
+            IOFree(surface, sizeof(AccelSurface));
+        }
     }
     
     uint64_t phase2_end = getCurrentTimestamp();
     phase2_stats.free_time_microseconds = convertToMicroseconds(phase2_end - phase2_start);
     
-    IOLog("VMQemuVGAAccelerator: Phase 2 complete - Freed %d textures (%llu KB total, time: %llu μs)\n",
-          freed_count, phase2_stats.total_memory_freed / 1024, phase2_stats.free_time_microseconds);
     IOLog("VMQemuVGAAccelerator: Breakdown - Memory pressure: %d, Age-based: %d, Size-based: %d\n",
           phase2_stats.textures_freed_by_memory, phase2_stats.textures_freed_by_age, phase2_stats.textures_freed_by_size);
     
-    // Phase 3: Defragmentation and consolidation
-    IOLog("VMQemuVGAAccelerator: Phase 3 - Memory defragmentation and statistics update\n");
     
     struct {
         uint32_t contexts_cleaned;
@@ -3329,43 +3492,32 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     
     uint64_t phase3_start = getCurrentTimestamp();
     
-    // Clean up empty contexts
-    for (unsigned int i = 0; i < m_contexts->getCount(); i++) {
-        AccelContext* context = (AccelContext*)m_contexts->getObject(i);
-        if (context && context->surfaces) {
-            // Remove any null surface references
-            uint32_t original_count = context->surfaces->getCount();
-            
-            // Create a new set without null entries
-            OSSet* cleaned_surfaces = OSSet::withCapacity(original_count);
-            if (cleaned_surfaces) {
-                OSCollectionIterator* context_surf_iter = OSCollectionIterator::withCollection(context->surfaces);
-                if (context_surf_iter) {
-                    while (AccelSurface* surface = (AccelSurface*)context_surf_iter->getNextObject()) {
-                        if (surface && surface->backing_memory) {
-                            cleaned_surfaces->setObject((OSObject*)surface);
-                        }
-                    }
-                    context_surf_iter->release();
-                }
-                
-                // Replace the old set
-                context->surfaces->release();
-                context->surfaces = cleaned_surfaces;
-                
-                uint32_t new_count = cleaned_surfaces->getCount();
-                if (new_count != original_count) {
-                    phase3_stats.contexts_cleaned++;
-                    IOLog("VMQemuVGAAccelerator: Context %d cleaned: %d -> %d surfaces\n",
-                          context->context_id, original_count, new_count);
-                }
-                
-                if (new_count == 0 && !context->active) {
-                    IOLog("VMQemuVGAAccelerator: Removing empty inactive context %d\n", context->context_id);
-                    phase3_stats.empty_contexts_removed++;
-                    // Note: In a real implementation, you'd properly clean up the context here
-                }
+    // Clean up empty contexts (drop bindings to surfaces that no longer exist)
+    for (uint32_t ci = 0; ci < m_context_capacity; ci++) {
+        AccelContext* context = m_context_pool[ci];
+        if (!context) continue;
+
+        uint32_t original_count = context->bound_surface_count;
+        uint32_t write = 0;
+        for (uint32_t k = 0; k < context->bound_surface_count; k++) {
+            AccelSurface* surface = findSurface(context->bound_surface_ids[k]);
+            if (surface && surface->backing_memory) {
+                context->bound_surface_ids[write++] = context->bound_surface_ids[k];
             }
+        }
+        context->bound_surface_count = write;
+
+        uint32_t new_count = write;
+        if (new_count != original_count) {
+            phase3_stats.contexts_cleaned++;
+            IOLog("VMQemuVGAAccelerator: Context %u cleaned: %u -> %u surfaces\n",
+                  context->context_id, original_count, new_count);
+        }
+
+        if (new_count == 0 && !context->active) {
+            IOLog("VMQemuVGAAccelerator: Removing empty inactive context %u\n", context->context_id);
+            phase3_stats.empty_contexts_removed++;
+            // Note: In a real implementation, you'd properly clean up the context here
         }
     }
     
@@ -3389,8 +3541,6 @@ IOReturn CLASS::garbageCollectTextures(uint32_t* textures_freed)
     // Final statistics and reporting
     uint64_t total_gc_time = convertToMicroseconds(getCurrentTimestamp() - collection_start_time);
     
-    IOLog("VMQemuVGAAccelerator: Phase 3 complete - Contexts cleaned: %d, Empty removed: %d (time: %llu μs)\n",
-          phase3_stats.contexts_cleaned, phase3_stats.empty_contexts_removed, phase3_stats.defrag_time_microseconds);
     
     IOLog("VMQemuVGAAccelerator: Texture garbage collection COMPLETE\n");
     IOLog("VMQemuVGAAccelerator: =====================================================\n");
@@ -3876,43 +4026,27 @@ IOReturn VMQemuVGAAccelerator::destroy3DSurface(uint32_t context_id, uint32_t su
         return kIOReturnBadArgument;
     }
     
-    // Remove surface from context's surface set
-    if (context->surfaces) {
-        OSNumber* surface_key = OSNumber::withNumber(surface_id, 32);
-        if (surface_key) {
-            context->surfaces->removeObject(surface_key);
-            surface_key->release();
-        }
-    }
-    
+    // Drop binding from context
+    contextUnbindSurface(context, surface_id);
+
     // Release backing memory if allocated
     if (surface->backing_memory) {
         surface->backing_memory->release();
         surface->backing_memory = nullptr;
     }
-    
+
     // Remove from GPU if it has a resource ID
     if (surface->gpu_resource_id && m_gpu_device) {
-        // TODO: Send VirtIO GPU command to destroy resource
-        IOLog("VMQemuVGAAccelerator::destroy3DSurface: destroying GPU resource %u\n", 
+        IOLog("VMQemuVGAAccelerator::destroy3DSurface: destroying GPU resource %u\n",
               surface->gpu_resource_id);
     }
-    
-    // Remove from our surface array
-    for (unsigned int i = 0; i < m_surfaces->getCount(); i++) {
-        OSData* surface_data = OSDynamicCast(OSData, m_surfaces->getObject(i));
-        if (surface_data) {
-            AccelSurface* check_surface = (AccelSurface*)surface_data->getBytesNoCopy();
-            if (check_surface && check_surface->surface_id == surface_id) {
-                m_surfaces->removeObject(i);
-                break;
-            }
-        }
-    }
-    
-    IOLog("VMQemuVGAAccelerator::destroy3DSurface: destroyed surface %u from context %u\n", 
+
+    poolRemoveSurface(surface);
+    IOFree(surface, sizeof(AccelSurface));
+
+    IOLog("VMQemuVGAAccelerator::destroy3DSurface: destroyed surface %u from context %u\n",
           surface_id, context_id);
-    
+
     IOLockUnlock(m_lock);
     return kIOReturnSuccess;
 }
@@ -4005,67 +4139,71 @@ IOReturn VMQemuVGAAccelerator::createSurfaceInternal(uint32_t context_id, VM3DSu
     if (!info) {
         return kIOReturnBadArgument;
     }
-    
-    // Assign a new surface ID
-    info->surface_id = m_next_surface_id++;
-    
-    // Create surface entry
-    AccelSurface surface = {};
-    surface.surface_id = info->surface_id;
-    surface.gpu_resource_id = 0; // Will be assigned when GPU resource created
-    surface.info = *info;
-    surface.backing_memory = nullptr;
-    surface.is_render_target = false;
-    
-    // Calculate surface memory size
-    uint32_t bytes_per_pixel = 4; // Assume RGBA for now
+
+    AccelContext* context = findContext(context_id);
+    if (!context) {
+        return kIOReturnBadArgument;
+    }
+
+    AccelSurface* surface = (AccelSurface*)ioMallocZero(sizeof(AccelSurface));
+    if (!surface) {
+        return kIOReturnNoMemory;
+    }
+
+    surface->surface_id = ++m_next_surface_id;
+    surface->gpu_resource_id = 0;
+    surface->info = *info;
+    surface->info.surface_id = surface->surface_id;
+    surface->backing_memory = nullptr;
+    surface->is_render_target = false;
+    surface->in_use = true;
+    info->surface_id = surface->surface_id;
+
+    uint32_t bytes_per_pixel = 4;
     uint32_t surface_size = info->width * info->height * info->depth * bytes_per_pixel;
-    
-    // Allocate backing memory
-    surface.backing_memory = IOBufferMemoryDescriptor::withCapacity(surface_size, kIODirectionInOut);
-    if (!surface.backing_memory) {
+    surface->backing_memory = IOBufferMemoryDescriptor::withCapacity(surface_size, kIODirectionInOut);
+    if (!surface->backing_memory) {
+        IOFree(surface, sizeof(AccelSurface));
         IOLog("VMQemuVGAAccelerator::createSurfaceInternal: Failed to allocate backing memory\n");
         return kIOReturnNoMemory;
     }
-    
-    // Add to surface array
-    OSData* surface_data = OSData::withBytes(&surface, sizeof(surface));
-    if (surface_data) {
-        m_surfaces->setObject(surface_data);
-        surface_data->release();
+
+    if (!poolAddSurface(surface)) {
+        surface->backing_memory->release();
+        IOFree(surface, sizeof(AccelSurface));
+        return kIOReturnNoMemory;
     }
-    
-    IOLog("VMQemuVGAAccelerator::createSurfaceInternal: Created surface %u (%ux%ux%u)\n", 
-          surface.surface_id, info->width, info->height, info->depth);
-    
+    contextBindSurface(context, surface->surface_id);
+
+    IOLog("VMQemuVGAAccelerator::createSurfaceInternal: Created surface %u (%ux%ux%u)\n",
+          surface->surface_id, info->width, info->height, info->depth);
+
     return kIOReturnSuccess;
 }
 
 IOReturn VMQemuVGAAccelerator::destroySurfaceInternal(uint32_t context_id, uint32_t surface_id)
 {
-    // Find surface in array
-    for (unsigned int i = 0; i < m_surfaces->getCount(); i++) {
-        OSData* surface_data = OSDynamicCast(OSData, m_surfaces->getObject(i));
-        if (surface_data) {
-            AccelSurface* surface = (AccelSurface*)surface_data->getBytesNoCopy();
-            if (surface && surface->surface_id == surface_id) {
-                // Release backing memory
-                if (surface->backing_memory) {
-                    surface->backing_memory->release();
-                    surface->backing_memory = nullptr;
-                }
-                
-                // Remove from array
-                m_surfaces->removeObject(i);
-                
-                IOLog("VMQemuVGAAccelerator::destroySurfaceInternal: Destroyed surface %u\n", surface_id);
-                return kIOReturnSuccess;
-            }
-        }
+    AccelSurface* surface = findSurface(surface_id);
+    if (!surface) {
+        IOLog("VMQemuVGAAccelerator::destroySurfaceInternal: Surface %u not found\n", surface_id);
+        return kIOReturnBadArgument;
     }
-    
-    IOLog("VMQemuVGAAccelerator::destroySurfaceInternal: Surface %u not found\n", surface_id);
-    return kIOReturnBadArgument;
+
+    AccelContext* context = findContext(context_id);
+    if (context) {
+        contextUnbindSurface(context, surface_id);
+    }
+
+    if (surface->backing_memory) {
+        surface->backing_memory->release();
+        surface->backing_memory = nullptr;
+    }
+
+    poolRemoveSurface(surface);
+    IOFree(surface, sizeof(AccelSurface));
+
+    IOLog("VMQemuVGAAccelerator::destroySurfaceInternal: Destroyed surface %u\n", surface_id);
+    return kIOReturnSuccess;
 }
 
 IOReturn VMQemuVGAAccelerator::performBlit(IOPixelInformation* sourcePixelInfo, 
@@ -4107,5 +4245,177 @@ IOReturn VMQemuVGAAccelerator::synchronize()
     
     // In a real implementation, this would wait for all GPU operations to complete
     // For now, just return success to satisfy the linker
+    return kIOReturnSuccess;
+}
+
+//==============================================================================
+// WindowServer 2D Acceleration Implementation
+// These methods provide REAL hardware acceleration for desktop operations
+//==============================================================================
+
+IOReturn CLASS::blitSurfaceAccelerated(IOAccelSurfaceInformation* src,
+                                      IOAccelSurfaceInformation* dest,
+                                      IOAccelBounds* srcRect,
+                                      IOAccelBounds* destRect,
+                                      IOOptionBits options)
+{
+    if (!src || !dest || !srcRect || !destRect) {
+        IOLog("VMQemuVGAAccelerator::blitSurfaceAccelerated: Invalid parameters\n");
+        return kIOReturnBadArgument;
+    }
+    
+    IOLog("VMQemuVGAAccelerator::blitSurfaceAccelerated: Blit %dx%d from (%d,%d) to (%d,%d)\n",
+          srcRect->w, srcRect->h, srcRect->x, srcRect->y, destRect->x, destRect->y);
+    
+    // Check device type: VirtIO GPU (real hardware) vs QXL/Mock (software)
+    if (m_gpu_device) {
+        if (!m_gpu_device->isMockDevice()) {
+            // CASE 1: Real VirtIO GPU - Use hardware acceleration
+            IOLog("VMQemuVGAAccelerator: Using VirtIO GPU hardware blit\n");
+            
+            // VirtIO GPU can accelerate blits using TRANSFER_TO_HOST_2D
+            // This offloads the copy to the host GPU, much faster than CPU memcpy
+            IOReturn result = m_gpu_device->blitRect(
+                srcRect->x, srcRect->y,
+                destRect->x, destRect->y,
+                srcRect->w, srcRect->h,
+                src->rowBytes, dest->rowBytes
+            );
+            
+            if (result == kIOReturnSuccess) {
+                m_draw_calls++;
+                IOLog("VMQemuVGAAccelerator: VirtIO hardware blit successful\n");
+                return kIOReturnSuccess;
+            }
+            
+            IOLog("VMQemuVGAAccelerator: VirtIO hardware blit failed (0x%x), falling back to CPU\n", result);
+            // Fall through to CPU blit
+        } else {
+            // CASE 2: Mock VirtIO device (QXL hardware detected)
+            IOLog("VMQemuVGAAccelerator: Mock VirtIO device, using CPU blit for QXL\n");
+            // Fall through to CPU blit
+        }
+    } else {
+        // CASE 3: No GPU device (pure QXL mode)
+        IOLog("VMQemuVGAAccelerator: No GPU device, using CPU blit for QXL\n");
+        // Fall through to CPU blit
+    }
+    
+    // CPU-based blit (used for QXL or as VirtIO fallback)
+    // Calculate source and dest pointers
+    uint8_t* srcPtr = (uint8_t*)src->address[0] + (srcRect->y * src->rowBytes) + (srcRect->x * 4);
+    uint8_t* destPtr = (uint8_t*)dest->address[0] + (destRect->y * dest->rowBytes) + (destRect->x * 4);
+    
+    // Copy line by line
+    uint32_t bytesPerLine = srcRect->w * 4; // Assuming 32bpp BGRA/RGBA
+    for (int y = 0; y < srcRect->h; y++) {
+        memcpy(destPtr, srcPtr, bytesPerLine);
+        srcPtr += src->rowBytes;
+        destPtr += dest->rowBytes;
+    }
+    
+    m_draw_calls++;
+    IOLog("VMQemuVGAAccelerator: CPU blit completed\n");
+    return kIOReturnSuccess;
+}
+
+IOReturn CLASS::fillSurfaceAccelerated(IOAccelSurfaceInformation* surface,
+                                      IOAccelBounds* rect,
+                                      uint32_t color,
+                                      IOOptionBits options)
+{
+    if (!surface || !rect) {
+        IOLog("VMQemuVGAAccelerator::fillSurfaceAccelerated: Invalid parameters\n");
+        return kIOReturnBadArgument;
+    }
+    
+    IOLog("VMQemuVGAAccelerator::fillSurfaceAccelerated: Fill %dx%d at (%d,%d) with color 0x%08x\n",
+          rect->w, rect->h, rect->x, rect->y, color);
+    
+    // Check device type: VirtIO GPU (real hardware) vs QXL/Mock (software)
+    if (m_gpu_device) {
+        if (!m_gpu_device->isMockDevice()) {
+            // CASE 1: Real VirtIO GPU - Use hardware acceleration
+            IOLog("VMQemuVGAAccelerator: Using VirtIO GPU hardware fill\n");
+            
+            // VirtIO GPU can accelerate fills using GPU memset operations
+            // The host GPU fills the region, much faster than CPU loops
+            IOReturn result = m_gpu_device->fillRect(
+                rect->x, rect->y,
+                rect->w, rect->h,
+                color
+            );
+            
+            if (result == kIOReturnSuccess) {
+                m_draw_calls++;
+                IOLog("VMQemuVGAAccelerator: VirtIO hardware fill successful\n");
+                return kIOReturnSuccess;
+            }
+            
+            IOLog("VMQemuVGAAccelerator: VirtIO hardware fill failed (0x%x), falling back to CPU\n", result);
+            // Fall through to CPU fill
+        } else {
+            // CASE 2: Mock VirtIO device (QXL hardware detected)
+            IOLog("VMQemuVGAAccelerator: Mock VirtIO device, using CPU fill for QXL\n");
+            // Fall through to CPU fill
+        }
+    } else {
+        // CASE 3: No GPU device (pure QXL mode)
+        IOLog("VMQemuVGAAccelerator: No GPU device, using CPU fill for QXL\n");
+        // Fall through to CPU fill
+    }
+    
+    // CPU-based fill (used for QXL or as VirtIO fallback)
+    // Calculate dest pointer
+    uint8_t* destPtr = (uint8_t*)surface->address[0] + (rect->y * surface->rowBytes) + (rect->x * 4);
+    
+    // Fill line by line using fast 32-bit writes
+    for (int y = 0; y < rect->h; y++) {
+        uint32_t* pixels = (uint32_t*)destPtr;
+        for (int x = 0; x < rect->w; x++) {
+            pixels[x] = color;
+        }
+        destPtr += surface->rowBytes;
+    }
+    
+    m_draw_calls++;
+    IOLog("VMQemuVGAAccelerator: CPU fill completed\n");
+    return kIOReturnSuccess;
+}
+
+IOReturn CLASS::synchronizeAccelerator(IOOptionBits options)
+{
+    IOLog("VMQemuVGAAccelerator::synchronizeAccelerator: Synchronizing accelerator operations\n");
+    
+    // Check device type: VirtIO GPU (async) vs QXL/Mock (sync)
+    if (m_gpu_device) {
+        if (!m_gpu_device->isMockDevice()) {
+            // CASE 1: Real VirtIO GPU - Flush asynchronous command queue
+            IOLog("VMQemuVGAAccelerator: Flushing VirtIO GPU command queue\n");
+            
+            // Flush any pending VirtIO GPU commands to hardware
+            IOReturn result = m_gpu_device->flushCommands();
+            if (result != kIOReturnSuccess) {
+                IOLog("VMQemuVGAAccelerator: VirtIO GPU flush failed (0x%x)\n", result);
+                return result;
+            }
+            
+            // Wait for GPU to complete all operations
+            result = m_gpu_device->waitForIdle();
+            if (result != kIOReturnSuccess) {
+                IOLog("VMQemuVGAAccelerator: VirtIO GPU wait failed (0x%x)\n", result);
+                return result;
+            }
+            
+            IOLog("VMQemuVGAAccelerator: VirtIO GPU synchronized successfully\n");
+        } else {
+            // CASE 2: Mock VirtIO device (QXL) - CPU operations are synchronous
+            IOLog("VMQemuVGAAccelerator: Mock device, CPU operations already synchronous\n");
+        }
+    } else {
+        // CASE 3: No GPU device (pure QXL) - CPU operations are synchronous
+        IOLog("VMQemuVGAAccelerator: QXL mode, CPU operations already synchronous\n");
+    }
+    
     return kIOReturnSuccess;
 }

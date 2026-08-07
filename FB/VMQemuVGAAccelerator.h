@@ -8,6 +8,7 @@
 #include <IOKit/IOWorkLoop.h>
 #include <IOKit/graphics/IOAccelerator.h>
 
+class IOFramebuffer;
 class VMQemuVGA;
 class VMVirtIOGPU;
 class VMShaderManager;
@@ -78,7 +79,7 @@ class VMQemuVGAAccelerator : public IOAccelerator
 protected:
     // Protected so subclasses (e.g. VMVirtIOGPUAccelerator) can access core
     // accelerator state (GPU device, workloop, command gate, etc.).
-    VMQemuVGA* m_framebuffer;
+    IOFramebuffer* m_framebuffer;  // Base class - supports both VMQemuVGA and VMVirtIOFramebuffer
     VMVirtIOGPU* m_gpu_device;
     IOWorkLoop* m_workloop;
     IOCommandGate* m_command_gate;
@@ -91,7 +92,6 @@ protected:
     VMMetalBridge* m_metal_bridge;
     VMMetalPlugin* m_metal_plugin;
     
-    // Phase 3 Integration Manager
     VMPhase3Manager* m_phase3_manager;
     
     // Context management
@@ -99,11 +99,13 @@ protected:
         uint32_t context_id;
         uint32_t gpu_context_id;
         bool active;
-        OSSet* surfaces;
         IOMemoryDescriptor* command_buffer;
         task_t owning_task;
+        uint32_t* bound_surface_ids;
+        uint32_t bound_surface_count;
+        uint32_t bound_surface_capacity;
     };
-    
+
     // Surface management
     struct AccelSurface {
         uint32_t surface_id;
@@ -111,12 +113,35 @@ protected:
         VM3DSurfaceInfo info;
         IOMemoryDescriptor* backing_memory;
         bool is_render_target;
+        bool in_use;
     };
-    
-    OSArray* m_contexts;
-    OSArray* m_surfaces;
+
+    enum {
+        kInitialContextCapacity = 16,
+        kInitialSurfaceCapacity = 64
+    };
+
+    AccelContext** m_context_pool;
+    uint32_t m_context_count;
+    uint32_t m_context_capacity;
+
+    AccelSurface** m_surface_pool;
+    uint32_t m_surface_count;
+    uint32_t m_surface_capacity;
+
     uint32_t m_next_context_id;
     uint32_t m_next_surface_id;
+
+    bool poolAddContext(AccelContext* context);
+    bool poolAddSurface(AccelSurface* surface);
+    void poolRemoveContext(AccelContext* context);
+    void poolRemoveSurface(AccelSurface* surface);
+    bool poolGrowContext();
+    bool poolGrowSurface();
+
+    bool contextBindSurface(AccelContext* ctx, uint32_t surface_id);
+    void contextUnbindSurface(AccelContext* ctx, uint32_t surface_id);
+    bool contextHasSurface(AccelContext* ctx, uint32_t surface_id);
     
     // Statistics
     uint32_t m_draw_calls;
@@ -179,8 +204,8 @@ public:
     uint32_t getMaxTextureSize() const;
     uint32_t getMaxRenderTargets() const;
     
-    // Integration with framebuffer
-    VMQemuVGA* getFramebuffer() const { return m_framebuffer; }
+    // Integration with framebuffer  - returns IOFramebuffer base class (supports both QXL and VirtIO)
+    IOFramebuffer* getFramebuffer() const { return m_framebuffer; }
     VMVirtIOGPU* getGPUDevice() const { return m_gpu_device; }
     
     // Advanced 3D subsystems
@@ -216,7 +241,6 @@ public:
     IOReturn drawIndexedPrimitives(uint32_t context_id, uint32_t primitive_type,
                                   uint32_t index_count, uint32_t first_index);
     
-    // Phase 3 Advanced API Integration
     VMPhase3Manager* getPhase3Manager() { return m_phase3_manager; }
     VMMetalBridge* getMetalBridge() { return m_metal_bridge; }
     VMVirtIOGPU* getGPUDevice() { return m_gpu_device; }
@@ -276,6 +300,27 @@ public:
     
     // Power management
     IOReturn setPowerState(unsigned long powerState, IOService* whatDevice) override;
+    
+    // ========================================================================
+    // WindowServer 2D Acceleration API
+    // These methods are called by IOGraphicsFamily for desktop operations
+    // ========================================================================
+    
+    // Surface-to-surface hardware blit (used for window dragging, scrolling)
+    IOReturn blitSurfaceAccelerated(IOAccelSurfaceInformation* src,
+                                   IOAccelSurfaceInformation* dest,
+                                   IOAccelBounds* srcRect,
+                                   IOAccelBounds* destRect,
+                                   IOOptionBits options);
+    
+    // Fill rectangle with solid color (used for window clearing, backgrounds)
+    IOReturn fillSurfaceAccelerated(IOAccelSurfaceInformation* surface,
+                                   IOAccelBounds* rect,
+                                   uint32_t color,
+                                   IOOptionBits options);
+    
+    // Synchronize all pending accelerated operations
+    IOReturn synchronizeAccelerator(IOOptionBits options);
 };
 
 // User client for 3D acceleration
