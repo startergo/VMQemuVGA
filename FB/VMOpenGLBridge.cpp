@@ -4068,18 +4068,10 @@ IOReturn CLASS::registerWithQuartzOpenGL()
     // Register through the accelerator which has access to setProperty
     if (m_accelerator) {
         // Set system properties to integrate with Quartz 2D Extreme and OpenGL layer
-        m_accelerator->setProperty("com.apple.QuartzGL.Accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.QuartzGL.DriverVersion", "VMQemuVGA-3.0.0");
-        m_accelerator->setProperty("com.apple.QuartzGL.VendorID", (UInt32)0x1AF4); // Red Hat VirtIO
-        m_accelerator->setProperty("com.apple.QuartzGL.DeviceID", (UInt32)0x1050); // VirtIO GPU
         
         // Register as a Quartz 2D accelerated renderer
-        m_accelerator->setProperty("com.apple.coreimage.accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.coreimage.vendor", "VMQemuVGA");
         
         // Enable Core Animation hardware acceleration
-        m_accelerator->setProperty("com.apple.CoreAnimation.accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.CoreAnimation.OpenGLSupported", kOSBooleanTrue);
     }
     
     IOLog("VMOpenGLBridge: Successfully registered with Quartz OpenGL system\n");
@@ -4093,21 +4085,12 @@ IOReturn CLASS::setupCoreGraphicsIntegration()
     // Register through the accelerator which has access to setProperty
     if (m_accelerator) {
         // Register as a Core Graphics accelerated surface provider
-        m_accelerator->setProperty("CGSAcceleratedSurface", kOSBooleanTrue);
-        m_accelerator->setProperty("CGSHardwareAccelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("CGSOpenGLSupported", kOSBooleanTrue);
         
         // Enable Canvas 2D hardware acceleration hooks
-        m_accelerator->setProperty("com.apple.WebKit.Canvas2D.Accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.WebKit.WebGL.Accelerated", kOSBooleanTrue);
         
         // Enable bitmap and image acceleration
-        m_accelerator->setProperty("CGBitmapContextAccelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("CGImageAccelerated", kOSBooleanTrue);
         
         // YouTube-specific Canvas optimizations
-        m_accelerator->setProperty("com.google.Chrome.Canvas.Accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.Safari.Canvas.Accelerated", kOSBooleanTrue);
     }
     
     IOLog("VMOpenGLBridge: Core Graphics integration setup completed\n");
@@ -4121,26 +4104,12 @@ IOReturn CLASS::setupBrowserOpenGLHooks()
     // Register through the accelerator which has access to setProperty
     if (m_accelerator) {
         // Chrome-specific OpenGL acceleration
-        m_accelerator->setProperty("com.google.Chrome.GPU.Accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("com.google.Chrome.WebGL.Accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("com.google.Chrome.Canvas.GPU", kOSBooleanTrue);
-        m_accelerator->setProperty("com.google.Chrome.Video.Accelerated", kOSBooleanTrue);
         
         // Safari WebKit acceleration
-        m_accelerator->setProperty("com.apple.WebKit.AcceleratedDrawing", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.WebKit.AcceleratedCompositing", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.WebKit.WebGLEnabled", kOSBooleanTrue);
-        m_accelerator->setProperty("com.apple.WebKit.Canvas3D", kOSBooleanTrue);
         
         // Firefox acceleration hooks
-        m_accelerator->setProperty("org.mozilla.Firefox.WebGL.Accelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("org.mozilla.Firefox.Canvas.Hardware", kOSBooleanTrue);
         
         // System-wide WebGL and Canvas hooks
-        m_accelerator->setProperty("WebGLRenderingContextAccelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("CanvasRenderingContext2DAccelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("HTMLCanvasElementAccelerated", kOSBooleanTrue);
-        m_accelerator->setProperty("HTMLVideoElementAccelerated", kOSBooleanTrue);
     }
     
     IOLog("VMOpenGLBridge: Browser OpenGL hooks setup completed\n");

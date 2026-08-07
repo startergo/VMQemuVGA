@@ -101,8 +101,6 @@ bool VMVirtIOAGDC::start(IOService* provider)
     setProperty("AGDCVersion", 1, 32);
     
     // Add GPU Controller properties that WindowServer expects
-    setProperty("GPUController", kOSBooleanTrue);
-    setProperty("AGDPClientControl", kOSBooleanTrue);
     
     // Try to attach to AppleGraphicsDeviceControlPlugin for GPU Wrangler visibility
     IOService *agdcPlugin = IOService::waitForMatchingService(IOService::nameMatching("AppleGraphicsDeviceControlPlugin"), 2000000000ULL);
@@ -286,7 +284,6 @@ IOReturn VMVirtIOAGDC::registerWithGPUWrangler()
         
         // CRITICAL: Set the exact properties GPU Wrangler looks for to link AGDC to GPU
         // This tells GPU Wrangler this AGDC service belongs to this specific GPU device
-        setProperty("gpu-device-id", target_gpu_device->getRegistryEntryID(), 64);
         setProperty("IORegistryEntryID", target_gpu_device->getRegistryEntryID(), 64);
         
         // Copy essential PCI properties from GPU device for proper identification

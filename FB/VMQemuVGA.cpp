@@ -613,13 +613,6 @@ bool CLASS::start(IOService* provider)
 	// Note: VRAM,totalsize is set earlier based on actual detected VRAM size
 	// Don't override it here to preserve the correct value
 	
-	// Set IOSurface dimensions unconditionally
-	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxWidth to %u (unconditional)\n", iosurfaceMaxWidth);
-	setProperty("IOSurfaceMaxWidth", iosurfaceMaxWidth);
-	
-	IOLog("VMQemuVGA: DEBUG - Setting IOSurfaceMaxHeight to %u (unconditional)\n", iosurfaceMaxHeight);
-	setProperty("IOSurfaceMaxHeight", iosurfaceMaxHeight);
-	
 	// Register with Snow Leopard's system graphics frameworks (moved outside conditional)
 	if (sys_ret_outside != kIOReturnSuccess) {
 		IOLog("VMQemuVGA: Warning - Failed to register with system graphics (0x%x)\n", sys_ret_outside);
@@ -1468,12 +1461,6 @@ IOReturn CLASS::getAttribute(IOSelect attribute, uintptr_t* value)
 		}
 		
 		// Set cursor stability properties with refresh throttling
-		setProperty("IOCursorMemoryDescriptor", kOSBooleanTrue);
-		setProperty("IOSoftwareCursor", kOSBooleanFalse);
-		setProperty("IOHardwareCursorActive", kOSBooleanTrue);
-		setProperty("IOCursorFlickerFix", kOSBooleanTrue);
-		setProperty("IOCursorRefreshThrottle", kOSBooleanTrue);
-		setProperty("IOCursorUpdateDelay", (UInt32)16); // 60fps max refresh
 		setProperty("IODisplayCursorSupported", kOSBooleanTrue);
 		
 		r = kIOReturnSuccess;
@@ -1784,14 +1771,10 @@ IOReturn CLASS::setDisplayMode(IODisplayModeID displayMode, IOIndex depth)
 	IOLockLock(m_iolock);
 	
 	// Pre-mode change cursor stability - save cursor state
-	setProperty("IOCursorStatePreserved", kOSBooleanTrue);
 	
 	svga.SetMode(dme->width, dme->height, 32U);
 	
 	// Post-mode change cursor restoration with flicker prevention
-	setProperty("IOHardwareCursorActive", kOSBooleanTrue);
-	setProperty("IOCursorRefreshThrottle", kOSBooleanTrue);
-	setProperty("IOCursorUpdateDelay", (UInt32)16); // 60fps throttle
 	
 	IOLockUnlock(m_iolock);
 	
@@ -2568,7 +2551,6 @@ void VMQemuVGA::publishDeviceForLiluFrameworks()
 		
 		// Set property for Lilu frameworks to detect
 		setProperty("VMQemuVGA-Lilu-Device-Info", liluProps);
-		setProperty("VMQemuVGA-Hyper-V-Compatible", true);
 		setProperty("VMQemuVGA-DDA-Device", subsystemVendorID == 0x1414);
 		
 		liluProps->release();
@@ -3194,8 +3176,6 @@ void CLASS::enableVSync(bool enabled)
 	IOLog("VMQemuVGA::enableVSync: %s VSync for display synchronization\n", 
 		  enabled ? "Enabling" : "Disabling");
 	
-	setProperty("VSync-Enabled", enabled ? kOSBooleanTrue : kOSBooleanFalse);
-	setProperty("Display-Synchronization", enabled ? kOSBooleanTrue : kOSBooleanFalse);
 	
 	IOLog("VMQemuVGA::enableVSync: VSync %s\n", enabled ? "enabled" : "disabled");
 }
@@ -3210,10 +3190,6 @@ void CLASS::enableVirgl()
 	}
 	
 	// Set Virgl properties for WebGL compatibility
-	setProperty("Virgl-Renderer", kOSBooleanTrue);
-	setProperty("OpenGL-ES-Support", kOSBooleanTrue);
-	setProperty("WebGL-Compatible", kOSBooleanTrue);
-	setProperty("GLSL-ES-Shaders", kOSBooleanTrue);
 	
 	IOLog("VMQemuVGA::enableVirgl: Virgil 3D renderer simulation enabled\n");
 }
@@ -3221,17 +3197,14 @@ void CLASS::enableVirgl()
 void CLASS::setMockMode(bool enabled)
 {
 	IOLog("VMQemuVGA::setMockMode: %s mock mode for testing\n", enabled ? "Enabling" : "Disabling");
-	setProperty("Mock-Mode", enabled ? kOSBooleanTrue : kOSBooleanFalse);
 }
 
 void CLASS::setBasic3DSupport(bool enabled)
 {
 	IOLog("VMQemuVGA::setBasic3DSupport: %s basic 3D support\n", enabled ? "Enabling" : "Disabling");
-	setProperty("Basic-3D-Support", enabled ? kOSBooleanTrue : kOSBooleanFalse);
 	
 	if (enabled) {
 		m_3d_acceleration_enabled = true;
-		setProperty("3D-Acceleration-Available", kOSBooleanTrue);
 	}
 }
 
@@ -3239,9 +3212,6 @@ void CLASS::enableResourceBlob()
 {
 	IOLog("VMQemuVGA::enableResourceBlob: Enabling resource blob support simulation\n");
 	
-	setProperty("Resource-Blob-Support", kOSBooleanTrue);
-	setProperty("Advanced-Resource-Types", kOSBooleanTrue);
-	setProperty("Cross-Domain-Resources", kOSBooleanTrue);
 	
 	IOLog("VMQemuVGA::enableResourceBlob: Resource blob support enabled\n");
 }
@@ -3275,25 +3245,13 @@ void CLASS::initializeWebGLAcceleration()
 	}
 	
 	// Set WebGL properties
-	setProperty("WebGL-Hardware-Acceleration", kOSBooleanTrue);
-	setProperty("WebGL-Context-Support", kOSBooleanTrue);
-	setProperty("WebGL-Texture-Support", kOSBooleanTrue);
-	setProperty("WebGL-Shader-Support", kOSBooleanTrue);
 	
 	// YouTube and Canvas optimizations
-	setProperty("YouTube-WebGL-Optimization", kOSBooleanTrue);
-	setProperty("Canvas-WebGL-Integration", kOSBooleanTrue);
-	setProperty("Video-Decode-WebGL", kOSBooleanTrue);
 	
 	// Advanced WebGL features
-	setProperty("WebGL-Float-Textures", kOSBooleanTrue);
-	setProperty("WebGL-Depth-Textures", kOSBooleanTrue);
-	setProperty("WebGL-Vertex-Array-Objects", kOSBooleanTrue);
-	setProperty("WebGL-GLSL-ES-300", kOSBooleanTrue);
 	
 	// Memory allocation for WebGL resources
 	size_t webgl_memory_size = 64 * 1024 * 1024; // 64MB for WebGL operations
-	setProperty("WebGL-Memory-Pool-Size", (UInt32)webgl_memory_size);
 	
 	IOLog("VMQemuVGA::initializeWebGLAcceleration: WebGL acceleration initialized with %llu MB memory\n",
 		  (uint64_t)(webgl_memory_size / (1024 * 1024)));

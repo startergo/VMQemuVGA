@@ -50,7 +50,6 @@ bool VMVirtIOGPUWrangler::start(IOService* provider)
     setProperty("IOClass", "VMVirtIOGPUWrangler");
     setProperty("IOMatchCategory", "GraphicsDeviceControl");  // Generic category, not Apple-specific
     setProperty("IOProviderClass", "VMVirtIOGPU");
-    setProperty("VirtIOGPUWrangler", true);  // Our own identifier
     
     // VirtIO GPU vendor information
     setProperty("vendor-id", (UInt32)0x1af4);  // Red Hat VirtIO vendor ID
@@ -59,10 +58,6 @@ bool VMVirtIOGPUWrangler::start(IOService* provider)
     setProperty("subsystem-id", (UInt32)0x1100);
     
     // GPU capabilities
-    setProperty("gpu-core-count", (UInt32)1);
-    setProperty("gpu-memory-size", (UInt32)(256 * 1024 * 1024)); // 256MB default
-    setProperty("gpu-type", "VirtIO GPU");
-    setProperty("gpu-3d-acceleration", false); // VirtIO GPU typically doesn't have 3D
     
     // Register with AppleGPUWrangler if available
     IOReturn result = registerWithGPUWrangler();
@@ -181,7 +176,6 @@ IOReturn VMVirtIOGPUWrangler::registerWithGPUWrangler()
         publishResource("VirtIOGPUAvailable", this);
         
         displayWrangler->release();
-        setProperty("registered-with-display-wrangler", true);
         
         // Also try to notify the Window Server that we're available
         IOService* wsService = IOService::waitForMatchingService(
@@ -200,7 +194,6 @@ IOReturn VMVirtIOGPUWrangler::registerWithGPUWrangler()
     
     // Alternative: Publish ourselves as available to the graphics system
     publishResource("GraphicsDeviceAvailable", this);
-    setProperty("graphics-device-available", true);
     
     return kIOReturnSuccess;
 }

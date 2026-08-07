@@ -159,9 +159,6 @@ IOService* CLASS::probe(IOService* provider, SInt32* score)
         *score = 15000; // Between IONDRV (20000) and our framebuffer (10000) for proper sequencing
         
         // Publish device type for VMVirtIOFramebuffer coordination
-        provider->setProperty("VMVirtIODeviceType", "virtio-vga-gl");
-        provider->setProperty("VMVirtIOCompatibilityMode", "vga-compatibility");
-        provider->setProperty("VMVirtIONativeMode", "scanout-switchable");
         
         IOLog("VMVirtIOGPU::probe: virtio-vga-gl VGA compatibility mode - can switch to native via SET_SCANOUT\n");
         
@@ -171,9 +168,6 @@ IOService* CLASS::probe(IOService* provider, SInt32* score)
         *score = 30000; // Higher than IONDRV (20000) for primary display role
         
         // Publish device type for VMVirtIOFramebuffer coordination
-        provider->setProperty("VMVirtIODeviceType", "virtio-gpu-gl-pci");
-        provider->setProperty("VMVirtIOCompatibilityMode", "native-only");
-        provider->setProperty("VMVirtIONativeMode", "always-native");
         
         IOLog("VMVirtIOGPU::probe: virtio-gpu-gl-pci native mode - no VGA compatibility available\n");
     }
@@ -311,7 +305,6 @@ bool CLASS::start(IOService* provider)
     getWorkLoop()->addEventSource(m_command_gate);
     
     // Set device properties
-    setProperty("3D Acceleration", "VirtIO GPU Hardware");
     setProperty("Vendor", "Red Hat, Inc.");
     setProperty("Device", "VirtIO GPU");
     
@@ -347,8 +340,6 @@ bool CLASS::start(IOService* provider)
     setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
     setProperty("IOAccelerator3D", kOSBooleanTrue);
     setProperty("IOAcceleratorFamily", "IOGraphicsFamily");
-    setProperty("VirtIOGPU-3D-Commands-Supported", kOSBooleanTrue);
-    setProperty("3D Acceleration", "VirtIO GPU Hardware");
     
     // d74: ENABLE accelerator types array
     OSArray* accelTypes = OSArray::withCapacity(4);
@@ -401,10 +392,6 @@ bool CLASS::start(IOService* provider)
         acceleratorService->setProperty("IOVideoAccelTypes", (uint32_t)7, 32);  // Video acceleration
         
         // GPU capability flags (emulate real hardware patterns)
-        acceleratorService->setProperty("gpu-core-count", (uint32_t)16, 32);
-        acceleratorService->setProperty("gpu-memory-bandwidth", (uint32_t)25600, 32);
-        acceleratorService->setProperty("supports-3D-acceleration", kOSBooleanTrue);
-        acceleratorService->setProperty("supports-OpenGL", kOSBooleanTrue);
         
         // Catalina OpenGL hardware renderer requirements
         acceleratorService->setProperty("IOGLESBundleName", "GLEngine");
@@ -3224,8 +3211,6 @@ void CLASS::enableVSync(bool enabled) {
     }
     
     // Configure global VSync setting for the VirtIO GPU device
-    setProperty("VirtIOGPU-VSync-Enabled", enabled ? kOSBooleanTrue : kOSBooleanFalse);
-    setProperty("VirtIOGPU-Display-Sync", enabled ? kOSBooleanTrue : kOSBooleanFalse);
     
     IOLog("VMVirtIOGPU::enableVSync: VSync configuration completed: %s\n", enabled ? "ENABLED" : "DISABLED");
 }
@@ -3588,10 +3573,6 @@ void CLASS::enable3DAcceleration() {
     IOLog("VMVirtIOGPU::enable3DAcceleration: VirtIO GPU 3D feature enabled successfully\n");
     
     // Set hardware rendering mode properties
-    setProperty("VirtIOGPU-Rendering-Mode", "Hardware");
-    setProperty("VirtIOGPU-Hardware-3D-Enabled", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Software-Fallback", kOSBooleanFalse);
-    setProperty("VirtIOGPU-GPU-Acceleration", kOSBooleanTrue);
     IOLog("VMVirtIOGPU::enable3DAcceleration: Hardware rendering mode activated\n");
     
     // Enable Virgil 3D renderer if supported
@@ -3602,43 +3583,24 @@ void CLASS::enable3DAcceleration() {
         IOLog("VMVirtIOGPU::enable3DAcceleration: Enabling WebGL optimizations for Virgl\n");
         
         // Configure WebGL-optimized command buffers
-        setProperty("VirtIOGPU-WebGL-CommandBuffer", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-TextureStreaming", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-ShaderOptimization", kOSBooleanTrue);
         
         // Enable hardware-accelerated WebGL features
-        setProperty("VirtIOGPU-WebGL-VertexArrayObjects", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-FloatTextures", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-DepthTextures", kOSBooleanTrue);
-        setProperty("VirtIOGPU-WebGL-GLSL-ES", kOSBooleanTrue);
     }
     
     // Enable Snow Leopard specific WebGL compatibility
     IOLog("VMVirtIOGPU::enable3DAcceleration: Configuring Snow Leopard WebGL compatibility\n");
-    setProperty("VirtIOGPU-SnowLeopard-WebGL", kOSBooleanTrue);
-    setProperty("VirtIOGPU-LegacyOpenGL-Bridge", kOSBooleanTrue);
-    setProperty("VirtIOGPU-HardwareGL-Acceleration", kOSBooleanTrue);
     
     // YouTube Canvas and Video rendering optimizations
     IOLog("VMVirtIOGPU::enable3DAcceleration: Enabling YouTube Canvas/Video acceleration\n");
-    setProperty("VirtIOGPU-Canvas-2D-Acceleration", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Video-Decode-Acceleration", kOSBooleanTrue);
-    setProperty("VirtIOGPU-HTML5-Video-Optimize", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Canvas-ImageData-Fast", kOSBooleanTrue);
-    setProperty("VirtIOGPU-Canvas-WebGL-Context", kOSBooleanTrue);
     
     // Advanced texture and rendering optimizations
-    setProperty("VirtIOGPU-TextureCompression-S3TC", kOSBooleanTrue);
-    setProperty("VirtIOGPU-TextureCompression-ETC", kOSBooleanTrue);
     
     // Set anisotropic filtering level using proper OSNumber
     OSNumber* anisotropicLevel = OSNumber::withNumber((UInt32)16, 32);
     if (anisotropicLevel) {
-        setProperty("VirtIOGPU-Anisotropic-Filtering", anisotropicLevel);
         anisotropicLevel->release();
     }
     
-    setProperty("VirtIOGPU-MultiSampling-4x", kOSBooleanTrue);
     
     // Enable resource blob for advanced 3D resource types
     enableResourceBlob();
@@ -3775,7 +3737,6 @@ bool CLASS::setupGPUMemoryRegions() {
         setProperty("IOGLAccelerationTypes", glAccelTypes);
         setProperty("IOAcceleratorRevision", accelRevision);
         setProperty("ATY,DeviceID", atyDeviceID);
-        setProperty("gpu-core-count", gpuCoreCount);
         
         accelTypes->release();
         glAccelTypes->release();
@@ -3794,7 +3755,6 @@ bool CLASS::setupGPUMemoryRegions() {
     // Note: MetalPluginName removed - let system use default Metal path through IOAccelerator
     setProperty("IOAcceleratorClassName", "VMVirtIOGPUAccelerator");
     setProperty("PerformanceStatistics", kOSBooleanTrue);
-    setProperty("graphic-options", (uint32_t)0x4, 32);     // Hardware rendering flag
     
     // Hardware rendering capability flags from real GPU patterns
     // NOTE: VRAM properties are handled by VMVirtIOFramebuffer to avoid duplication
@@ -4002,10 +3962,6 @@ void CLASS::initializeWebGLAcceleration() {
     OSNumber* webglMemorySize = OSNumber::withNumber((uint32_t)webgl_memory_size, 32);
     
     if (webglContextID && canvasResourceID && depthResourceID && webglMemorySize) {
-        setProperty("VirtIOGPU-WebGL-Context-ID", webglContextID);
-        setProperty("VirtIOGPU-Canvas-Resource-ID", canvasResourceID);
-        setProperty("VirtIOGPU-Depth-Resource-ID", depthResourceID);
-        setProperty("VirtIOGPU-WebGL-Memory-Size", webglMemorySize);
         
         webglContextID->release();
         canvasResourceID->release();
@@ -4028,9 +3984,6 @@ void CLASS::initializeWebGLAcceleration() {
     }
     
     // Store WebGL acceleration state in the main VirtIO GPU service
-    setProperty("VirtIOGPU-WebGL-Enabled", kOSBooleanTrue);
-    setProperty("VirtIOGPU-WebGL-Context-Ready", webgl_context_id);
-    setProperty("VirtIOGPU-3D-Commands-Supported", kOSBooleanTrue);
     
     IOLog("VMVirtIOGPU::initializeWebGLAcceleration: WebGL acceleration configured successfully\n");
 }
@@ -4331,7 +4284,6 @@ IOReturn CLASS::setupDisplayResource(uint32_t width, uint32_t height, uint32_t d
         
         IOReturn secondary_ret = createResource2D(secondary_resource_id, VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM, width / 2, height);
         if (secondary_ret == kIOReturnSuccess) {
-            setProperty("secondary-display-resource-id", secondary_resource_id);
             IOLog("VMVirtIOGPU::setupDisplayResource: Secondary display resource created for dual display mode\n");
         }
     }
@@ -4619,7 +4571,6 @@ bool VMVirtIOGPUAccelerator::start(IOService* provider)
     // WindowServer queries the ACCELERATOR (not framebuffer) for AGDC support
     // Hardware video acceleration enabled for VirtIO GPU
     setProperty("AGDCEnabled", kOSBooleanFalse);
-    setProperty("AGDPClientControl", kOSBooleanFalse);
     setProperty("IOVideoAcceleration", kOSBooleanTrue);
     setProperty("IOHardwareVideoAcceleration", kOSBooleanTrue);
     setProperty("IOGVACodec", kOSBooleanTrue);
@@ -4631,15 +4582,6 @@ bool VMVirtIOGPUAccelerator::start(IOService* provider)
     
     // Set OpenGL-specific device properties (from VMQemuVGAAccelerator)
     setProperty("IOClass", "VMVirtIOGPUAccelerator");
-    setProperty("3D Hardware Acceleration", true);
-    setProperty("Max Contexts", 16U, 32);
-    setProperty("Max Surfaces", 64U, 32);
-    setProperty("Supports Shaders", true);  // Inherited from VMQemuVGAAccelerator
-    setProperty("Max Texture Size", 4096U, 32);  // Common GPU capability
-    setProperty("Shader Manager", "Enabled");
-    setProperty("Texture Manager", "Enabled");
-    setProperty("Command Buffer Pool", "Enabled");
-    setProperty("Advanced Features", "VirtIO GPU with OpenGL");
     
     // CRITICAL: Set renderer enumeration properties for CGLQueryRendererInfo()
     // Without these, CGL cannot discover the accelerator in Catalina

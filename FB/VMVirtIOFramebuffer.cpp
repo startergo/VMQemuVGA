@@ -102,8 +102,6 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     if (vram_size_num && vram_mb_num) {
         setProperty("VRAM,totalsize", vram_size_num);
         setProperty("ATY,memsize", vram_size_num);
-        setProperty("gpu-memory-size", vram_size_num);
-        setProperty("framebuffer-memory", vram_size_num);
         setProperty("IOAccelMemorySize", vram_size_num);
         setProperty("VRAM,totalMB", vram_mb_num);
         
@@ -136,8 +134,6 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     setProperty("AGDCCapabilities", OSNumber::withNumber(0ULL, 32));
     
     // DISABLE GPU Controller - we're a simple framebuffer
-    setProperty("GPUController", kOSBooleanFalse);
-    setProperty("AGDPClientControl", kOSBooleanFalse);
     
     // ENABLE Hardware Video Acceleration for VirtIO GPU
     // Tell WindowServer we have hardware video acceleration capabilities
@@ -826,10 +822,6 @@ IOReturn VMVirtIOFramebuffer::setupForCurrentConfig()
     // CRITICAL: Force GUI mode properties immediately
     setProperty("IOFramebufferOpenForGUI", kOSBooleanTrue);
     // NOTE: Keep IOConsoleDevice=true (set by isConsoleDevice()) for QXL-style dual capability
-    setProperty("IOGUIDevice", kOSBooleanTrue);           // Enable GUI
-    setProperty("IOGUIActive", kOSBooleanTrue);
-    setProperty("VMVirtIOGUIMode", kOSBooleanTrue);
-    setProperty("WindowServerActive", kOSBooleanTrue);
     
     IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - FORCING GUI MODE ACTIVATION - CONSOLE DISABLED\n");
     
@@ -865,7 +857,6 @@ IOReturn VMVirtIOFramebuffer::setupForCurrentConfig()
     }
     
     // Mark the transition as complete
-    setProperty("VMVirtIOGUITransition", kOSBooleanTrue);
     
     IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - *** GUI TRANSITION COMPLETED SUCCESSFULLY ***\n");
     return kIOReturnSuccess;
@@ -889,7 +880,6 @@ bool VMVirtIOFramebuffer::isConsoleDevice(void)
     setProperty("IODisplayAccelerated", kOSBooleanFalse);
     setProperty("IOGraphicsAccelerator", kOSBooleanFalse);
     setProperty("IOConsoleDevice", kOSBooleanTrue);        // Always console capable
-    setProperty("IOGUIDevice", kOSBooleanTrue);            // Always GUI capable
     setProperty("IOPrimaryDisplay", kOSBooleanTrue);       // Primary display
     setProperty("IOMatchCategory", "IOFramebuffer");
     // REMOVED: IOGLBundleName triggers WindowServer to try using OpenGL/Metal
@@ -898,7 +888,6 @@ bool VMVirtIOFramebuffer::isConsoleDevice(void)
     // DISABLE AGDC properties - tell WindowServer we DON'T support AGDC (d57 fix)
     setProperty("AGDC", kOSBooleanFalse);
     setProperty("AGDCCapable", kOSBooleanFalse);
-    setProperty("GPUController", kOSBooleanFalse);
     
     IOLog("VMVirtIOFramebuffer::isConsoleDevice() - Console device with GUI capability (like QXL)\n");
     return true;  // Always claim console support - GUI will work through transitions

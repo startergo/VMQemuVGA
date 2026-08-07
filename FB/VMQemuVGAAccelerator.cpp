@@ -207,10 +207,6 @@ bool CLASS::start(IOService* provider)
     setProperty("IOVideoAccelTypes", (uint32_t)7, 32);    // Video decode/encode acceleration
     
     // GPU capability advertisement for OpenGL feature detection
-    setProperty("gpu-core-count", (uint32_t)8, 32);           // Virtual GPU cores
-    setProperty("gpu-memory-bandwidth", (uint32_t)12800, 32); // MB/s (virtual)
-    setProperty("supports-3D-acceleration", kOSBooleanTrue);
-    setProperty("supports-OpenGL", kOSBooleanTrue);
     
     // Performance monitoring (required by some OpenGL apps)
     setProperty("PerformanceStatistics", kOSBooleanTrue);
