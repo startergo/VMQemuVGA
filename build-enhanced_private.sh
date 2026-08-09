@@ -228,6 +228,35 @@ verify_build() {
             # Verify Info.plist is in correct location
             if [ -f "$kext_path/Contents/Info.plist" ]; then
                 echo -e "   Bundle structure: ${GREEN}✅ Proper kext structure${NC}"
+
+                # Personality integrity check. Catches stale-DerivedData and accidental-removal
+                # regressions where the personality goes missing from the built Info.plist.
+                # Without this, a missing personality is invisible until the kext fails to
+                # match at boot — costing days of misdirected effort.
+                local info_plist="$kext_path/Contents/Info.plist"
+                local personalities_ok=1
+                # VMVirtIOFramebufferPCI is the only personality that should match the
+                # virtio-gpu PCI device on SL 10.6.8. The VMVirtIOGPU personality was
+                # removed because it instantiated a second VMVirtIOGPU that raced
+                # VMVirtIOFramebuffer's internal helper for the single device virtqueue.
+                if ! grep -q "<key>VMVirtIOFramebufferPCI</key>" "$info_plist" || \
+                   ! grep -q "<string>VMVirtIOFramebuffer</string>" "$info_plist"; then
+                    echo -e "   ${RED}❌ Personality 'VMVirtIOFramebufferPCI' (IOClass=VMVirtIOFramebuffer) missing or malformed${NC}"
+                    personalities_ok=0
+                fi
+                # Active (non-commented) VMVirtIOGPU personality must NOT be present.
+                # The string appears in a comment block explaining the removal, so a
+                # bare grep is insufficient — check for the active key form.
+                if grep -E "^[[:space:]]*<key>VMVirtIOGPU</key>[[:space:]]*$" "$info_plist" >/dev/null; then
+                    echo -e "   ${RED}❌ Active VMVirtIOGPU personality present — will conflict with VMVirtIOFramebuffer helper${NC}"
+                    personalities_ok=0
+                fi
+                if [ "$personalities_ok" -eq 1 ]; then
+                    echo -e "   Personalities: ${GREEN}✅ VMVirtIOFramebufferPCI present; VMVirtIOGPU personality correctly absent (avoids dual-instance virtqueue race)${NC}"
+                else
+                    echo -e "   ${YELLOW}   Personality regression suspected. Check Info-FB.plist.${NC}"
+                    return 1
+                fi
             else
                 echo -e "   Bundle structure: ${RED}❌ Missing Contents/Info.plist${NC}"
             fi

@@ -71,23 +71,37 @@ void VMVirtIOFramebuffer::free()
 IOService* VMVirtIOFramebuffer::probe(IOService* provider, SInt32* score)
 {
     IOLog("VMVirtIOFramebuffer::probe() - Checking provider type\n");
-    
-    // Check if provider is IOPCIDevice (direct PCI match - preferred for Display Preferences)
+
+    // Check if provider is IOPCIDevice (direct PCI match — preferred, competes with IONDRVFramebuffer)
     IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, provider);
     if (pciDevice) {
-        IOLog("VMVirtIOFramebuffer::probe() - Direct PCI device match (Display Preferences compatible)\n");
-        *score = 90001;  // Higher than VMVirtIOGPU to take precedence
+        // Belt-and-suspenders: the personality's IOPCIMatch already restricts to virtio-gpu
+        // PCI IDs (1af4:1050/1/2), but reject explicitly in case matching ever expands.
+        // VMVirtIOFramebuffer drives pixels via the virtio resource protocol; binding it to
+        // any other PCI display device would leave that device without its real driver.
+        UInt32 vid_did = pciDevice->configRead32(kIOPCIConfigVendorID);
+        UInt16 vendor = (UInt16)(vid_did & 0xFFFF);
+        UInt16 device = (UInt16)((vid_did >> 16) & 0xFFFF);
+        if (vendor != 0x1af4 ||
+            (device != 0x1050 && device != 0x1051 && device != 0x1052)) {
+            IOLog("VMVirtIOFramebuffer::probe() - PCI %04x:%04x is not virtio-gpu, rejecting\n",
+                  vendor, device);
+            return nullptr;
+        }
+        IOLog("VMVirtIOFramebuffer::probe() - Direct PCI match for virtio-gpu %04x:%04x\n",
+              vendor, device);
+        *score = 90001;  // Out-scores IONDRVFramebuffer (20000) so virtio-gpu gets the protocol-aware driver
         return super::probe(provider, score);
     }
-    
-    // Check if provider is VMVirtIOGPU (child framebuffer approach)
+
+    // Check if provider is VMVirtIOGPU (child framebuffer approach — legacy binding)
     VMVirtIOGPU* gpuDevice = OSDynamicCast(VMVirtIOGPU, provider);
     if (gpuDevice) {
         IOLog("VMVirtIOFramebuffer::probe() - VMVirtIOGPU provider (child framebuffer)\n");
         *score = 1000;
         return super::probe(provider, score);
     }
-    
+
     IOLog("VMVirtIOFramebuffer::probe() - Provider is neither IOPCIDevice nor VMVirtIOGPU\n");
     return nullptr;
 }
@@ -478,13 +492,15 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     IOLog("VMVirtIOFramebuffer::start() - Creating display0 connection nub\n");
     IODisplayWrangler::makeDisplayConnects(this);
     IOLog("VMVirtIOFramebuffer::start() - display0 nub created\n");
-    
-    // CRITICAL: Force GUI mode transition that QXL gets automatically
-    // Since macOS doesn't properly trigger VirtIO GPU GUI mode, we force it manually
-    IOLog("VMVirtIOFramebuffer::start() - FORCING GUI MODE TRANSITION (VirtIO GPU workaround)\n");
-    setupForCurrentConfig();
-    IOLog("VMVirtIOFramebuffer::start() - GUI transition complete\n");
-    
+
+    // Forced setupForCurrentConfig removed — it was a workaround from the era
+    // when the base class never drove the display lifecycle. Calling it during
+    // start() is TOO EARLY: m_fb_device_memory doesn't exist yet (enableController
+    // hasn't run), so getApertureRange falls through to the 4 KB m_vram_range.
+    // IOGraphicsFamily dereferences based on that 4 KB aperture → NULL → panic.
+    // The base class calls setupForCurrentConfig at the right time (after
+    // enableController, when the framebuffer is live).
+
     IOLog("VMVirtIOFramebuffer::start() - Initialization complete\n");
     
     return true;
@@ -521,11 +537,32 @@ void VMVirtIOFramebuffer::initDisplayModes()
     m_display_modes[4] = 5;   // 1920x1080
     m_display_modes[5] = 6;   // 2560x1440
     m_display_modes[6] = 7;   // 3840x2160
-    m_mode_count = 7;
+    // TEMPORARY: only advertise 1024×768 until the fixed-allocation refactor
+    // lands. Per-mode framebuffer reallocation in setupFramebufferResource
+    // frees the old backing while WindowServer still has it mapped → zone
+    // free-list corruption → panics in random subsystems (IOHIDFamily, AHCI,
+    // zalloc). QXL avoids this by using a fixed BAR; we need the same pattern.
+    m_mode_count = 1;
     m_current_mode = 1; // Default to 1024x768
 }
 
 // IOFramebuffer required pure virtual methods
+
+// TEMPORARY: report hardware cursor as unsupported. The base class returns 1
+// for kIOHardwareCursorAttribute ('crsr') by default, which makes WindowServer
+// skip software cursor compositing and rely on setCursorImage/setCursorState —
+// both of which are no-ops in this driver. Result: invisible cursor.
+// END STATE: implement virtio-gpu cursor queue (queue 1, UPDATE_CURSOR /
+// MOVE_CURSOR) and flip this back to returning 1 via super::getAttribute.
+IOReturn VMVirtIOFramebuffer::getAttribute(IOSelect attribute, uintptr_t* value)
+{
+    if (attribute == kIOHardwareCursorAttribute) {
+        if (value) *value = 0;  // no hardware cursor
+        return kIOReturnSuccess;
+    }
+    return super::getAttribute(attribute, value);
+}
+
 IODeviceMemory* VMVirtIOFramebuffer::getApertureRange(IOPixelAperture aperture)
 {
     IOLog("VMVirtIOFramebuffer::getApertureRange: aperture=%d\n", (int)aperture);
@@ -544,69 +581,14 @@ IODeviceMemory* VMVirtIOFramebuffer::getApertureRange(IOPixelAperture aperture)
         return m_fb_device_memory;
     }
 
-    if (m_vram_range) {
-        IOLog("VMVirtIOFramebuffer::getApertureRange: Using cached PCI region 0 VRAM\n");
-        m_vram_range->retain();
-        return m_vram_range;
-    }
-    
-    // SAFE PCI BAR 0 ACCESS: Provide real framebuffer memory for hardware acceleration
-    // According to VirtIO spec: "PCI region 0 has the linear framebuffer" in VGA compatibility mode
-    // This is essential for OpenGL/Metal hardware acceleration to work
-    
-    IOLog("VMVirtIOFramebuffer::getApertureRange: SAFE VERSION - Attempting PCI BAR 0 access for hardware acceleration\n");
-    
-    if (!m_pci_device) {
-        IOLog("VMVirtIOFramebuffer::getApertureRange: No PCI device available - using software fallback\n");
-        return nullptr;
-    }
-    
-    // STEP 1: Get PCI BAR 0 memory object safely with extensive validation
-    IODeviceMemory* bar0_memory = m_pci_device->getDeviceMemoryWithIndex(0);
-    if (!bar0_memory) {
-        IOLog("VMVirtIOFramebuffer::getApertureRange: PCI BAR 0 not available - using software fallback\n");
-        return nullptr;
-    }
-    
-    // STEP 2: Validate BAR 0 properties extensively before using
-    IOPhysicalAddress bar0_phys = bar0_memory->getPhysicalAddress();
-    IOByteCount bar0_size = bar0_memory->getLength();
-    
-    IOLog("VMVirtIOFramebuffer::getApertureRange: PCI BAR 0 found - phys=0x%llx, size=0x%llx (%llu MB)\n", 
-          (unsigned long long)bar0_phys, (unsigned long long)bar0_size, 
-          (unsigned long long)(bar0_size / (1024 * 1024)));
-    
-    // STEP 3: Comprehensive safety validation
-    if (bar0_phys == 0 || bar0_phys == 0xFFFFFFFFULL || bar0_phys == 0xFFFFFFFFFFFFFFFFULL) {
-        IOLog("VMVirtIOFramebuffer::getApertureRange: Invalid BAR 0 physical address 0x%llx - using software fallback\n", 
-              (unsigned long long)bar0_phys);
-        return nullptr;
-    }
-    
-    if (bar0_size == 0 || bar0_size < (1024 * 1024)) {  // At least 1MB
-        IOLog("VMVirtIOFramebuffer::getApertureRange: Invalid BAR 0 size %llu bytes - using software fallback\n", 
-              (unsigned long long)bar0_size);
-        return nullptr;
-    }
-    
-    if (bar0_size > (2ULL * 1024 * 1024 * 1024)) {  // Max 2GB for sanity
-        IOLog("VMVirtIOFramebuffer::getApertureRange: BAR 0 size %llu bytes too large - using software fallback\n", 
-              (unsigned long long)bar0_size);
-        return nullptr;
-    }
-    
-    // STEP 4: Use existing BAR 0 memory object safely (no new allocation)
-    IOLog("VMVirtIOFramebuffer::getApertureRange: Using PCI BAR 0 for framebuffer memory - enabling hardware acceleration\n");
-    IOLog("VMVirtIOFramebuffer::getApertureRange: Hardware framebuffer: phys=0x%llx, size=%llu MB\n", 
-          (unsigned long long)bar0_phys, (unsigned long long)(bar0_size / (1024 * 1024)));
-    
-    // Cache for future use
-    m_vram_range = bar0_memory;
-    m_vram_range->retain();
-    
-    // Return reference to existing memory object (safe)
-    bar0_memory->retain();
-    return bar0_memory;
+    // Not ready — return NULL. IOFramebuffer knows how to fail a setup;
+    // it has no defence against being told 4 KB of MMIO is a framebuffer.
+    // The previous fallback to m_vram_range (4 KB PCI BAR1) or PCI BAR 0
+    // silently handed IOGraphicsFamily a register aperture as if it were
+    // VRAM → NULL dereference when IOGraphicsFamily dereferenced structures
+    // sized for the declared display mode against a 4 KB range.
+    IOLog("VMVirtIOFramebuffer::getApertureRange: m_fb_device_memory is NULL — returning NULL (not ready yet)\n");
+    return nullptr;
 }
 
 // CRITICAL: WindowServer calls this to get the framebuffer memory for rendering
@@ -617,45 +599,19 @@ IODeviceMemory* VMVirtIOFramebuffer::getVRAMRange(void)
     // VirtIO GPU path: same backing as the aperture and the resource — single
     // allocation, three roles.
     if (m_fb_device_memory) {
-        IOLog("VMVirtIOFramebuffer::getVRAMRange() - Returning fb backing %p\n", m_fb_device_memory);
+        IOLog("VMVirtIOFramebuffer::getVRAMRange() - Returning fb backing %p phys=0x%llx len=%llu\n",
+              m_fb_device_memory,
+              (unsigned long long)m_fb_device_memory->getPhysicalAddress(),
+              (unsigned long long)m_fb_device_memory->getLength());
         m_fb_device_memory->retain();
         return m_fb_device_memory;
     }
 
-    // Legacy QXL/PCI-BAR-VRAM path.
-    if (m_vram_range) {
-        IOLog("VMVirtIOFramebuffer::getVRAMRange() - Returning cached VRAM range\n");
-        m_vram_range->retain();
-        return m_vram_range;
-    }
-    
-    // Get BAR 0 framebuffer memory
-    IOLog("VMVirtIOFramebuffer::getVRAMRange() - Fetching PCI BAR 0 framebuffer memory\n");
-    if (!m_pci_device) {
-        IOLog("VMVirtIOFramebuffer::getVRAMRange() - ERROR: No PCI device available!\n");
-        return nullptr;
-    }
-    
-    IODeviceMemory* bar0_memory = m_pci_device->getDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
-    if (!bar0_memory) {
-        IOLog("VMVirtIOFramebuffer::getVRAMRange() - ERROR: Failed to get BAR 0 memory!\n");
-        return nullptr;
-    }
-    
-    IOPhysicalAddress bar0_phys = bar0_memory->getPhysicalAddress();
-    IOByteCount bar0_size = bar0_memory->getLength();
-    
-    IOLog("VMVirtIOFramebuffer::getVRAMRange() - Found BAR 0: phys=0x%llx, size=0x%llx (%llu MB)\n",
-          (unsigned long long)bar0_phys, (unsigned long long)bar0_size,
-          (unsigned long long)(bar0_size / (1024 * 1024)));
-    
-    // Cache and return
-    m_vram_range = bar0_memory;
-    m_vram_range->retain();
-    
-    bar0_memory->retain();
-    IOLog("VMVirtIOFramebuffer::getVRAMRange() - *** FRAMEBUFFER MEMORY PROVIDED TO WINDOWSERVER ***\n");
-    return bar0_memory;
+    // Same as getApertureRange: return NULL when framebuffer not ready.
+    // No m_vram_range or PCI BAR fallback — those hand out register MMIO
+    // as if it were framebuffer memory.
+    IOLog("VMVirtIOFramebuffer::getVRAMRange() - m_fb_device_memory is NULL — returning NULL\n");
+    return nullptr;
 }
 
 const char* VMVirtIOFramebuffer::getPixelFormats(void)
@@ -864,12 +820,24 @@ IOReturn VMVirtIOFramebuffer::getTimingInfoForDisplayMode(IODisplayModeID displa
 
 // CRITICAL: Override newUserClient to provide VMQemuVGAClient for WindowServer
 // Required because programmatically created services don't get personality properties
-IOReturn VMVirtIOFramebuffer::newUserClient(task_t owningTask, void* securityID, 
+IOReturn VMVirtIOFramebuffer::newUserClient(task_t owningTask, void* securityID,
                                             UInt32 type, IOUserClient** handler)
 {
     IOLog("VMVirtIOFramebuffer::newUserClient() - WindowServer requesting user client (type=%u)\n", type);
-    
-    // Create VMQemuVGAClient instance using OSMetaClass
+
+    // type 0 (kIOFBServerConnectType) and type 1 (kIOFBSharedConnectType) belong to
+    // IOFramebuffer — WindowServer expects an IOFramebufferUserClient created by the
+    // parent class. Interception here hands WindowServer a VMQemuVGAClient instead,
+    // and every method call fails with inputCount count mismatch because the two
+    // dispatch tables are unrelated. Delegate to super; reserve VMQemuVGAClient for
+    // private custom-type connections (high type numbers).
+    if (type == 0 || type == 1) {
+        IOLog("VMVirtIOFramebuffer::newUserClient() - type=%u is IOFramebuffer standard, delegating to super\n", type);
+        return super::newUserClient(owningTask, securityID, type, handler);
+    }
+
+    // Custom type — build the private VMQemuVGAClient.
+    IOLog("VMVirtIOFramebuffer::newUserClient() - type=%u is custom, constructing VMQemuVGAClient\n", type);
     IOUserClient* client = OSTypeAlloc(VMQemuVGAClient);
     if (!client) {
         IOLog("VMVirtIOFramebuffer::newUserClient() - Failed to allocate VMQemuVGAClient\n");
@@ -1019,16 +987,12 @@ IOReturn VMVirtIOFramebuffer::open(void)
         }
     }
     
-    // CRITICAL: Manually trigger enableController since Apple's open might not be calling it properly in VM
-    IOLog("VMVirtIOFramebuffer::open() - Manually calling enableController for GUI display activation\n");
-    IOReturn enable_result = enableController();
-    IOLog("VMVirtIOFramebuffer::open() - enableController returned: 0x%x\n", enable_result);
-    
-    // Force initial display refresh to ensure WindowServer sees current framebuffer
-    IOLog("VMVirtIOFramebuffer::open() - Forcing initial display refresh for WindowServer\n");
-    refreshDisplay();
-    
-    IOLog("VMVirtIOFramebuffer::open() - *** WINDOWSERVER OPEN COMPLETED - GUI MODE ACTIVE ***\n");
+    // Forced enableController and refreshDisplay calls removed — they were
+    // workarounds for the era when setupForCurrentConfig was overridden and
+    // the base class never drove the display lifecycle. Now that
+    // setupForCurrentConfig delegates to super, the base class handles
+    // enableController and display setup in the correct order.
+    IOLog("VMVirtIOFramebuffer::open() - *** WINDOWSERVER OPEN COMPLETED ***\n");
     return result;
 }
 
@@ -1099,6 +1063,18 @@ IOReturn VMVirtIOFramebuffer::setupFramebufferResource(uint32_t width, uint32_t 
         return kIOReturnBadArgument;
     }
 
+    // Idempotent guard: if a framebuffer is already live, do NOT tear down and
+    // reallocate. IOFramebuffer's contract is that the aperture is stable —
+    // WindowServer maps it once and keeps the mapping. Freeing the backing
+    // while WindowServer still has it mapped corrupts the zone free list.
+    // TODO: for multi-mode support, implement the fixed-allocation model
+    // (allocate once for largest mode, carve out per-mode views without freeing).
+    if (m_fb_resource_id != 0 && m_fb_backing && m_fb_device_memory) {
+        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: already live (resource=%u) — skipping reallocation to preserve aperture stability\n",
+              m_fb_resource_id);
+        return kIOReturnSuccess;
+    }
+
     teardownFramebufferResource();
 
     size_t fb_size = (size_t)width * height * 4;  // 32-bit BGRA
@@ -1130,6 +1106,19 @@ IOReturn VMVirtIOFramebuffer::setupFramebufferResource(uint32_t width, uint32_t 
         IOLog("VMVirtIOFramebuffer::setupFramebufferResource: IODeviceMemory::withRange failed\n");
         teardownFramebufferResource();
         return kIOReturnNoMemory;
+    }
+
+    // Self-check: verify allocation size matches expected. Log MISMATCH if
+    // they disagree — this catches the arg-order-swap bug that produces a
+    // 19-byte allocation instead of 3 MB. The fill itself is removed (test
+    // pattern no longer needed — Milestone B verified on both virtio-ramfb-gl
+    // and virtio-gpu-gl-pci).
+    {
+        IOByteCount actual_len = m_fb_backing->getLength();
+        if (actual_len != (IOByteCount)fb_size) {
+            IOLog("VMVirtIOFramebuffer::setupFramebufferResource: FB SIZE MISMATCH actual=%llu expected=%llu\n",
+                  (uint64_t)actual_len, (uint64_t)fb_size);
+        }
     }
 
     // Allocate resource ID, create, attach with caller-owned backing.
@@ -1407,58 +1396,25 @@ IOReturn VMVirtIOFramebuffer::setDisplayMode(IODisplayModeID displayMode, IOInde
     } else {
         IOLog("VMVirtIOFramebuffer::setDisplayMode() - Failed to get mode information\n");
     }
-    
+
+    // super::setDisplayMode removed: triggers IOFramebuffer internals that race
+    // with the AHCI workloop under TCG → pmap64_pde page fault. The real fix
+    // is a fixed-allocation aperture (stable across mode changes) so the base
+    // class can be called safely. Until then, return success directly.
     return kIOReturnSuccess;
 }
 
 IOReturn VMVirtIOFramebuffer::setupForCurrentConfig()
 {
-    IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - *** WINDOWSERVER GUI TRANSITION REQUESTED ***\n");
-    
-    // This method is called by WindowServer when it wants to take control of the display
-    // It's the key method for transitioning from console mode to GUI mode
-    
-    // CRITICAL: Force GUI mode properties immediately
-    setProperty("IOFramebufferOpenForGUI", kOSBooleanTrue);
-    // NOTE: Keep IOConsoleDevice=true (set by isConsoleDevice()) for QXL-style dual capability
-    
-    IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - FORCING GUI MODE ACTIVATION - CONSOLE DISABLED\n");
-    
-    // Enable the display for GUI use
-    IOReturn result = enableController();
-    if (result != kIOReturnSuccess) {
-        IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - enableController failed: 0x%x\n", result);
-        return result;
-    }
-    
-    // Ensure we're in the correct display mode
-    IODisplayModeID currentMode;
-    IOIndex currentDepth;
-    result = getCurrentDisplayMode(&currentMode, &currentDepth);
-    if (result == kIOReturnSuccess) {
-        IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - Current mode: %d, depth: %d\n", 
-              (int)currentMode, (int)currentDepth);
-        
-        // Re-apply the current mode to ensure everything is properly configured
-        result = setDisplayMode(currentMode, currentDepth);
-        if (result != kIOReturnSuccess) {
-            IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - setDisplayMode failed: 0x%x\n", result);
-            return result;
-        }
-    } else {
-        // If we can't get the current mode, set a default one
-        IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - Using default mode 1024x768\n");
-        result = setDisplayMode(1, 0); // Default mode
-        if (result != kIOReturnSuccess) {
-            IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - Default setDisplayMode failed: 0x%x\n", result);
-            return result;
-        }
-    }
-    
-    // Mark the transition as complete
-    
-    IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - *** GUI TRANSITION COMPLETED SUCCESSFULLY ***\n");
-    return kIOReturnSuccess;
+    IOLog("VMVirtIOFramebuffer::setupForCurrentConfig() - delegating to IOFramebuffer base class\n");
+
+    // The base class's setupForCurrentConfig calls doSetup, which calls
+    // getApertureRange(kIOFBSystemAperture) and establishes the client mapping
+    // that WindowServer uses to draw. Our previous override skipped this entirely
+    // — those "FORCING GUI MODE" workarounds prevented the base class from
+    // fetching the aperture, which is why WindowServer had nowhere to render
+    // and the test pattern persisted indefinitely.
+    return super::setupForCurrentConfig();
 }
 
 IOItemCount VMVirtIOFramebuffer::getConnectionCount(void)
@@ -1809,37 +1765,16 @@ IOReturn VMVirtIOFramebuffer::connectFlags(IOIndex connectIndex, IODisplayModeID
 // CRITICAL: Cursor support methods (required for GUI mode)
 IOReturn VMVirtIOFramebuffer::setCursorImage(void* cursorImage)
 {
-    IOLog("VMVirtIOFramebuffer::setCursorImage() - Setting cursor image for GUI mode\n");
-    
-    // For VirtIO GPU, we don't need to handle cursor in hardware
-    // The system will handle software cursor compositing
-    // Just return success to indicate cursor capability
-    
-    if (!cursorImage) {
-        IOLog("VMVirtIOFramebuffer::setCursorImage() - NULL cursor image, using default\n");
-    } else {
-        IOLog("VMVirtIOFramebuffer::setCursorImage() - Custom cursor image set successfully\n");
-    }
-    
-    // Trigger a display refresh on cursor change (manual update since periodic timer is disabled)
-    refreshDisplay();
-    
-    return kIOReturnSuccess;
+    // Hardware cursor not implemented — return unsupported so WindowServer
+    // falls back to software cursor (composited into framebuffer).
+    // END STATE: implement virtio-gpu cursor queue and return success here.
+    return kIOReturnUnsupported;
 }
 
 IOReturn VMVirtIOFramebuffer::setCursorState(SInt32 x, SInt32 y, bool visible)
 {
-    IOLog("VMVirtIOFramebuffer::setCursorState() - Position (%d,%d), visible=%s\n", 
-          (int)x, (int)y, visible ? "true" : "false");
-    
-    // For VirtIO GPU, cursor positioning is handled by the system
-    // We just need to acknowledge cursor state changes
-    // This enables proper cursor tracking for GUI applications
-    
-    // Trigger a display refresh on cursor movement (manual update since periodic timer is disabled)
-    refreshDisplay();
-    
-    return kIOReturnSuccess;
+    // Hardware cursor not implemented — return unsupported.
+    return kIOReturnUnsupported;
 }
 
 // CRITICAL: VBL interrupt support (required for smooth GUI rendering)
@@ -2115,9 +2050,13 @@ void VMVirtIOFramebuffer::displayRefreshTimer(OSObject* owner, IOTimerEventSourc
     // Refresh display - transfer framebuffer to VirtIO GPU and flush to display
     fb->refreshDisplay();
     
-    // Re-arm timer for next refresh cycle (1000ms = 1 Hz - testing, was breaking ARD at 60 Hz)
+    // Re-arm timer for next refresh cycle (16ms = 60 Hz).
+    // Previous value was 1000ms (1 Hz) which caused sluggish cursor and
+    // delayed repaints. At 60 Hz, 3 MB per frame is ~180 MB/s under TCG —
+    // may saturate CPU on heavy scenes. Follow-up: transfer damaged
+    // rectangles via TRANSFER_TO_HOST_2D rect parameter instead of full surface.
     if (sender && fb->m_refresh_timer) {
-        fb->m_refresh_timer->setTimeoutMS(1000);
+        fb->m_refresh_timer->setTimeoutMS(16);
     }
 }
 

@@ -127,6 +127,13 @@ private:
     volatile uint8_t* m_common_cfg;              // mapped common config base + offset
     uint32_t m_common_cfg_offset;               // offset of common cfg within BAR
     IOMemoryMap* m_common_map;                   // common config BAR mapping
+
+    // PCI BAR mapping cache — one retain per BAR; callers take additional retains.
+    // Eliminates the BAR-number-vs-IOKit-index confusion that caused the capset-read bug.
+    IOMemoryMap* m_bar_maps[6];                  // cached mappings, indexed by PCI BAR number (0-5)
+    uint8_t  m_device_cfg_bar;                   // PCI BAR number containing virtio_gpu_config
+    uint32_t m_device_cfg_offset;                // offset of virtio_gpu_config within that BAR
+
     volatile uint8_t* m_notify_base;             // mapped notify BAR base
     uint32_t m_notify_cap_offset;               // offset of notify region within BAR
     uint32_t m_notify_off_multiplier;            // multiplier from notify capability
@@ -134,6 +141,13 @@ private:
     IOBufferMemoryDescriptor* m_cmd_buf;         // pre-allocated command buffer (physically contiguous)
     IOBufferMemoryDescriptor* m_resp_buf;        // pre-allocated response buffer (physically contiguous)
     bool m_vq_initialized;                       // true once virtqueue is live
+
+    // Refresh-timeout instrumentation. Throttled to first N submissions so the
+    // boot log captures the succeed→fail transition without flooding afterward.
+    // Counts persist for the lifetime of the object; bump when extending instrumentation.
+    static const uint32_t SUBMIT_INSTRUMENT_LIMIT = 20;
+    uint32_t m_submit_count;                     // incremented on each submitCommand entry
+    uint32_t m_notify_count;                     // incremented on each device notify write
     
     // GPU resources
     struct gpu_resource {
@@ -172,7 +186,6 @@ private:
     // VirtIO operations
     bool initVirtIOGPU();
     void cleanupVirtIOGPU();
-    void initHardwareDeferred();  // Deferred hardware init to prevent boot hang
 
     // Real VirtIO 1.0 virtqueue management
     bool setupControlVirtQueue();
@@ -184,7 +197,17 @@ private:
     
     // VirtIO PCI capability parsing
     bool findVirtIOCapability(IOPCIDevice* pci_device, uint8_t cfg_type, uint8_t* bar_index, uint32_t* offset, uint32_t* length);
-    
+
+    // PCI BAR number → IOMemoryMap. Memoized per BAR (single retain held in m_bar_maps[bar];
+    // each call returns an additional retain the caller must release). Returns nullptr if the
+    // BAR is unmapped, I/O-type, or has no matching IOKit memory index. If out_iokit_index is
+    // non-NULL, it receives the matched IOKit region index on success.
+    IOMemoryMap* mapBarByNumber(uint8_t bar, int* out_iokit_index = nullptr);
+
+    // Walks the descriptor free list and returns its current depth. O(depth) but
+    // only called from instrumentation paths (throttled to first N submissions).
+    uint16_t vringFreeDepth() const;
+
     // Command processing
     IOReturn submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
                           virtio_gpu_ctrl_hdr* resp, size_t resp_size);

@@ -50,6 +50,9 @@ bool CLASS::init(OSDictionary* properties)
     m_common_cfg = nullptr;
     m_common_cfg_offset = 0;
     m_common_map = nullptr;
+    for (int i = 0; i < 6; i++) m_bar_maps[i] = nullptr;  // BAR mapping cache
+    m_device_cfg_bar = 0;
+    m_device_cfg_offset = 0;
     m_notify_base = nullptr;
     m_notify_cap_offset = 0;
     m_notify_off_multiplier = 0;
@@ -57,6 +60,8 @@ bool CLASS::init(OSDictionary* properties)
     m_cmd_buf = nullptr;
     m_resp_buf = nullptr;
     m_vq_initialized = false;
+    m_submit_count = 0;       // refresh-timeout instrumentation (throttled, see submitCommand)
+    m_notify_count = 0;
     
     m_is_virtio_gpu_pci = false;  // Default to VGA-compatible mode
     m_is_mock_device = false;      // Default to real VirtIO GPU hardware
@@ -97,7 +102,15 @@ void CLASS::free()
     
     OSSafeReleaseNULL(m_resources);
     OSSafeReleaseNULL(m_contexts);
-    
+
+    // Release BAR mapping cache (one retain per cached BAR)
+    for (int i = 0; i < 6; i++) {
+        if (m_bar_maps[i]) {
+            m_bar_maps[i]->release();
+            m_bar_maps[i] = nullptr;
+        }
+    }
+
     super::free();
 }
 
@@ -642,6 +655,11 @@ void CLASS::terminateIONDRVFramebuffers()
 #define VIRTIO_PCI_CAP_DEVICE_CFG   4
 #define VIRTIO_PCI_CAP_PCI_CFG      5
 
+// Pre-allocated response buffer capacity. GET_CAPSET returns virgl_caps_v1 (~800 bytes)
+// or virgl_caps_v2 (>1 KB). 4 KB covers both with headroom and matches the previous
+// hard-coded descriptor.len cap, so no protocol-level regression.
+#define VIRTIO_GPU_RESP_BUF_SIZE 4096
+
 // VirtIO PCI capability structure
 struct virtio_pci_cap {
     uint8_t cap_vndr;      // Generic PCI field: PCI_CAP_ID_VNDR
@@ -773,6 +791,78 @@ bool CLASS::findVirtIOCapability(IOPCIDevice* pci_device, uint8_t cfg_type, uint
     return false;
 }
 
+// ----------------------------------------------------------------------------
+// mapBarByNumber — single source of truth for PCI BAR → IOMemoryMap translation
+//
+// IOKit's mapDeviceMemoryWithIndex(N) takes an IOKit-assigned region index, NOT
+// the PCI BAR number reported by VirtIO PCI capabilities. On this device, BAR4
+// corresponds to IOKit index 1; calling mapDeviceMemoryWithIndex(4) returns NULL.
+//
+// This helper resolves the mismatch by reading PCI config space to get the BAR's
+// physical address, then enumerating IOKit memory indices to find a match.
+// Results are memoized in m_bar_maps[bar]: the cache holds one retain, and each
+// call returns an additional retain the caller must release.
+// ----------------------------------------------------------------------------
+IOMemoryMap* CLASS::mapBarByNumber(uint8_t bar, int* out_iokit_index)
+{
+    if (!m_pci_device || bar >= 6) return nullptr;
+
+    // Cached — hand back another retain on the same mapping.
+    // (iokit_index isn't tracked for cached calls — callers that need it should
+    // bypass caching or re-resolve. setupGPUMemoryRegions runs before cache hits.)
+    if (m_bar_maps[bar]) {
+        // Resolve index on a cache hit too, by re-walking — cheap and rare.
+        if (out_iokit_index) {
+            IOPhysicalAddress pci_phys = m_bar_maps[bar]->getPhysicalAddress();
+            for (unsigned int i = 0; i < 6; i++) {
+                IOMemoryMap* t = m_pci_device->mapDeviceMemoryWithIndex(i);
+                if (!t) continue;
+                if (t->getPhysicalAddress() == pci_phys) { *out_iokit_index = (int)i; t->release(); break; }
+                t->release();
+            }
+        }
+        // retain() returns void in libkern's OSObject — bump refcount, then return pointer
+        m_bar_maps[bar]->retain();
+        return m_bar_maps[bar];
+    }
+
+    // Read the BAR register from PCI config space to get the physical address
+    UInt32 bar_offset = kIOPCIConfigBaseAddress0 + (bar * 4);
+    UInt32 bar_low = m_pci_device->configRead32(bar_offset);
+    if (bar_low == 0 || bar_low == 0xFFFFFFFF) return nullptr;
+
+    bool is_io     = (bar_low & 0x1);
+    bool is_64bit  = ((bar_low & 0x6) == 0x4);
+    if (is_io) return nullptr;  // I/O BAR — not mappable as memory
+
+    IOPhysicalAddress pci_phys = 0;
+    if (is_64bit) {
+        UInt32 bar_high = m_pci_device->configRead32(bar_offset + 4);
+        pci_phys = ((IOPhysicalAddress)bar_high << 32) | (bar_low & 0xFFFFFFF0);
+    } else {
+        pci_phys = bar_low & 0xFFFFFFF0;
+    }
+    if (pci_phys == 0) return nullptr;
+
+    // Walk IOKit memory indices and find the one whose physical address matches
+    for (unsigned int i = 0; i < 6; i++) {
+        IOMemoryMap* test_map = m_pci_device->mapDeviceMemoryWithIndex(i);
+        if (!test_map) continue;
+        IOPhysicalAddress iokit_phys = test_map->getPhysicalAddress();
+        if (iokit_phys == pci_phys) {
+            // Match — cache holds this retain; bump refcount and return pointer to caller.
+            // OSObject::retain() returns void in libkern, so we call it for the side-effect.
+            m_bar_maps[bar] = test_map;
+            if (out_iokit_index) *out_iokit_index = (int)i;
+            test_map->retain();
+            return test_map;
+        }
+        test_map->release();
+    }
+
+    return nullptr;
+}
+
 bool CLASS::initVirtIOGPU()
 {
     IOLog("VMVirtIOGPU: Initializing VirtIO GPU with proper capability parsing\n");
@@ -784,8 +874,13 @@ bool CLASS::initVirtIOGPU()
     
     IOLog("VMVirtIOGPU: About to call findVirtIOCapability for device config detection\n");
     bool capability_found = findVirtIOCapability(m_pci_device, VIRTIO_PCI_CAP_DEVICE_CFG, &config_bar_index, &config_offset, &config_length);
-    IOLog("VMVirtIOGPU: findVirtIOCapability returned: %s (BAR=%d, offset=0x%x, length=0x%x)\n", 
+    IOLog("VMVirtIOGPU: findVirtIOCapability returned: %s (BAR=%d, offset=0x%x, length=0x%x)\n",
           capability_found ? "SUCCESS" : "FAILURE", config_bar_index, config_offset, config_length);
+
+    // Stash the cap-reported location so device-cfg can be re-read from anywhere later
+    // (e.g., from VMVirtIOFramebuffer without re-doing the cap walk).
+    m_device_cfg_bar = config_bar_index;
+    m_device_cfg_offset = config_offset;
     
     if (!capability_found) {
         IOLog("VMVirtIOGPU: Failed to find VirtIO device configuration capability\n");
@@ -821,11 +916,15 @@ bool CLASS::initVirtIOGPU()
         return true; // Continue with conservative values rather than failing completely
     }
     
-    // Map the correct PCI BAR for configuration access
+    // Map the correct PCI BAR for configuration access.
+    // Use mapBarByNumber() — PCI capability reports the BAR NUMBER (e.g., 4),
+    // but IOKit's mapDeviceMemoryWithIndex() takes the IOKit region INDEX (e.g., 1).
+    // The helper resolves the mismatch via PCI config space + phys-addr matching.
     IOLog("VMVirtIOGPU: Mapping PCI BAR %d for device configuration\n", config_bar_index);
-    m_config_map = m_pci_device->mapDeviceMemoryWithIndex(config_bar_index);
+    m_config_map = mapBarByNumber(config_bar_index);
     if (!m_config_map) {
-        IOLog("VMVirtIOGPU: Failed to map PCI BAR %d\n", config_bar_index);
+        IOLog("VMVirtIOGPU: mapBarByNumber(%d) returned NULL — BAR unmapped or no IOKit match\n",
+              config_bar_index);
         // Use safe defaults to prevent boot hang
         m_max_scanouts = 1;
         m_num_capsets = 0;
@@ -1124,66 +1223,6 @@ void CLASS::cleanupVirtIOGPU()
     if (m_notify_map) {
         m_notify_map->release();
         m_notify_map = nullptr;
-    }
-}
-
-// Deferred hardware initialization to prevent boot hang
-void CLASS::initHardwareDeferred()
-{
-    IOLog("VMVirtIOGPU::initHardwareDeferred: === ENTRY POINT ===\n");
-    IOLog("VMVirtIOGPU::initHardwareDeferred: m_config_map=%p, m_pci_device=%p, m_num_capsets=%d\n", 
-          m_config_map, m_pci_device, m_num_capsets);
-    
-    // Setup GPU memory regions (this will initialize m_config_map if not already done)
-    // This is CRITICAL for virtio-gpu-gl-pci mode which doesn't have VGA BIOS memory setup
-    if (!m_config_map) {
-        IOLog("VMVirtIOGPU: Config map not initialized - calling setupGPUMemoryRegions() now\n");
-        IOLog("VMVirtIOGPU: This is expected for virtio-gpu-gl-pci (pure GPU mode)\n");
-    } else {
-        IOLog("VMVirtIOGPU: Config map already initialized - re-running setupGPUMemoryRegions() for notifications\n");
-    }
-    
-    // Setup GPU memory regions including notification region (critical for command submission)
-    IOLog("VMVirtIOGPU: About to call setupGPUMemoryRegions() - PCI device: %p\n", m_pci_device);
-    if (!setupGPUMemoryRegions()) {
-        IOLog("VMVirtIOGPU: Failed to setup GPU memory regions during deferred init\n");
-        return;
-    }
-    IOLog("VMVirtIOGPU: setupGPUMemoryRegions() completed successfully\n");
-    
-    // Now that system is running, safely read hardware configuration
-    // Check if m_config_map was successfully initialized
-    if (!m_config_map) {
-        IOLog("VMVirtIOGPU: Warning - config map still not available after setupGPUMemoryRegions()\n");
-        IOLog("VMVirtIOGPU: This may indicate pure GPU mode without device config access\n");
-        IOLog("VMVirtIOGPU: Using previously detected values - scanouts: %d, capsets: %d\n", 
-              m_max_scanouts, m_num_capsets);
-        return;
-    }
-    
-    volatile struct virtio_gpu_config* config = 
-        (volatile struct virtio_gpu_config*)m_config_map->getVirtualAddress();
-
-    if (config) {
-        uint32_t hw_scanouts = config->num_scanouts;
-        uint32_t hw_capsets = config->num_capsets;
-        
-        IOLog("VMVirtIOGPU: Deferred init - hardware reports scanouts: %d, capsets: %d\n", 
-              hw_scanouts, hw_capsets);
-        
-        // Update with hardware values if valid
-        if (hw_scanouts > 0 && hw_scanouts <= 16) {
-            m_max_scanouts = hw_scanouts;
-        }
-        
-        // Only update capsets if hardware reading is valid and non-zero
-        // Preserve the earlier successful detection (num_capsets=1) if deferred read fails
-        if (hw_capsets > 0 && hw_capsets <= 16) {
-            m_num_capsets = hw_capsets;
-        }
-        
-        IOLog("VMVirtIOGPU: Updated config after deferred init - scanouts: %d, capsets: %d\n", 
-              m_max_scanouts, m_num_capsets);
     }
 }
 
@@ -1756,7 +1795,11 @@ bool CLASS::setupControlVirtQueue()
                  status | VIRTIO_STATUS_DRIVER_OK);
     __sync_synchronize();
 
-    // 12. Pre-allocate command and response buffers (physically contiguous)
+    // 12. Pre-allocate command and response buffers (physically contiguous).
+    // m_cmd_buf stays at 256 — virtio-gpu commands are small (ctrl_hdr + small payload).
+    // m_resp_buf must hold variable-size responses: GET_CAPSET_INFO (~32 B) is small, but
+    // GET_CAPSET returns the full virgl_caps blob (v1 ~800 B, v2 >1 KB), so 256 truncated
+    // every capset query. 4 KB covers both with headroom.
     m_cmd_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task,
         kIODirectionOutIn | kIOMemoryPhysicallyContiguous,
@@ -1764,7 +1807,7 @@ bool CLASS::setupControlVirtQueue()
     m_resp_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task,
         kIODirectionOutIn | kIOMemoryPhysicallyContiguous,
-        256, 0x00000000FFFFFFFFULL);
+        VIRTIO_GPU_RESP_BUF_SIZE, 0x00000000FFFFFFFFULL);
 
     if (!m_cmd_buf || !m_resp_buf) {
         IOLog("VMVirtIOGPU: failed to allocate cmd/resp buffers\n");
@@ -1822,6 +1865,19 @@ void CLASS::teardownControlVirtQueue()
     m_common_cfg = nullptr;
 }
 
+// Walks the descriptor free list and returns its current depth.
+// O(depth) but only called from throttled instrumentation paths.
+uint16_t CLASS::vringFreeDepth() const
+{
+    if (!m_vq_free_next || m_vq_size == 0) return 0;
+    uint16_t depth = 0;
+    for (uint16_t i = m_vq_free_head; i != (uint16_t)-1 && i < m_vq_size && depth <= m_vq_size;
+         i = m_vq_free_next[i]) {
+        depth++;
+    }
+    return depth;
+}
+
 // ---- Real submitCommand using VirtIO 1.0 split virtqueue ----
 
 IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
@@ -1839,6 +1895,19 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
 
     // Suppress noisy logging for 60 Hz transfer/flush commands
     bool noisy = (cmd->type == 0x104 || cmd->type == 0x105);
+
+    // Refresh-timeout instrumentation: log 4 signals on entry for first N submissions
+    // so the succeed→fail transition is visible in a single boot. Throttled after N.
+    m_submit_count++;
+    const bool instr = (m_submit_count <= SUBMIT_INSTRUMENT_LIMIT);
+    if (instr) {
+        uint16_t entry_depth = vringFreeDepth();
+        IOLog("VMVirtIOGPU::submit[%u] ENTRY this=%p cmd=0x%x noisy=%d avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u\n",
+              m_submit_count, this, cmd->type, noisy ? 1 : 0,
+              m_vq_avail ? m_vq_avail->idx : (uint16_t)0,
+              m_vq_used ? m_vq_used->idx : (uint16_t)0,
+              m_vq_last_used, m_vq_free_head, entry_depth);
+    }
 
     IOLockLock(m_vq_lock);
 
@@ -1861,6 +1930,11 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
         return kIOReturnNoResources;
     }
     m_vq_free_head = m_vq_free_next[resp_desc];
+
+    if (instr) {
+        IOLog("VMVirtIOGPU::submit[%u] POPPED cmd_desc=%u resp_desc=%u free_head=%u free_depth=%u\n",
+              m_submit_count, cmd_desc, resp_desc, m_vq_free_head, vringFreeDepth());
+    }
 
     // 2. Copy command data to physically contiguous buffer
     void* cmd_buf_va = m_cmd_buf->getBytesNoCopy();
@@ -1889,9 +1963,11 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     m_vq_desc[cmd_desc].flags = VRING_DESC_F_NEXT;
     m_vq_desc[cmd_desc].next  = resp_desc;
 
-    // 4. Fill response descriptor (device-writable)
+    // 4. Fill response descriptor (device-writable). Tell the device the actual caller
+    //    limit (resp_size), capped by m_resp_buf's capacity — otherwise GET_CAPSET would
+    //    be told it could write 256 bytes max, truncating capset blobs.
     m_vq_desc[resp_desc].addr  = resp_phys;
-    m_vq_desc[resp_desc].len   = 256;  // max response size
+    m_vq_desc[resp_desc].len   = (resp_size < VIRTIO_GPU_RESP_BUF_SIZE) ? (uint32_t)resp_size : VIRTIO_GPU_RESP_BUF_SIZE;
     m_vq_desc[resp_desc].flags = VRING_DESC_F_WRITE;
     m_vq_desc[resp_desc].next  = 0;  // end of chain
 
@@ -1906,17 +1982,27 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     __sync_synchronize();
 
     // 6. Notify device
+    m_notify_count++;
     if (m_notify_base && m_notify_off_multiplier > 0) {
         // Proper computation: notify_base + cap_offset + q_notify_off * multiplier
         volatile uint32_t* notify_addr = (volatile uint32_t*)
             (m_notify_base + m_notify_cap_offset +
              m_notify_offset * m_notify_off_multiplier);
         *notify_addr = VIRTIO_GPU_QUEUE_CONTROL;  // queue index
+        if (instr) {
+            IOLog("VMVirtIOGPU::submit[%u] NOTIFY #%u addr=%p (notify_base+cap_off=%u+q_off=%u*mult=%u)\n",
+                  m_submit_count, m_notify_count, (void*)notify_addr,
+                  m_notify_cap_offset, m_notify_offset, m_notify_off_multiplier);
+        }
     } else if (m_notify_map) {
         // Fallback: use existing m_notify_offset directly
         volatile uint32_t* notify_addr = (volatile uint32_t*)
             ((uint8_t*)m_notify_map->getVirtualAddress() + m_notify_offset);
         *notify_addr = VIRTIO_GPU_QUEUE_CONTROL;
+        if (instr) {
+            IOLog("VMVirtIOGPU::submit[%u] NOTIFY #%u addr=%p (fallback m_notify_map+%u)\n",
+                  m_submit_count, m_notify_count, (void*)notify_addr, m_notify_offset);
+        }
     } else {
         IOLog("VMVirtIOGPU::submitCommand: no notify mapping\n");
         // Return descriptors
@@ -1943,9 +2029,19 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     }
 
     if (timed_out) {
-        if (!noisy) {
+        // Instrumentation overrides the noisy filter so the refresh-timeout signature
+        // is visible without ambiguity. The original `if (!noisy)` filter is documented
+        // in LEDGER.md as a known logging gap.
+        if (!noisy || instr) {
             IOLog("VMVirtIOGPU::submitCommand: TIMEOUT on cmd 0x%x (no response after 150ms)\n",
                   cmd->type);
+        }
+        if (instr) {
+            IOLog("VMVirtIOGPU::submit[%u] EXIT TIMEOUT avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u cmd_desc=%u resp_desc=%u\n",
+                  m_submit_count,
+                  m_vq_avail ? m_vq_avail->idx : (uint16_t)0,
+                  m_vq_used ? m_vq_used->idx : (uint16_t)0,
+                  m_vq_last_used, m_vq_free_head, vringFreeDepth(), cmd_desc, resp_desc);
         }
         // Return descriptors to free-list
         m_vq_free_next[resp_desc] = m_vq_free_head;
@@ -1969,14 +2065,15 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
               used_elem->id, cmd_desc);
     }
 
-    // 9. Read response from response buffer
+    // 9. Read response from response buffer. The prior cap at sizeof(virtio_gpu_ctrl_hdr)
+    //    (~24 bytes) silently truncated every variable-size response — GET_CAPSET_INFO
+    //    lost capset_id/version/size, GET_CAPSET lost the entire blob. Bound by the
+    //    caller's resp_size and the physical buffer capacity only.
     if (resp && resp_size > 0) {
         void* resp_buf_va = m_resp_buf->getBytesNoCopy();
         size_t copy = resp_size;
-        if (copy > sizeof(virtio_gpu_ctrl_hdr))
-            copy = sizeof(virtio_gpu_ctrl_hdr);
-        if (copy > 256)
-            copy = 256;
+        if (copy > VIRTIO_GPU_RESP_BUF_SIZE)
+            copy = VIRTIO_GPU_RESP_BUF_SIZE;
         memcpy(resp, resp_buf_va, copy);
     }
 
@@ -1991,6 +2088,14 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     m_vq_free_head = resp_desc;
     m_vq_free_next[cmd_desc] = m_vq_free_head;
     m_vq_free_head = cmd_desc;
+
+    if (instr) {
+        IOLog("VMVirtIOGPU::submit[%u] EXIT OK resp_type=0x%x avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u cmd_desc=%u→ret resp_desc=%u→ret\n",
+              m_submit_count, resp ? resp->type : 0,
+              m_vq_avail ? m_vq_avail->idx : (uint16_t)0,
+              m_vq_used ? m_vq_used->idx : (uint16_t)0,
+              m_vq_last_used, m_vq_free_head, vringFreeDepth(), cmd_desc, resp_desc);
+    }
 
     IOLockUnlock(m_vq_lock);
 
@@ -3145,23 +3250,25 @@ IOReturn CLASS::allocateGPUMemory(size_t size, IOMemoryDescriptor** memory)
 IOReturn CLASS::deallocateResource(uint32_t resource_id)
 {
     IOLockLock(m_resource_lock);
-    
-    gpu_resource* resource = findResource(resource_id);
-    if (!resource) {
-        IOLockUnlock(m_resource_lock);
-        return kIOReturnNotFound;
-    }
-    
-    // Send unref command to GPU
+
+    // Send UNREF unconditionally — the device is the source of truth for
+    // resource existence, not our internal pool. If findResource misses
+    // (pool split between m_resource_pool[] and m_resources OSArray after
+    // the typed-pool refactor), the device still needs the UNREF to actually
+    // free the resource. Without this, teardownFramebufferResource silently
+    // leaks resources on the device side, and the next createResource2D on
+    // the same ID gets 0x1203 (ERR_INVALID_RESOURCE_ID).
     struct virtio_gpu_resource_unref cmd = {};
     cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
     cmd.resource_id = resource_id;
-    
+
     struct virtio_gpu_ctrl_hdr resp = {};
     IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
-    
+
     if (ret == kIOReturnSuccess) {
-        // Remove from resources array
+        // Best-effort pool cleanup — may not find the resource if the pool
+        // is out of sync (that's the bug we're working around). The device
+        // has already freed the resource; this just tidies our cache.
         for (unsigned int i = 0; i < m_resource_count; i++) {
             gpu_resource* res = (gpu_resource*)m_resources->getObject(i);
             if (res && res->resource_id == resource_id) {
@@ -3174,7 +3281,7 @@ IOReturn CLASS::deallocateResource(uint32_t resource_id)
             }
         }
     }
-    
+
     IOLockUnlock(m_resource_lock);
     return ret;
 }
@@ -3416,55 +3523,60 @@ void CLASS::enableVirgl() {
     // Query Virgil 3D capability sets for advanced rendering features
     IOLog("VMVirtIOGPU::enableVirgl: Querying Virgil 3D capability sets\n");
     
-    // Query each available capability set from the VirtIO GPU device
-    for (uint32_t capset_id = 0; capset_id < m_num_capsets; capset_id++) {
+    // Query each available capability set from the VirtIO GPU device.
+    // Loop variable is a 0-based INDEX into the device's capset list; the device returns the
+    // capset_id (1 = VIRGL, 2 = VIRGL2) in the response. Don't confuse the two — passing an
+    // index where an id belongs (or vice versa) is the standard mistake in this path.
+    for (uint32_t capset_index = 0; capset_index < m_num_capsets; capset_index++) {
         struct virtio_gpu_get_capset_info capset_info_cmd = {};
         capset_info_cmd.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET_INFO;
-        capset_info_cmd.capset_index = capset_id;
-        
+        capset_info_cmd.capset_index = capset_index;
+
         struct virtio_gpu_resp_capset_info capset_info_resp = {};
-        IOReturn info_ret = submitCommand(&capset_info_cmd.hdr, sizeof(capset_info_cmd), 
+        IOReturn info_ret = submitCommand(&capset_info_cmd.hdr, sizeof(capset_info_cmd),
                                          &capset_info_resp.hdr, sizeof(capset_info_resp));
-        
+
         if (info_ret == kIOReturnSuccess) {
-            IOLog("VMVirtIOGPU::enableVirgl: Capability set %u: ID=%u version=%u size=%u\n",
-                  capset_id, capset_info_resp.capset_id, capset_info_resp.capset_max_version, 
+            IOLog("VMVirtIOGPU::enableVirgl: capset index %u → id=%u version=%u size=%u\n",
+                  capset_index, capset_info_resp.capset_id, capset_info_resp.capset_max_version,
                   capset_info_resp.capset_max_size);
-            
+
             // Query the actual capability data if size is reasonable
             if (capset_info_resp.capset_max_size > 0 && capset_info_resp.capset_max_size < 65536) {
                 struct virtio_gpu_get_capset capset_cmd = {};
                 capset_cmd.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
-                capset_cmd.capset_id = capset_info_resp.capset_id;
+                capset_cmd.capset_id = capset_info_resp.capset_id;       // device-returned id, NOT the index
                 capset_cmd.capset_version = capset_info_resp.capset_max_version;
-                
+
                 // Allocate buffer for capability data with response header
                 size_t total_resp_size = sizeof(virtio_gpu_ctrl_hdr) + capset_info_resp.capset_max_size;
                 uint8_t* capset_resp_buffer = (uint8_t*)IOMalloc(total_resp_size);
                 if (capset_resp_buffer) {
                     IOReturn capset_ret = submitCommand(&capset_cmd.hdr, sizeof(capset_cmd),
                                                        (virtio_gpu_ctrl_hdr*)capset_resp_buffer, total_resp_size);
-                    
+
                     if (capset_ret == kIOReturnSuccess) {
-                        IOLog("VMVirtIOGPU::enableVirgl: Successfully retrieved capability set %u data (%u bytes)\n", 
-                              capset_id, capset_info_resp.capset_max_size);
-                        
-                        // For Virgil capability sets (typically capset_id == 1), parse OpenGL capabilities
-                        if (capset_info_resp.capset_id == 1) { // Virgil capset is usually ID 1
-                            // Store Virgil capabilities for 3D context creation
-                            IOLog("VMVirtIOGPU::enableVirgl: Virgl capability data acquired for 3D acceleration\n");
+                        IOLog("VMVirtIOGPU::enableVirgl: retrieved capset id %u blob (%u bytes)\n",
+                              capset_info_resp.capset_id, capset_info_resp.capset_max_size);
+
+                        // VIRGL (id=1) is the legacy capset; VIRGL2 (id=2) is preferred when offered.
+                        // The host decides which it supports; we just record what came back.
+                        if (capset_info_resp.capset_id == 1 || capset_info_resp.capset_id == 2) {
+                            IOLog("VMVirtIOGPU::enableVirgl: Virgl%s capability data acquired for 3D acceleration\n",
+                                  capset_info_resp.capset_id == 2 ? "2" : "");
                         }
                     } else {
-                        IOLog("VMVirtIOGPU::enableVirgl: Failed to get capset %u data: 0x%x\n", capset_id, capset_ret);
+                        IOLog("VMVirtIOGPU::enableVirgl: Failed to get capset id %u data: 0x%x\n",
+                              capset_info_resp.capset_id, capset_ret);
                     }
-                    
+
                     IOFree(capset_resp_buffer, total_resp_size);
                 } else {
                     IOLog("VMVirtIOGPU::enableVirgl: Failed to allocate capset response buffer\n");
                 }
             }
         } else {
-            IOLog("VMVirtIOGPU::enableVirgl: Failed to get capset %u info: 0x%x\n", capset_id, info_ret);
+            IOLog("VMVirtIOGPU::enableVirgl: Failed to get capset index %u info: 0x%x\n", capset_index, info_ret);
         }
     }
     
@@ -3860,91 +3972,20 @@ bool CLASS::setupGPUMemoryRegions() {
     IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Capability reports: bar=%d offset=0x%x length=0x%x\n",
           notify_bar_index, notify_offset, notify_length);
     
-    // First, enumerate ALL IOKit memory ranges and their physical addresses
-    IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Enumerating IOKit memory ranges:\n");
-    IOPhysicalAddress iokit_bars[6] = {0};
-    IOByteCount iokit_sizes[6] = {0};
-    int num_iokit_bars = 0;
-    
-    for (unsigned int i = 0; i < 6; i++) {
-        IOMemoryMap* test_map = m_pci_device->mapDeviceMemoryWithIndex(i);
-        if (test_map) {
-            iokit_bars[i] = test_map->getPhysicalAddress();
-            iokit_sizes[i] = test_map->getLength();
-            IOLog("VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[%d]: phys=0x%llx size=%llu (0x%llx) bytes\n",
-                  i, (uint64_t)iokit_bars[i], (uint64_t)iokit_sizes[i], (uint64_t)iokit_sizes[i]);
-            test_map->release();
-            num_iokit_bars = i + 1;
-        } else {
-            IOLog("VMVirtIOGPU::setupGPUMemoryRegions:   IOKit[%d]: NOT MAPPED\n", i);
-        }
-    }
-    
-    // Now read actual PCI BAR addresses from config space
-    IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Reading PCI config space BARs:\n");
-    IOPhysicalAddress pci_bar_addrs[6] = {0};
-    
-    for (unsigned int bar = 0; bar < 6; bar++) {
-        UInt32 bar_offset = kIOPCIConfigBaseAddress0 + (bar * 4);
-        UInt32 bar_low = m_pci_device->configRead32(bar_offset);
-        
-        if (bar_low == 0 || bar_low == 0xFFFFFFFF) {
-            IOLog("VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR%d: not present\n", bar);
-            continue;
-        }
-        
-        bool is_64bit = ((bar_low & 0x6) == 0x4);
-        bool is_io = (bar_low & 0x1);
-        
-        if (is_io) {
-            pci_bar_addrs[bar] = bar_low & 0xFFFFFFFC;
-            IOLog("VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR%d: I/O port 0x%llx\n", 
-                  bar, (uint64_t)pci_bar_addrs[bar]);
-        } else if (is_64bit) {
-            UInt32 bar_high = m_pci_device->configRead32(bar_offset + 4);
-            pci_bar_addrs[bar] = ((IOPhysicalAddress)bar_high << 32) | (bar_low & 0xFFFFFFF0);
-            IOLog("VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR%d: 64-bit memory @ 0x%llx\n", 
-                  bar, (uint64_t)pci_bar_addrs[bar]);
-            bar++;  // Skip next BAR (upper half of 64-bit)
-        } else {
-            pci_bar_addrs[bar] = bar_low & 0xFFFFFFF0;
-            IOLog("VMVirtIOGPU::setupGPUMemoryRegions:   PCI BAR%d: 32-bit memory @ 0x%llx\n", 
-                  bar, (uint64_t)pci_bar_addrs[bar]);
-        }
-    }
-    
-    // CRITICAL: Match PCI BAR number to IOKit index by comparing physical addresses
-    // This handles both virtio-vga-gl (BAR0+BAR2) and virtio-gpu-gl-pci (BAR1+BAR4) layouts
+    // Use the central BAR→IOKit-index resolver (also used by initVirtIOGPU for device-cfg).
+    // The helper reads PCI config space to find the BAR's physical address, walks IOKit
+    // memory indices to find a match, and memoizes the result. Eliminates the long-standing
+    // confusion between PCI BAR numbers (e.g., 4) and IOKit region indices (e.g., 1).
     int iokit_memory_index = -1;
-    IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Matching PCI BAR %d to IOKit index...\n", notify_bar_index);
-    
-    if (pci_bar_addrs[notify_bar_index] != 0) {
-        // Find which IOKit index has the same physical address
-        for (int i = 0; i < num_iokit_bars; i++) {
-            if (iokit_bars[i] == pci_bar_addrs[notify_bar_index]) {
-                iokit_memory_index = i;
-                IOLog("VMVirtIOGPU::setupGPUMemoryRegions: ✅ PCI BAR %d @ 0x%llx → IOKit index %d\n",
-                      notify_bar_index, (uint64_t)pci_bar_addrs[notify_bar_index], i);
-                break;
-            }
-        }
-    }
-    
-    if (iokit_memory_index < 0) {
-        IOLog("VMVirtIOGPU::setupGPUMemoryRegions: ❌ Could not match PCI BAR %d to any IOKit index\n", 
+    m_notify_map = mapBarByNumber(notify_bar_index, &iokit_memory_index);
+    if (!m_notify_map) {
+        IOLog("VMVirtIOGPU::setupGPUMemoryRegions: ❌ mapBarByNumber(%d) returned NULL — BAR unmapped or no IOKit match\n",
               notify_bar_index);
         IOLog("VMVirtIOGPU::setupGPUMemoryRegions: === BAR MAPPING DIAGNOSTIC END (FAILED) ===\n");
         return false;
     }
-    
-    // Now map the target BAR for notify (using corrected IOKit memory index)
-    IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Mapping notify BAR %d (IOKit index %d)...\n", notify_bar_index, iokit_memory_index);
-    m_notify_map = m_pci_device->mapDeviceMemoryWithIndex(iokit_memory_index);
-    if (!m_notify_map) {
-        IOLog("VMVirtIOGPU::setupGPUMemoryRegions: ❌ FAILED to map BAR %d (IOKit index %d)\n", notify_bar_index, iokit_memory_index);
-        IOLog("VMVirtIOGPU::setupGPUMemoryRegions: === BAR MAPPING DIAGNOSTIC END (FAILED) ===\n");
-        return false;
-    }
+    IOLog("VMVirtIOGPU::setupGPUMemoryRegions: ✅ mapBarByNumber matched PCI BAR %d → IOKit index %d\n",
+          notify_bar_index, iokit_memory_index);
     
     IOPhysicalAddress notify_phys = m_notify_map->getPhysicalAddress();
     IOVirtualAddress notify_virt = m_notify_map->getVirtualAddress();

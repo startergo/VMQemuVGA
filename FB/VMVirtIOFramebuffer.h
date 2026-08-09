@@ -74,7 +74,8 @@ public:
     
     // IOFramebuffer required pure virtual methods
     virtual IODeviceMemory* getApertureRange(IOPixelAperture aperture) override;
-    virtual IODeviceMemory* getVRAMRange(void) override;  // CRITICAL: WindowServer needs this to get framebuffer memory!
+    virtual IODeviceMemory* getVRAMRange(void) override;
+    virtual IOReturn getAttribute(IOSelect attribute, uintptr_t* value) override;
     virtual const char* getPixelFormats(void) override;
     virtual IOItemCount getDisplayModeCount(void) override;
     virtual IOReturn getDisplayModes(IODisplayModeID* allDisplayModes) override;
