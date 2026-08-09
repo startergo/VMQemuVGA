@@ -20,6 +20,137 @@ Last updated: 2026-08-09
 
 ---
 
+## 3D transport probe + transfer-struct bug — 2026-08-09
+
+Added `probeTransport3D()` (CTX_CREATE → RESOURCE_CREATE_3D → ATTACH_BACKING
+→ CTX_ATTACH_RESOURCE → CREATE_OBJECT surface → SET_FB+CLEAR+NOP →
+TRANSFER_FROM_HOST_3D → byte-equal positive + negative control). Same shape
+as the three prior probes. Negative control proved its place: with the
+readback buffer re-filled to 0xCD between G and G′, G′ came back as
+**0xcdcdcdcd** — i.e. the host wrote zero bytes (not zeros) to the guest
+backing. That distinction was only available because of the re-fill; a
+single run could not have distinguished "host wrote nothing" from "host
+wrote the zero-initialised resource contents".
+
+**Root cause — virtio_gpu_transfer_to_host_3d used virtio_gpu_rect
+(4 dwords / 16 bytes) where UTM QEMU expects virtio_gpu_box (6 dwords /
+24 bytes).** Wire-size mismatch: guest sent 64-byte commands, host
+`VIRTIO_GPU_FILL_CMD` reads 72 bytes, sees the size mismatch, emits
+`qemu_log_mask(LOG_GUEST_ERROR, "command size incorrect 64 vs 72")`,
+returns OK_NODATA without ever calling `virgl_renderer_transfer_read_iov`.
+Guest sees 0x1100 — indistinguishable from success by construction
+(same shape as SUBMIT_3D always returning OK).
+
+**Fix — scoped to the 3D pair only.** 2D transfers (`virtio_gpu_transfer_to_host_2d`)
+legitimately use `virtio_gpu_rect` and run 60×/s on the working display
+path — left alone. The 3D struct now uses `virtio_gpu_box` (field renamed
+`r` → `box`), and two compile-time size assertions make the layout
+unrepresentable:
+
+```c
+typedef char vgpu_box_size_check[(sizeof(struct virtio_gpu_box) == 24) ? 1 : -1];
+typedef char vgpu_tf3d_size_check[(sizeof(struct virtio_gpu_transfer_to_host_3d) == 72) ? 1 : -1];
+```
+
+### 3D transport — VERIFIED (negative-control-confirmed) — 2026-08-09
+
+After the box-struct fix, the probe produced byte-perfect readback on
+both clears:
+
+| | First dword | Bytes (LE) | Decoded R8G8B8A8_UNORM | Clear color × 255 |
+|---|---|---|---|---|
+| G | `0xff339966` | `66 99 33 ff` | (R=102, G=153, B=51, A=255) | (0.40, 0.60, 0.20, 1.00) → (102, 153, 51, 255) ✓ |
+| G′ | `0xffcce51a` | `1a e5 cc ff` | (R=26, G=229, B=204, A=255) | (0.10, 0.90, 0.80, 1.00) → (25.5→26, 229.5→229, 204, 255) ✓ |
+
+The 0.5 fractions land on the side predicted by the actual IEEE 754
+representations: `0.9f` is `0.899999976…` so ×255 = `229.4999…` rounds
+to 229 = `0xe5`; `0.1f` is `0.100000001…` so ×255 = `25.50000038…`
+rounds to 26 = `0x1a`. A coincidence would not reproduce the rounding
+direction of two different constants. **Transport is verified.**
+
+The readback also closes three previously-unknowable unknowns
+transitively: CLEAR could not have written those bytes without
+CREATE_OBJECT's surface payload and SET_FRAMEBUFFER_STATE's binding
+both being correct on the wire — two commands that returned no signal
+of their own (SUBMIT_3D returns 0x1100 unconditionally). One readback,
+three unknowns closed.
+
+### Probe pattern-check bug — encoding assumed, not verified — 2026-08-09
+
+The probe initially labelled byte-perfect readbacks as `PROBE FAIL`
+three times in succession, each for a different encoding assumption:
+the box-vs-rect struct (covered above), the unorm-vs-float encoding,
+and the rounding-formula mismatch.
+
+**Unorm-vs-float:** the first pattern check computed expected values
+with `virgl_pack_float()` (raw IEEE 754 bits — `0x3ECCCCCD` for 0.40),
+but virgl stores R8G8B8A8_UNORM as 8-bit-per-channel unorm
+(`0x66` for 0.40×255). Fixed by switching to unorm packing.
+
+**Rounding formula:** after the unorm fix, G passed but G′ was off by
+1 ULP on the green channel for clear color 0.9. Two wrong diagnoses
+were attempted before the right one:
+- *Wrong #1 (round vs truncate):* proposed `roundf` or `±1 tolerance`.
+- *Wrong #2 (float32 vs double, my direction reversed):* proposed
+  `__builtin_lrintf` to force float32 evaluation, claiming the
+  compiler was promoting to double. Arithmetic check: `0.9f × 255`
+  mathematically = 229.4999939, but 229.5 IS representable in float32
+  and the deficit is within half a ULP — so float32 evaluation rounds
+  the product UP to exactly 229.5f, and `lrintf(229.5f)` under
+  round-half-to-even gives 230. Double evaluation preserves
+  229.4999939 and gives 229. **The host's 229 comes from higher
+  precision, not lower.** `volatile` to force runtime float32 would
+  have made the gap larger, not smaller.
+
+**Right diagnosis:** the GL spec permits ±1 ULP on float-to-unorm
+conversion. The clear colour travels as float32 and is converted by
+Metal/ANGLE's rasterizer on the host. **No guest-side formula
+reproduces the host's choice by construction** — chasing exact-match
+is chasing determinism that doesn't exist.
+
+**Fix:** pick clear colours that aren't on a rounding boundary. Each
+value should be a slight over-approximation of the exact decimal in
+float32 so ×255 rounds cleanly to the intended integer with no `.5`
+boundary to land on:
+- `(0.20, 0.40, 0.60, 1.00) → (51, 102, 153, 255)` ✓
+- `(0.80, 0.20, 0.40, 1.00) → (204, 51, 102, 255)` ✓
+
+The ±1 tolerance stays as a guard that never fires in normal operation
+— and logs a single summary line per phase (distinguishing systematic
+vs random drift) when it does, so a real regression reads differently
+from precision noise. Final state: **PROBE PASS, 64/64 exact on both
+G and G′, tolerance guard quiet.**
+
+### Rule: derive expected from bytes-sent, not from constant-of-origin — 2026-08-09
+
+**When checking against host-produced bytes, derive the expected value
+from the bytes you sent, never by re-deriving from the original
+constant.** This habit would have caught all three encoding bugs this
+session (box-vs-rect, unorm-vs-float, rounding-formula) at the first
+probe run instead of requiring multiple debugging cycles.
+
+Caveat discovered this session: the rule is necessary but not
+sufficient. Even deriving from the sent float32, the GL spec's ±1 ULP
+permit on float-to-unorm conversion means no guest computation
+reproduces the host's rasterizer exactly. The rule gets you to the
+right encoding; **picking non-boundary inputs** is what gets you to a
+quiet EXACT match. Both habits together: derive from bytes-sent, and
+avoid boundary-valued test inputs when the host is authoritative and
+nondeterministic-by-spec.
+
+### Next frontier — seam decision, not kext work
+
+3D transport is now verified end-to-end through the kext. Per the
+acceleration guardrails: **the kext is transport; command generation
+belongs in userspace.** Proving transport doesn't change that boundary;
+it removes the reason the seam decision has been deferred. The next
+question is *where* GL commands get generated (userspace accelerator
+architecture), not what to submit next from the kext. Treating this as
+a kext task would expand blast radius past transport back into command
+generation — exactly the boundary the guardrails exist to enforce.
+
+---
+
 ## Refresh-throttle optimisation — landed 2026-08-09
 
 Display refresh reduced from 60 Hz to ~15 Hz full-surface (every 4th
