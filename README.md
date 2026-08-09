@@ -148,10 +148,14 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
   overlays — but virtio-gpu-gl does not. Suspected mechanism: virtio-gpu-gl uses
   GL scanout (DMABuf → Metal texture), bypassing the cursor channel. Pending
   investigation; see [`LEDGER.md`](LEDGER.md).
-- **Full-surface transfers.** Each refresh sends the whole framebuffer rather
-  than damaged rectangles. Expensive under TCG. Refresh is throttled to ~15 Hz
-  (every 4th timer tick) as a mitigation; full damage-tracking would be a
-  further win.
+- **Full-surface transfers.** Each refresh sends the whole framebuffer. The
+  actual cost under TCG is the per-command doorbell round-trip, not the byte
+  count — QEMU executes `TRANSFER_TO_HOST_2D` host-side at native speed, so
+  bytes were never the constraint. Refresh is throttled to ~15 Hz (every 4th
+  timer tick), cutting doorbell round-trips 4×. Dirty-rectangle tracking was
+  investigated and rejected 2026-08-09 (see [`LEDGER.md`](LEDGER.md)): it would
+  reduce bytes but leave command count unchanged, buying essentially nothing
+  on this configuration.
 - **Apple Remote Desktop** was reported to break at a 60 Hz refresh rate in an
   earlier build. The refresh is now ~15 Hz and this has not been re-tested.
 - **`VMVirtIOGPU::probe` reads no PCI properties.** vendor-id, device-id and

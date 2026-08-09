@@ -2377,11 +2377,16 @@ void VMVirtIOFramebuffer::displayRefreshTimer(OSObject* owner, IOTimerEventSourc
     // Refresh display - transfer framebuffer to VirtIO GPU and flush to display
     fb->refreshDisplay();
     
-    // Re-arm timer for next refresh cycle (16ms = 60 Hz).
-    // Previous value was 1000ms (1 Hz) which caused sluggish cursor and
-    // delayed repaints. At 60 Hz, 3 MB per frame is ~180 MB/s under TCG —
-    // may saturate CPU on heavy scenes. Follow-up: transfer damaged
-    // rectangles via TRANSFER_TO_HOST_2D rect parameter instead of full surface.
+    // Re-arm timer for next refresh cycle (16ms = 60 Hz; the refresh logic
+    // elsewhere skips 3 of every 4 ticks to throttle to ~15 Hz).
+    //
+    // Note: do NOT chase dirty-rectangle tracking here. Per LEDGER 2026-08-09,
+    // the cost under TCG is the per-command doorbell round-trip, not bytes —
+    // QEMU executes TRANSFER_TO_HOST_2D host-side at native speed, so reducing
+    // byte count via sub-rect transfers would leave command count unchanged
+    // and buy essentially nothing. The 15 Hz throttle is the actual win
+    // (4× fewer doorbell round-trips); dirty-rect paths were investigated
+    // and falsified.
     if (sender && fb->m_refresh_timer) {
         fb->m_refresh_timer->setTimeoutMS(16);
     }
