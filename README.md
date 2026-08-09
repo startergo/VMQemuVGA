@@ -39,15 +39,15 @@ Verified on `virtio-gpu-gl-pci` unless noted.
 | Cursor | Visual check 2026-08-09 — software cursor renders correctly. |
 | Resolution changes | Real user-driven mode switch, resource recreated against a stable buffer, aperture mapping preserved. |
 | Resource tracking | Self-test probe at boot: create → duplicate-reject → destroy → verify-gone. |
-| QXL path | Previously verified. The QXL code path is the legacy `VMQemuVGA` class, separate from the VirtIO GPU work, so it should be unaffected — but it has not been re-tested since the fixed-allocation refactor. |
+| QXL path | Verified 2026-08-09 — VMQemuVGA class, separate code path, mode switches work. |
 
 ### Devices
 
 - `virtio-gpu-gl-pci` — primary target, verified 2026-08-09
-- `virtio-ramfb-gl` — previously verified; not re-tested since the
-  fixed-allocation refactor
-- QXL / QEMU std VGA — legacy path; not re-tested since the fixed-allocation
-  refactor
+- `virtio-ramfb-gl` — verified 2026-08-09
+- `virtio-vga-gl` — verified 2026-08-09 (required `useNativeScanout` fix; VGA
+  compat no longer gates the rendering path)
+- QXL / QEMU std VGA — verified 2026-08-09 (VMQemuVGA class, separate path)
 
 ---
 
@@ -132,21 +132,21 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
 - **Apple Remote Desktop** was reported to break at a 60 Hz refresh rate in an
   earlier build. The rate is currently 60 Hz and this has not been re-tested.
 - **`VMVirtIOGPU::probe` reads no PCI properties.** vendor-id, device-id and
-  class-code all come back zero, so device-variant detection currently decides
-  on constants. It reaches the right branch by luck on `virtio-gpu-pci` and
-  would take the wrong one on `virtio-vga`.
-- **Misleading IORegistry properties.** Several advertised values are vestigial
-  or overclaim capability — invented VRAM figures (including an `ATY,memsize`
-  key on a VirtIO device), `IOAccelerator3D = Yes`, `model = "VirtIO GPU 3D"`,
-  and a falsified VGA-compatible `class-code` published for System Profiler's
-  benefit. These are being retired; do not treat IORegistry as a capability
-  report.
-- **No EDID, so Displays preferences cannot select a mode.** `readDDCBlock`
-  fails on every boot, so no `IODisplay` nub is built: System Profiler's
-  Graphics/Displays panel is empty, and Display preferences shows no resolution
-  list. The modes exist and mode switching works — the UI cannot surface them
-  without an `IOFramebufferParameterHandler`. Set modes programmatically or rely
-  on the boot default until a synthetic EDID is supplied.
+  class-code all come back zero due to an OSData/OSNumber cast bug. Variant
+  detection in `enableController` bypasses this via `configRead32` and works
+  correctly on all variants — the probe bug is latent, not affecting the
+  outcome.
+- **Misleading IORegistry properties.** Several advertised values overclaim
+  capability — `IOAccelerator3D = Yes`, `model = "VirtIO GPU 3D"`, and a
+  falsified VGA-compatible `class-code` published for System Profiler's
+  benefit. VRAM figures now publish the actual allocation size; `ATY,memsize`
+  removed. Do not treat IORegistry as a capability report.
+- **No EDID on any variant.** `readDDCBlock` fails on virtio-gpu-gl-pci,
+  virtio-ramfb-gl, and virtio-vga-gl. System Profiler's Graphics/Displays panel
+  shows a display entry on virtio-vga-gl but not on the pure-GPU variants —
+  the mechanism is unverified (it is not EDID). Display preferences offers no
+  selectable resolution list on any variant. The modes exist and mode
+  switching works; set modes programmatically or rely on the boot default.
 
 ---
 

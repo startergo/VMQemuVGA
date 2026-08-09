@@ -165,6 +165,25 @@ this ledger is on that code path.
     bypass originally added for an AHCI/workloop race under TCG is left
     in place; re-enabling is at most a base-class-integration question.
 
+- **virtio-vga-gl blue-screen fix — FIXED 2026-08-09.** The
+  `useNativeScanout` decision was keyed on `requiresNativeMode` (false when
+  VGA compat is present), which skipped the entire virtio-gpu display
+  pipeline on virtio-vga-gl — blue screen instead of desktop. Fix:
+  `useNativeScanout = (m_gpu_driver != nullptr)` — native scanout whenever
+  the control queue is functional, regardless of VGA compat. VGA compat
+  only matters before a driver loads; once this driver owns the device,
+  the virtio-gpu protocol is the only rendering path. **Four variants now
+  verified:** virtio-gpu-gl-pci, virtio-ramfb-gl, virtio-vga-gl, QXL.
+  `readDDCBlock` fails on all variants — System Profiler shows a display
+  entry on virtio-vga-gl but not on pure-GPU variants, but the mechanism
+  is not EDID (unverified).
+
+- **VRAM property fix — 2026-08-09.** `VRAM,totalsize` and `VRAM,totalMB`
+  now publish the actual allocation size from `m_fb_backing->getLength()`
+  (was hardcoded 512 MB). `ATY,memsize` removed (ATI-specific key, absurd
+  on virtio). System Profiler on virtio-vga-gl displays VRAM to users —
+  512 MB against a real 16 MB aperture was a user-facing incorrect claim.
+
 - **`IOPowerManagement = {CurrentPowerState=0}` on the framebuffer node is
   cosmetic, not a real "off."** `setPowerState` is a no-op returning
   `kIOReturnSuccess` for any state, and the class never calls
@@ -279,10 +298,9 @@ Do not start this merge without asking.
 - **Bogus IORegistry properties to retire during the merge** (observed on
   the live `VMVirtIOFramebuffer` node 2026-08-08; all are vestigial from
   the QXL/ATI path or overclaim current capability):
-  - `VRAM,totalMB = 512`, `VRAM,totalsize = 536870912`,
-    `IOAccelMemorySize = 536870912`, `ATY,memsize = 536870912` — invented
-    VRAM figures. `ATY,memsize` (ATI prefix) on a virtio device is absurd.
-    Actual framebuffer aperture is 16 MB at the current ceiling.
+  - ~~`VRAM,totalMB`, `VRAM,totalsize`, `IOAccelMemorySize`~~ — **FIXED
+    2026-08-09:** now publish actual allocation size from the buffer.
+    ~~`ATY,memsize`~~ — **removed** (ATI-specific key on a virtio device).
   - `IOAccelerator3D = Yes` alongside `IOGraphicsAccelerator = No` and
     `IODisplayAccelerated = No` — claims 3D the current path cannot deliver.
   - `IOGLBundleName = "GLEngine"` on the framebuffer node vs.

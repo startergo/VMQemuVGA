@@ -644,6 +644,29 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     // (preferred default 1920×1080 if it fits, else largest fitting mode).
     filterModesByAllocation();
 
+    // Publish actual VRAM size from the allocation. Overrides the default
+    // 512 MB placeholder set earlier in start() — System Profiler displays
+    // this to users, and 512 MB against a real 16 MB aperture is misleading.
+    // Also remove ATY,memsize (ATI-specific key, meaningless on virtio).
+    if (m_fb_backing) {
+        uint64_t actual_bytes = m_fb_backing->getLength();
+        uint32_t actual_mb = (uint32_t)(actual_bytes / (1024U * 1024U));
+        OSNumber* vram_actual = OSNumber::withNumber(actual_bytes, 64);
+        OSNumber* vram_mb_actual = OSNumber::withNumber(actual_mb, 32);
+        if (vram_actual) {
+            setProperty("VRAM,totalsize", vram_actual);
+            setProperty("IOAccelMemorySize", vram_actual);
+            vram_actual->release();
+        }
+        if (vram_mb_actual) {
+            setProperty("VRAM,totalMB", vram_mb_actual);
+            vram_mb_actual->release();
+        }
+        removeProperty("ATY,memsize");
+        IOLog("VMVirtIOFramebuffer::start() - VRAM published: %u MB (%llu bytes), removed ATY,memsize\n",
+              actual_mb, actual_bytes);
+    }
+
     IOLog("VMVirtIOFramebuffer::start() - Initialization complete\n");
 
     return true;
