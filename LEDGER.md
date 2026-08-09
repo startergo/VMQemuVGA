@@ -221,13 +221,36 @@ software problem. The transport proof is the load-bearing gate.
 
 ## Open
 
-- **Cursor queue for performance.** Current cursor is software-composited
-  into the framebuffer and transferred by the refresh timer at 60 Hz. Cost:
-  every mouse move dirties the framebuffer → 8 MB transfer at 60 Hz ≈
-  480 MB/s under TCG. Permanent fix: implement virtio-gpu cursor queue
-  (queue 1, `UPDATE_CURSOR` 0x240 / `MOVE_CURSOR` 0x241). Host composites
-  cursor natively, one small command per move. Then flip `crsr` back to 1
-  and `setCursorImage`/`setCursorState` back to success.
+- **Hardware cursor viability — pending QXL discriminator test.** Queue 1
+  transport is proven (used ring advances, PROBE PASS). Guest-side cursor
+  setup verified correct (64×64 BGRA, alpha=0xFF, scanout_id=0,
+  TRANSFER_TO_HOST_2D before UPDATE_CURSOR, struct 56 bytes). QEMU
+  accepted the command (no guest error in debug log). SPICE cursor
+  channel delivered 16384 bytes of 64×64 alpha data to CocoaSpice client
+  (`set_cursor: type alpha(0), 0, 64x64`). **Cursor still not visible.**
+
+  The gap is between CocoaSpice receiving the cursor data and rendering
+  it on the UTM display window. One test discriminates: does QXL's
+  hardware cursor (VMQemuVGA reports `crsr = 1` with working
+  `setCursorImage`/`setCursorState`) appear as a genuine overlay on the
+  same UTM host? If yes, CocoaSpice renders cursor overlays and something
+  subtler is wrong for virtio-gpu. If no, CocoaSpice doesn't render
+  cursor overlays at all and hardware cursor is impossible in this UTM
+  configuration.
+
+  **If negative:** record as environmental constraint (crsr = 0 with
+  WindowServer software compositing is the correct implementation on
+  UTM/CocoaSpice, not a workaround). Abandon build 2 — do not defer.
+  Redirect performance work to dirty rectangles: TRANSFER_TO_HOST_2D and
+  RESOURCE_FLUSH both take rect parameters; a cursor move dirties a few
+  thousand pixels instead of 2 million; helps every screen update, not
+  just the pointer. Under TCG this is the largest remaining win.
+
+  **Cursor queue constraint:** the cursor queue is one-way by design.
+  QEMU's `virtio_gpu_handle_cursor` does `virtqueue_push(vq, elem, 0)` for
+  every command (zero response bytes), accepted or rejected. "Used ring
+  advanced" is the only feedback this queue offers. Future PROBE PASS on
+  this queue means descriptor consumed, nothing more.
 
 - **ARD (Apple Remote Desktop) regression at 16 ms refresh.** The timer's
   initial arm was shortened from 1000 ms to 16 ms; whether ARD's screen
