@@ -244,11 +244,36 @@ software problem. The transport proof is the load-bearing gate.
   appears. My earlier "cocoa/gl capable but no gl yet" was WRONG: the
   debug log proves GL scanout is active on virtio-gpu-gl boots.
 
-  **Build 2 status: open.** Not abandoned — the QXL result changes the
-  conclusion from "impossible" to "blocked on GL-path cursor compositing."
-  If a UTM build gains GL cursor compositing, or if the guest switches to
-  non-GL virtio-gpu (losing virgl but gaining cursor overlay), the
-  queue-1 transport code is ready.
+  **CocoaSpice source review (github.com/utmapp/CocoaSpice):** the
+  cursor data model is fully implemented for GL mode — `cs_cursor_set`
+  uploads to a Metal texture, sets `cursorHidden = NO`, invalidates the
+  display, which triggers the renderer. No code path is conditional on
+  `isGLEnabled`. The actual renderer (a `CSRenderer` conformer) lives
+  in UTM, not CocoaSpice — it decides how to composite the cursor source
+  (`display.cursorSource`) alongside the display source. The gap is
+  between CocoaSpice providing the cursor data and UTM's renderer drawing
+  it in GL mode. Filed as an upstream issue candidate.
+
+  **Note for future work:** `CSCursor.isInverted` returns
+  `!self.display.isGLEnabled`. In GL mode the cursor would NOT be
+  inverted; in 2D mode it IS. If a future UTM renderer fix enables
+  GL cursor compositing, the cursor may initially appear upside-down —
+  this property is the reason. Not the cause of invisibility (flipping
+  doesn't hide), but the first thing to check if it renders wrong.
+
+  **Confound to check before filing upstream:** the QXL and virtio-gpu
+  VMs may differ in pointer device (usb-tablet vs PS/2 mouse) or UTM
+  display settings (Retina/scaling). Different pointer devices change
+  SPICE mouse mode, which could affect cursor compositing independently
+  of the display device. Check both VM configs are otherwise identical
+  before attributing the difference to display device type alone.
+
+  **Build 2 status: open, gated on UTM.** Not abandoned — the QXL
+  result changes the conclusion from "impossible" to "blocked on
+  GL-path cursor compositing in UTM's renderer." crsr = 0 with
+  WindowServer software compositing is the correct implementation on
+  this configuration and works. The queue-1 transport code is ready
+  if the UTM gap is resolved or a non-GL virtio-gpu variant is used.
 
   **Cursor queue constraint:** the cursor queue is one-way by design.
   QEMU's `virtio_gpu_handle_cursor` does `virtqueue_push(vq, elem, 0)` for
