@@ -1087,8 +1087,8 @@ bool CLASS::initVirtIOGPU()
                     size_t required_common_size = common_offset + 24; // device_status (20) + 4 bytes
                     
                     if (common_map_size < required_common_size) {
-                        IOLog("VMVirtIOGPU: ERROR - Common map too small: %llu < %zu bytes\n", 
-                              (uint64_t)common_map_size, required_common_size);
+                        IOLog("VMVirtIOGPU: ERROR - Common map too small: %llu < %llu bytes\n",
+                              (uint64_t)common_map_size, (uint64_t)required_common_size);
                     } else {
                         volatile uint8_t* common_base = (volatile uint8_t*)common_map->getVirtualAddress();
                         if (common_base) {

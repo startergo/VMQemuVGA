@@ -1498,9 +1498,13 @@ IOReturn VMVirtIOFramebuffer::enableController()
     }
     
     // Decision logic:
-    // - virtio-gpu-gl-pci: MUST use native VirtIO scanout (no VGA fallback)
-    // - virtio-vga-gl: CAN use VGA mode OR native mode (your choice)
-    bool useNativeScanout = requiresNativeMode;  // Force native for virtio-gpu-gl-pci
+    // Native scanout is the rendering path for all virtio-gpu variants once
+    // this driver owns the device. VGA compatibility only matters before a
+    // driver loads (BIOS/boot); once we're here, the virtio-gpu protocol
+    // (resource + scanout + transfer) is the only path that puts pixels on
+    // screen. Keying this on VGA compat skips the entire pipeline — that was
+    // the virtio-vga-gl blue-screen bug.
+    bool useNativeScanout = (m_gpu_driver != nullptr);
     
     IOLog("VMVirtIOFramebuffer::enableController() - hasVGACompat=%d, requiresNative=%d, useNative=%d\n",
           hasVGACompatibility, requiresNativeMode, useNativeScanout);
