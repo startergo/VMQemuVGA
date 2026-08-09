@@ -62,6 +62,32 @@ private:
     IOTimerEventSource*    m_refresh_timer;     // Periodic display refresh timer
     uint32_t               m_scanout_resource_id; // VirtIO GPU scanout resource ID
     bool                   m_scanout_taken_over_by_3d; // True when 3D app controls scanout
+
+    // Throttled full-surface refresh. The timer fires at 60 Hz; we transfer
+    // every FULL_REFRESH_INTERVAL'th tick (~15 Hz). Cost model: the win is
+    // NOT bandwidth (host memcpy on Apple Silicon is cheap and was never
+    // near a limit) — it's 4× fewer TCG-emulated virtqueue round-trips.
+    // Each refresh is two commands (TRANSFER_TO_HOST_2D + RESOURCE_FLUSH),
+    // each with an MMIO doorbell write and a poll loop, and every one of
+    // those is expensive under TCG. 120 cmd/s → 30 cmd/s is the real saving.
+    //
+    // Sub-rect dirty tracking was investigated and rejected 2026-08-09:
+    // every cursor-motion signal in the guest is dead with crsr = 0.
+    // WindowServer composites the cursor into the aperture from userspace
+    // via CoreGraphics; the kernel never participates; shmem cursor fields
+    // (cursorLoc, cursorSize, cursorRect, oldCursorRect) are frozen at the
+    // boot-console state near (15,15). setCursorState is unreachable for
+    // the same reason — IOFramebuffer base only routes it to drivers that
+    // advertised a hardware cursor. The real cursor-responsiveness fix is
+    // host-composited hardware cursor, which is blocked on the UTM GL
+    // cursor-compositing question, not on anything in this driver.
+    //
+    // Content-diff dirty tracking would be backwards on this configuration:
+    // bytes are not the bottleneck (host-side memcpy), command count is.
+    // Sub-rects would still cost two commands per tick plus the hashing CPU
+    // under TCG — net regression.
+    uint32_t               m_full_refresh_tick_count;
+    static const uint32_t  FULL_REFRESH_INTERVAL = 4;  // ~15 Hz at 60 Hz timer
     
     void initDisplayModes();
     IOReturn createAGDCService();

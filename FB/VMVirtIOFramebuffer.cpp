@@ -59,6 +59,7 @@ bool VMVirtIOFramebuffer::init(OSDictionary* properties)
     m_fb_allocation_height = 0;
     m_scanout_resource_id = 1;  // Primary GUI display resource ID
     m_scanout_taken_over_by_3d = false;  // 2D framebuffer active by default
+    m_full_refresh_tick_count = 0;
     m_width = 1024;
     m_height = 768;
     m_depth = 32;
@@ -2075,7 +2076,17 @@ IOReturn VMVirtIOFramebuffer::setCursorImage(void* cursorImage)
 
 IOReturn VMVirtIOFramebuffer::setCursorState(SInt32 x, SInt32 y, bool visible)
 {
-    // Hardware cursor not implemented — return unsupported.
+    // Unreachable by construction. We report crsr = 0 (no hardware cursor),
+    // so on 10.6 WindowServer composites the cursor into the aperture from
+    // userspace via CoreGraphics — the kernel never participates. Every
+    // shmem cursor field (cursorLoc, cursorSize, cursorRect, oldCursorRect)
+    // is frozen at the boot-console state near (15,15) for the same reason:
+    // nothing in-kernel ever updates them.
+    //
+    // This method would only be called if we advertised a hardware cursor
+    // (crsr = 1) — gated on the UTM GL cursor-compositing question. The
+    // real cursor-responsiveness fix is host-composited hardware cursor,
+    // not anything in this driver.
     return kIOReturnUnsupported;
 }
 
@@ -2385,27 +2396,42 @@ void VMVirtIOFramebuffer::refreshDisplay()
         return;
     }
 
-    // Transfer framebuffer content to host GPU memory
+    // Throttled full-surface refresh at ~15 Hz. See header for the cost
+    // model and the dead-end investigations (cursorRect, setCursorState,
+    // content-diff) that were closed before this landed.
+    static bool logged_first_refresh = false;
+    if (!logged_first_refresh) {
+        logged_first_refresh = true;
+        IOLog("VMVirtIOFramebuffer::refreshDisplay: first tick (mode=%u %ux%u) — %u Hz refresh\n",
+              (unsigned)m_current_mode, (unsigned)m_width, (unsigned)m_height,
+              (unsigned)(60 / FULL_REFRESH_INTERVAL));
+    }
+
+    m_full_refresh_tick_count++;
+    if (m_full_refresh_tick_count < FULL_REFRESH_INTERVAL) {
+        return;
+    }
+    m_full_refresh_tick_count = 0;
+
     IOReturn transfer_result = m_gpu_driver->transferToHost2D(m_scanout_resource_id, 0,
                                                                0, 0, m_width, m_height);
     if (transfer_result != kIOReturnSuccess) {
-        IOLog("VMVirtIOFramebuffer::refreshDisplay() - transferToHost2D FAILED: 0x%x\n", transfer_result);
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - transferToHost2D FAILED: 0x%x\n",
+              transfer_result);
         return;
     }
-
-    // Flush to display scanout
     IOReturn flush_result = m_gpu_driver->flushResource(m_scanout_resource_id, 0, 0,
                                                         m_width, m_height);
     if (flush_result != kIOReturnSuccess) {
-        IOLog("VMVirtIOFramebuffer::refreshDisplay() - flushResource FAILED: 0x%x\n", flush_result);
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - flushResource FAILED: 0x%x\n",
+              flush_result);
         return;
     }
-    
-    // Success - log only once
+
     static bool logged_success = false;
     if (!logged_success) {
-        IOLog("VMVirtIOFramebuffer::refreshDisplay() - Transfer+Flush SUCCESS for resource %d (%dx%d)\n",
-              m_scanout_resource_id, m_width, m_height);
+        IOLog("VMVirtIOFramebuffer::refreshDisplay() - full-surface Transfer+Flush SUCCESS for resource %d (%ux%u)\n",
+              (unsigned)m_scanout_resource_id, (unsigned)m_width, (unsigned)m_height);
         logged_success = true;
     }
 }
