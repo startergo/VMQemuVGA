@@ -220,15 +220,44 @@ struct virtio_gpu_transfer_to_host_2d {
     uint32_t padding;
 };
 
+// virgl_box / virtio_gpu_box — the 6-dword region descriptor used by ALL 3D
+// transfer commands. UTM's QEMU (and upstream) cast the transfer struct's
+// box field directly to (struct virgl_box *) when calling
+// virgl_renderer_transfer_{read,write}_iov. A 4-dword virtio_gpu_rect here
+// is the classic way to silently break 3D transfers: QEMU's
+// VIRTIO_GPU_FILL_CMD sees a size mismatch, logs a guest-error to the host
+// debug log, and returns OK_NODATA without ever calling virglrenderer — so
+// the guest sees 0x1100 and zero bytes copied.
+//
+// NOTE: virtio_gpu_rect is still correct for the 2D transfer struct —
+// 2D is a different command and uses rect, not box. Don't unify them.
+struct virtio_gpu_box {
+    uint32_t x, y, z;
+    uint32_t w, h, d;
+};
+
+// VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D, VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D.
+// Total wire size must be 72 bytes (matches UTM QEMU's
+// virtio_gpu_transfer_host_3d). Field name `box` matches UTM; the previous
+// `r` (virtio_gpu_rect) form was a silent-no-op bug.
 struct virtio_gpu_transfer_to_host_3d {
     struct virtio_gpu_ctrl_hdr hdr;
-    struct virtio_gpu_rect r;
+    struct virtio_gpu_box box;
     uint64_t offset;
     uint32_t resource_id;
     uint32_t level;
     uint32_t stride;
     uint32_t layer_stride;
 };
+
+// Compile-time size guards. A negative-array typedef fails the build at the
+// declaration site, which is exactly where a future field-type drift would
+// otherwise hide until it reproduced the "0x1100 + zero bytes" signature.
+// This is the second struct-layout mismatch that has cost this project a
+// session (cursor struct was the first); make this class of bug
+// unrepresentable for the 3D transfer path.
+typedef char vgpu_box_size_check[(sizeof(struct virtio_gpu_box) == 24) ? 1 : -1];
+typedef char vgpu_tf3d_size_check[(sizeof(struct virtio_gpu_transfer_to_host_3d) == 72) ? 1 : -1];
 
 /* Memory backing */
 struct virtio_gpu_mem_entry {

@@ -6511,10 +6511,12 @@ IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
     cmd.offset = 0;
     cmd.stride = 0;
     cmd.layer_stride = 0;
-    cmd.r.x = x;
-    cmd.r.y = y;
-    cmd.r.width = width;
-    cmd.r.height = height;
+    cmd.box.x = x;
+    cmd.box.y = y;
+    cmd.box.z = z;
+    cmd.box.w = width;
+    cmd.box.h = height;
+    cmd.box.d = depth;
     
     // Submit transfer to host 3D command
     struct virtio_gpu_ctrl_hdr resp = {};
@@ -6551,10 +6553,12 @@ IOReturn CLASS::transferFromHost3D(uint32_t resource_id, uint32_t level,
     cmd.offset = 0;
     cmd.stride = 0;
     cmd.layer_stride = 0;
-    cmd.r.x = x;
-    cmd.r.y = y;
-    cmd.r.width = width;
-    cmd.r.height = height;
+    cmd.box.x = x;
+    cmd.box.y = y;
+    cmd.box.z = z;
+    cmd.box.w = width;
+    cmd.box.h = height;
+    cmd.box.d = depth;
     
     // Submit transfer from host 3D command
     struct virtio_gpu_ctrl_hdr resp = {};
