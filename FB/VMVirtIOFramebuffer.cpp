@@ -18,6 +18,28 @@ public:
 #define super IOFramebuffer
 OSDefineMetaClassAndStructors(VMVirtIOFramebuffer, IOFramebuffer);
 
+// Single source of truth for supported modes. getInformationForDisplayMode
+// and filterModesByAllocation() both read this; m_display_modes[] holds the
+// runtime-filtered list of IDs that fit in the allocated buffer.
+//
+// Default is 1920×1080 (mode 5) per the fits-in-beats-overflow reasoning:
+// 1080 on a 1080-line host is lossless; 1200 would force scaling.
+static const struct {
+    IODisplayModeID id;
+    uint32_t width;
+    uint32_t height;
+    bool is_default;
+} kSupportedModes[] = {
+    {1, 1024, 768,  false},
+    {2, 1280, 1024, false},
+    {3, 1440, 900,  false},
+    {4, 1680, 1050, false},
+    {5, 1920, 1080, true},   // preferred default
+    {6, 2560, 1440, false},
+    {7, 3840, 2160, false},
+};
+static const size_t kNumSupportedModes = sizeof(kSupportedModes) / sizeof(kSupportedModes[0]);
+
 bool VMVirtIOFramebuffer::init(OSDictionary* properties)
 {
     if (!super::init(properties)) {
@@ -33,6 +55,8 @@ bool VMVirtIOFramebuffer::init(OSDictionary* properties)
     m_fb_backing = nullptr;
     m_fb_device_memory = nullptr;
     m_fb_resource_id = 0;
+    m_fb_allocation_width = 0;
+    m_fb_allocation_height = 0;
     m_scanout_resource_id = 1;  // Primary GUI display resource ID
     m_scanout_taken_over_by_3d = false;  // 2D framebuffer active by default
     m_width = 1024;
@@ -56,7 +80,20 @@ void VMVirtIOFramebuffer::free()
         m_refresh_timer = nullptr;
     }
 
-    teardownFramebufferResource();
+    teardownFramebufferResource();  // sends UNREF; does NOT release the fixed buffer (Phase 2)
+
+    // Phase 2: m_fb_backing and m_fb_device_memory are allocated once in
+    // start() and live until free(). Release them here, after any resource
+    // has been UNREF'd.
+    if (m_fb_device_memory) {
+        m_fb_device_memory->release();
+        m_fb_device_memory = nullptr;
+    }
+    if (m_fb_backing) {
+        m_fb_backing->complete(kIODirectionInOut);
+        m_fb_backing->release();
+        m_fb_backing = nullptr;
+    }
 
     if (m_vram_range) {
         m_vram_range->release();
@@ -501,8 +538,114 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     // The base class calls setupForCurrentConfig at the right time (after
     // enableController, when the framebuffer is live).
 
+    // Phase 2: Fixed framebuffer buffer allocation. Sized for the largest mode
+    // we intend to advertise. Lives until free(); setupFramebufferResource
+    // creates the virtio resource against this buffer but does NOT realloc it.
+    //
+    // ceilings[] is ordered largest-first; the first that succeeds wins. The
+    // fallback ladder handles contiguous-allocation failure (more likely at
+    // larger sizes, especially late in boot when memory is fragmented).
+    {
+        struct { uint32_t w, h; const char* label; } ceilings[] = {
+            {4096, 2160, "4096x2160 (35.4 MB)"},
+            {2560, 1600, "2560x1600 (16.4 MB)"},
+            {1920, 1200, "1920x1200 (9.2 MB)"},
+            {1600, 1200, "1600x1200 (7.3 MB)"},
+            {1280, 1024, "1280x1024 (5.0 MB)"},
+            {1024, 768,  "1024x768  (3.0 MB)"},
+        };
+        bool allocated = false;
+        for (size_t i = 0; i < sizeof(ceilings)/sizeof(ceilings[0]); i++) {
+            size_t try_size = (size_t)ceilings[i].w * ceilings[i].h * 4;
+            IOBufferMemoryDescriptor* try_backing = IOBufferMemoryDescriptor::withOptions(
+                kIODirectionInOut | kIOMemoryPhysicallyContiguous,  // options
+                try_size,                                             // capacity
+                page_size);                                           // alignment
+            if (!try_backing) {
+                IOLog("VMVirtIOFramebuffer::start() - ceiling %s: withOptions returned NULL, trying smaller\n",
+                      ceilings[i].label);
+                continue;
+            }
+            IOReturn prepare_ret = try_backing->prepare(kIODirectionInOut);
+            if (prepare_ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOFramebuffer::start() - ceiling %s: prepare 0x%x, trying smaller\n",
+                      ceilings[i].label, prepare_ret);
+                try_backing->release();
+                continue;
+            }
+            IOPhysicalAddress phys = try_backing->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+            IODeviceMemory* try_dev_mem = IODeviceMemory::withRange(phys, try_size);
+            if (!try_dev_mem) {
+                IOLog("VMVirtIOFramebuffer::start() - ceiling %s: IODeviceMemory::withRange failed, trying smaller\n",
+                      ceilings[i].label);
+                try_backing->complete(kIODirectionInOut);
+                try_backing->release();
+                continue;
+            }
+            // Self-check: actual allocation length must match the requested size.
+            // Catches the IOBufferMemoryDescriptor::withOptions arg-order bug
+            // (allocates a tiny buffer while reporting the requested size).
+            IOByteCount actual_len = try_backing->getLength();
+            if (actual_len != (IOByteCount)try_size) {
+                IOLog("VMVirtIOFramebuffer::start() - ceiling %s: SIZE MISMATCH actual=%llu expected=%llu, trying smaller\n",
+                      ceilings[i].label, (uint64_t)actual_len, (uint64_t)try_size);
+                try_dev_mem->release();
+                try_backing->complete(kIODirectionInOut);
+                try_backing->release();
+                continue;
+            }
+            // Aperture invariant: getApertureRange returns an IODeviceMemory
+            // describing ONE physical range. There is no honest way to build
+            // one over a fragmented buffer — IODeviceMemory::withRange(phys,
+            // len) would describe a single contiguous physical run that
+            // doesn't exist, and every WindowServer write past segment 1
+            // lands on unrelated kernel memory (same corruption class as the
+            // old zone free-list panics). kIOMemoryPhysicallyContiguous
+            // should guarantee a single segment, but at 35 MB on this 4 GB
+            // guest it has been observed returning 2 segments (attachBacking
+            // reported nr_entries=2). Walk the allocation and require
+            // nr_entries == 1; step down if not.
+            {
+                unsigned seg_count = 0;
+                IOByteCount walk_off = 0;
+                IOByteCount walk_len = 0;
+                while (try_backing->getPhysicalSegment(walk_off, &walk_len, kIOMemoryMapperNone) != 0) {
+                    seg_count++;
+                    walk_off += walk_len;
+                    if (walk_len == 0) break;
+                }
+                if (seg_count != 1) {
+                    IOLog("VMVirtIOFramebuffer::start() - ceiling %s: allocation fragmented into %u segments (aperture requires 1) — stepping down\n",
+                          ceilings[i].label, seg_count);
+                    try_dev_mem->release();
+                    try_backing->complete(kIODirectionInOut);
+                    try_backing->release();
+                    continue;
+                }
+            }
+            // Success — commit.
+            m_fb_backing = try_backing;
+            m_fb_device_memory = try_dev_mem;
+            m_fb_allocation_width = ceilings[i].w;
+            m_fb_allocation_height = ceilings[i].h;
+            IOLog("VMVirtIOFramebuffer::start() - Fixed framebuffer buffer allocated: %s phys=0x%llx len=%llu\n",
+                  ceilings[i].label, (uint64_t)phys, (uint64_t)try_size);
+            allocated = true;
+            break;
+        }
+        if (!allocated) {
+            IOLog("VMVirtIOFramebuffer::start() - *** ALL FRAMEBUFFER CEILINGS FAILED *** — display will not work\n");
+            // Continue; downstream calls will fail visibly rather than silently corrupt.
+        }
+    }
+
+    // Phase 4: filter the supported mode list based on which ceiling succeeded.
+    // Prevents advertising a mode the buffer can't back. Also sets m_current_mode
+    // (preferred default 1920×1080 if it fits, else largest fitting mode).
+    filterModesByAllocation();
+
     IOLog("VMVirtIOFramebuffer::start() - Initialization complete\n");
-    
+
     return true;
 }
 
@@ -529,21 +672,66 @@ void VMVirtIOFramebuffer::stop(IOService* provider)
 
 void VMVirtIOFramebuffer::initDisplayModes()
 {
-    // Create basic display modes
-    m_display_modes[0] = 1;   // 1024x768
-    m_display_modes[1] = 2;   // 1280x1024
-    m_display_modes[2] = 3;   // 1440x900
-    m_display_modes[3] = 4;   // 1680x1050
-    m_display_modes[4] = 5;   // 1920x1080
-    m_display_modes[5] = 6;   // 2560x1440
-    m_display_modes[6] = 7;   // 3840x2160
-    // TEMPORARY: only advertise 1024×768 until the fixed-allocation refactor
-    // lands. Per-mode framebuffer reallocation in setupFramebufferResource
-    // frees the old backing while WindowServer still has it mapped → zone
-    // free-list corruption → panics in random subsystems (IOHIDFamily, AHCI,
-    // zalloc). QXL avoids this by using a fixed BAR; we need the same pattern.
-    m_mode_count = 1;
-    m_current_mode = 1; // Default to 1024x768
+    // Phase 4: mode list is populated by filterModesByAllocation() after
+    // start() allocates the fixed buffer. Here we just reset state so a
+    // re-init doesn't carry stale modes.
+    m_mode_count = 0;
+    m_current_mode = 0;  // set by filterModesByAllocation
+}
+
+void VMVirtIOFramebuffer::filterModesByAllocation()
+{
+    // Phase 4: build the advertised mode list from kSupportedModes, keeping
+    // only the modes whose backing requirement (w × h × 4) fits in the fixed
+    // buffer allocated by start(). m_display_modes is filled in kSupportedModes
+    // order (smallest to largest), so WindowServer sees a sane ordering.
+    //
+    // m_current_mode picks the default-flagged entry (1920×1080) when it
+    // fits; otherwise falls back to the largest fitting mode. The fallback
+    // ladder in start() ends at 1024×768, so at least mode 1 always fits.
+    m_mode_count = 0;
+    m_current_mode = 0;
+    IODisplayModeID default_mode = 0;
+    IODisplayModeID largest_fitting = 0;
+    uint64_t largest_pixels = 0;
+
+    if (!m_fb_backing) {
+        IOLog("VMVirtIOFramebuffer::filterModesByAllocation: no fixed buffer — no modes advertised\n");
+        return;
+    }
+    uint64_t alloc_bytes = (uint64_t)m_fb_backing->getLength();
+
+    for (size_t i = 0; i < kNumSupportedModes; i++) {
+        uint64_t mode_bytes = (uint64_t)kSupportedModes[i].width
+                              * (uint64_t)kSupportedModes[i].height * 4ULL;
+        if (mode_bytes > alloc_bytes) {
+            IOLog("VMVirtIOFramebuffer::filterModesByAllocation: skip mode %u (%ux%u, %llu bytes > %llu buffer)\n",
+                  kSupportedModes[i].id, kSupportedModes[i].width, kSupportedModes[i].height,
+                  mode_bytes, alloc_bytes);
+            continue;
+        }
+        if (m_mode_count >= sizeof(m_display_modes) / sizeof(m_display_modes[0])) {
+            IOLog("VMVirtIOFramebuffer::filterModesByAllocation: m_display_modes[] full, dropping remaining modes\n");
+            break;
+        }
+        m_display_modes[m_mode_count++] = kSupportedModes[i].id;
+        uint64_t pixels = (uint64_t)kSupportedModes[i].width
+                          * (uint64_t)kSupportedModes[i].height;
+        if (pixels > largest_pixels) {
+            largest_pixels = pixels;
+            largest_fitting = kSupportedModes[i].id;
+        }
+        if (kSupportedModes[i].is_default) {
+            default_mode = kSupportedModes[i].id;
+        }
+    }
+
+    // Boot mode: preferred default if it fits, else the largest fitting mode.
+    // m_current_mode drives what enableController sets up.
+    m_current_mode = (default_mode != 0) ? default_mode : largest_fitting;
+
+    IOLog("VMVirtIOFramebuffer::filterModesByAllocation: %u modes advertised, boot mode = %u, buffer = %llu bytes\n",
+          (unsigned)m_mode_count, m_current_mode, alloc_bytes);
 }
 
 // IOFramebuffer required pure virtual methods
@@ -649,54 +837,28 @@ IOReturn VMVirtIOFramebuffer::getDisplayModes(IODisplayModeID* allDisplayModes)
     return kIOReturnSuccess;
 }
 
-IOReturn VMVirtIOFramebuffer::getInformationForDisplayMode(IODisplayModeID displayMode, 
+IOReturn VMVirtIOFramebuffer::getInformationForDisplayMode(IODisplayModeID displayMode,
                                                            IODisplayModeInformation* info)
 {
-    IOLog("VMVirtIOFramebuffer::getInformationForDisplayMode() - Mode ID=%d\n", displayMode);
     if (!info) {
         return kIOReturnBadArgument;
     }
-    
-    // Set common flags for stable display
-    info->flags = kDisplayModeValidFlag | kDisplayModeDefaultFlag | kDisplayModeSafeFlag;
-    info->refreshRate = 60 << 16; // 60 Hz in fixed point
-    info->maxDepthIndex = 0; // Only support 32-bit depth
-    
-    switch (displayMode) {
-        case 1: // 1024x768 - Safe fallback mode
-            info->nominalWidth = 1024;
-            info->nominalHeight = 768;
-            info->flags |= kDisplayModeDefaultFlag;
-            break;
-        case 2: // 1280x1024
-            info->nominalWidth = 1280;
-            info->nominalHeight = 1024;
-            break;
-        case 3: // 1440x900
-            info->nominalWidth = 1440;
-            info->nominalHeight = 900;
-            break;
-        case 4: // 1680x1050
-            info->nominalWidth = 1680;
-            info->nominalHeight = 1050;
-            break;
-        case 5: // 1920x1080
-            info->nominalWidth = 1920;
-            info->nominalHeight = 1080;
-            break;
-        case 6: // 2560x1440
-            info->nominalWidth = 2560;
-            info->nominalHeight = 1440;
-            break;
-        case 7: // 3840x2160
-            info->nominalWidth = 3840;
-            info->nominalHeight = 2160;
-            break;
-        default:
-            return kIOReturnUnsupported;
+
+    // Lookup in kSupportedModes — single source of truth for the mode table.
+    for (size_t i = 0; i < kNumSupportedModes; i++) {
+        if (kSupportedModes[i].id == displayMode) {
+            info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag;
+            if (kSupportedModes[i].is_default) {
+                info->flags |= kDisplayModeDefaultFlag;
+            }
+            info->refreshRate = 60 << 16;  // 60 Hz in fixed point
+            info->maxDepthIndex = 0;        // Only support 32-bit depth
+            info->nominalWidth = kSupportedModes[i].width;
+            info->nominalHeight = kSupportedModes[i].height;
+            return kIOReturnSuccess;
+        }
     }
-    
-    return kIOReturnSuccess;
+    return kIOReturnUnsupported;
 }
 
 UInt64 VMVirtIOFramebuffer::getPixelFormatsForDisplayMode(IODisplayModeID displayMode, IOIndex depth)
@@ -718,7 +880,14 @@ IOReturn VMVirtIOFramebuffer::getPixelInformation(IODisplayModeID displayMode, I
     if (result != kIOReturnSuccess) {
         return result;
     }
-    
+
+    // bzero on entry. Callers reuse one IOPixelInformation across mode
+    // enumeration, and the struct has fields we don't otherwise touch
+    // (componentMasks[3..15], pixelFormat, reserved[0..1]). Without bzero,
+    // those inherit stale data from the previous call. Also catches the
+    // first-call case where stack garbage shows up in the unread fields.
+    bzero(pixelInfo, sizeof(*pixelInfo));
+
     pixelInfo->bytesPerRow = modeInfo.nominalWidth * 4; // 32-bit pixels
     pixelInfo->bytesPerPlane = pixelInfo->bytesPerRow * modeInfo.nominalHeight;
     pixelInfo->bitsPerPixel = 32;
@@ -728,10 +897,22 @@ IOReturn VMVirtIOFramebuffer::getPixelInformation(IODisplayModeID displayMode, I
     pixelInfo->componentMasks[0] = 0x00FF0000; // Red
     pixelInfo->componentMasks[1] = 0x0000FF00; // Green
     pixelInfo->componentMasks[2] = 0x000000FF; // Blue
+    // componentMasks[3..15]: left at 0 by bzero
+    strlcpy(pixelInfo->pixelFormat, IO32BitDirectPixels, sizeof(pixelInfo->pixelFormat));
     pixelInfo->flags = 0;
     pixelInfo->activeWidth = modeInfo.nominalWidth;
     pixelInfo->activeHeight = modeInfo.nominalHeight;
-    
+    // reserved[0..1]: left at 0 by bzero
+
+    // Instrumentation: log what we RETURN (after all assignments) alongside
+    // the live mode. (Earlier placement of this log was misleading — it fired
+    // before the activeWidth/activeHeight assignments and read stale caller
+    // state, not what we returned. Now at the end where it belongs.)
+    IOLog("VMVirtIOFramebuffer::getPixelInformation: queried mode=%u → bytesPerRow=%u active=%ux%u | live mode=%u m_width=%u m_height=%u\n",
+          (unsigned)displayMode, (unsigned)pixelInfo->bytesPerRow,
+          (unsigned)pixelInfo->activeWidth, (unsigned)pixelInfo->activeHeight,
+          (unsigned)m_current_mode, (unsigned)m_width, (unsigned)m_height);
+
     return kIOReturnSuccess;
 }
 
@@ -961,9 +1142,10 @@ IOReturn VMVirtIOFramebuffer::open(void)
                                 (IOTimerEventSource::Action)&VMVirtIOFramebuffer::displayRefreshTimer);
                             if (m_refresh_timer) {
                                 if (workloop->addEventSource(m_refresh_timer) == kIOReturnSuccess) {
-                                    // Enable timer for periodic display refresh (1 second)
-                                    m_refresh_timer->setTimeoutMS(1000);
-                                    IOLog("VMVirtIOFramebuffer::open() - Display refresh timer started (1000ms / 1 Hz)\n");
+                                    // Arm at steady-state cadence; the timer re-arms at 16 ms on each
+                                    // fire. The old 1 s initial arm delayed first paint for no reason.
+                                    m_refresh_timer->setTimeoutMS(16);
+                                    IOLog("VMVirtIOFramebuffer::open() - Display refresh timer armed (16 ms)\n");
                                 } else {
                                     IOLog("VMVirtIOFramebuffer::open() - Failed to add timer to workloop\n");
                                     m_refresh_timer->release();
@@ -1030,20 +1212,12 @@ void VMVirtIOFramebuffer::teardownFramebufferResource()
     if (m_fb_resource_id != 0 && m_gpu_driver) {
         // deallocateResource sends VIRTIO_GPU_CMD_RESOURCE_UNREF, which makes
         // the host drop both the resource and its backing attachment. The
-        // caller-owned backing memory (m_fb_backing) is freed below — it was
-        // never registered in the resource slot's backing_memory field, so
-        // deallocateResource won't try to release it.
+        // caller-owned backing memory (m_fb_backing) is NOT released here —
+        // Phase 2: the buffer is allocated once in start() and lives until
+        // free(). It was never registered in the resource slot's backing_memory
+        // field, so deallocateResource won't try to release it either.
         m_gpu_driver->deallocateResource(m_fb_resource_id);
         m_fb_resource_id = 0;
-    }
-    if (m_fb_device_memory) {
-        m_fb_device_memory->release();
-        m_fb_device_memory = nullptr;
-    }
-    if (m_fb_backing) {
-        m_fb_backing->complete(kIODirectionInOut);
-        m_fb_backing->release();
-        m_fb_backing = nullptr;
     }
 }
 
@@ -1063,65 +1237,47 @@ IOReturn VMVirtIOFramebuffer::setupFramebufferResource(uint32_t width, uint32_t 
         return kIOReturnBadArgument;
     }
 
-    // Idempotent guard: if a framebuffer is already live, do NOT tear down and
-    // reallocate. IOFramebuffer's contract is that the aperture is stable —
-    // WindowServer maps it once and keeps the mapping. Freeing the backing
-    // while WindowServer still has it mapped corrupts the zone free list.
-    // TODO: for multi-mode support, implement the fixed-allocation model
-    // (allocate once for largest mode, carve out per-mode views without freeing).
-    if (m_fb_resource_id != 0 && m_fb_backing && m_fb_device_memory) {
-        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: already live (resource=%u) — skipping reallocation to preserve aperture stability\n",
-              m_fb_resource_id);
+    // Phase 2 contract: m_fb_backing and m_fb_device_memory are allocated ONCE
+    // in start() and live until free(). This function creates the virtio
+    // resource against that buffer; it does NOT own or realloc the buffer.
+    // Phase 3 will relax the idempotent guard to allow resource recreate on
+    // mode change (UNREF + CREATE_2D + ATTACH_BACKING + SET_SCANOUT, buffer
+    // preserved).
+    if (!m_fb_backing || !m_fb_device_memory) {
+        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: no fixed buffer (start() did not allocate)\n");
+        return kIOReturnNotReady;
+    }
+
+    // Phase 3: resource-recreate path. Skip only when the live resource is at
+    // the requested dims (true idempotency). Otherwise fall through past the
+    // guard — teardownFramebufferResource() below will UNREF the old resource
+    // before createResource2D builds the new one. Buffer is preserved (Phase 2),
+    // so WindowServer's aperture mapping stays valid across the recreate.
+    if (m_fb_resource_id != 0 && m_width == width && m_height == height) {
+        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: resource %u already live at %ux%u — no recreate needed\n",
+              m_fb_resource_id, width, height);
         return kIOReturnSuccess;
     }
+    if (m_fb_resource_id != 0) {
+        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: RECREATE resource %u for new dims %ux%u (was %ux%u)\n",
+              m_fb_resource_id, width, height, m_width, m_height);
+    }
 
+    // Sanity: the fixed buffer must be at least width × height × 4 bytes for
+    // this mode to fit. Phase 4 will keep the advertised mode table in sync
+    // with the allocation, but defend here too.
+    size_t mode_size = (size_t)width * height * 4;
+    if ((size_t)m_fb_backing->getLength() < mode_size) {
+        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: fixed buffer %llu bytes < mode %zu bytes (%ux%u) — mode doesn't fit\n",
+              (uint64_t)m_fb_backing->getLength(), mode_size, width, height);
+        return kIOReturnNoSpace;
+    }
+
+    // teardownFramebufferResource sends UNREF on any stale resource; no-op
+    // when m_fb_resource_id is 0. Does NOT release the buffer (Phase 2).
     teardownFramebufferResource();
 
-    size_t fb_size = (size_t)width * height * 4;  // 32-bit BGRA
-
-    // IOBufferMemoryDescriptor::withOptions signature is (options, capacity, alignment),
-    // NOT (capacity, options, alignment). The arg-order bug allocates a buffer of
-    // size = flags_value (tiny) while reporting the requested size as flags (no-op).
-    // Symptom: getLength() returns 0x13 (19) for a requested 0x300000 (3 MB).
-    m_fb_backing = IOBufferMemoryDescriptor::withOptions(
-        kIODirectionInOut | kIOMemoryPhysicallyContiguous,  // options
-        fb_size,                                              // capacity
-        page_size);                                           // alignment
-    if (!m_fb_backing) {
-        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: alloc %zu bytes failed\n", fb_size);
-        return kIOReturnNoMemory;
-    }
-    IOReturn prepare_ret = m_fb_backing->prepare(kIODirectionInOut);
-    if (prepare_ret != kIOReturnSuccess) {
-        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: prepare 0x%x\n", prepare_ret);
-        m_fb_backing->release();
-        m_fb_backing = nullptr;
-        return prepare_ret;
-    }
-
-    // Wrap as IODeviceMemory for aperture/VRAMRange.
-    IOPhysicalAddress phys = m_fb_backing->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
-    m_fb_device_memory = IODeviceMemory::withRange(phys, fb_size);
-    if (!m_fb_device_memory) {
-        IOLog("VMVirtIOFramebuffer::setupFramebufferResource: IODeviceMemory::withRange failed\n");
-        teardownFramebufferResource();
-        return kIOReturnNoMemory;
-    }
-
-    // Self-check: verify allocation size matches expected. Log MISMATCH if
-    // they disagree — this catches the arg-order-swap bug that produces a
-    // 19-byte allocation instead of 3 MB. The fill itself is removed (test
-    // pattern no longer needed — Milestone B verified on both virtio-ramfb-gl
-    // and virtio-gpu-gl-pci).
-    {
-        IOByteCount actual_len = m_fb_backing->getLength();
-        if (actual_len != (IOByteCount)fb_size) {
-            IOLog("VMVirtIOFramebuffer::setupFramebufferResource: FB SIZE MISMATCH actual=%llu expected=%llu\n",
-                  (uint64_t)actual_len, (uint64_t)fb_size);
-        }
-    }
-
-    // Allocate resource ID, create, attach with caller-owned backing.
+    // Create resource against the existing buffer, attach, scan out.
     m_fb_resource_id = 1;  // primary display resource (matches existing convention)
     IOReturn create_ret = m_gpu_driver->createResource2D(
         m_fb_resource_id,
@@ -1146,9 +1302,83 @@ IOReturn VMVirtIOFramebuffer::setupFramebufferResource(uint32_t width, uint32_t 
     m_width = width;
     m_height = height;
 
-    IOLog("VMVirtIOFramebuffer::setupFramebufferResource: %ux%u backing=%p phys=0x%llx size=0x%llx\n",
-          width, height, m_fb_backing, phys, (uint64_t)fb_size);
+    IOLog("VMVirtIOFramebuffer::setupFramebufferResource: %ux%u using fixed buffer backing=%p phys=0x%llx len=%llu\n",
+          width, height, m_fb_backing,
+          (uint64_t)m_fb_device_memory->getPhysicalAddress(),
+          (uint64_t)m_fb_device_memory->getLength());
     return kIOReturnSuccess;
+}
+
+// Phase 3 self-check: prove the resource-recreate path works. Re-calls
+// setupFramebufferResource at a smaller dim, then restores. The buffer must
+// stay stable (same m_fb_backing pointer, same m_fb_device_memory) across
+// both recreates — that's the load-bearing invariant for mode changes.
+//
+// Same shape as Phase 1's probeResourceTracking: deterministic, self-checking,
+// one-shot via static flag in the caller (enableController). Logs PROBE PASS
+// / PROBE FAIL with the failing phase.
+void VMVirtIOFramebuffer::probeResourceRecreate()
+{
+    IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE START\n");
+
+    if (!m_fb_backing || !m_fb_device_memory || m_fb_resource_id == 0) {
+        IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE FAIL precondition — backing=%p dev_mem=%p resource_id=%u\n",
+              m_fb_backing, m_fb_device_memory, m_fb_resource_id);
+        return;
+    }
+
+    // Snapshot the invariants the probe must preserve.
+    IOBufferMemoryDescriptor* backing_before = m_fb_backing;
+    IODeviceMemory* dev_mem_before = m_fb_device_memory;
+    uint32_t saved_w = m_width;
+    uint32_t saved_h = m_height;
+
+    // Probe dims: smaller than current so it definitely fits in the buffer.
+    // (Buffer is sized for the 1920×1200 ceiling; anything ≤ that fits.)
+    uint32_t probe_w = (saved_w > 100) ? (saved_w - 100) : (saved_w + 100);
+    uint32_t probe_h = (saved_h > 100) ? (saved_h - 100) : (saved_h + 100);
+
+    // Phase A: recreate at probe dims. Must succeed.
+    IOReturn recreate_ret = setupFramebufferResource(probe_w, probe_h);
+    if (recreate_ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE FAIL phase A recreate returned 0x%x\n",
+              recreate_ret);
+        // Try to restore to a known-good state. If this also fails, the
+        // framebuffer is broken — let enableController's transferToHost2D
+        // fail loudly rather than silently mask the bug.
+        setupFramebufferResource(saved_w, saved_h);
+        return;
+    }
+
+    // Phase B: buffer must NOT have moved. Same backing pointer + same dev_mem.
+    if (m_fb_backing != backing_before || m_fb_device_memory != dev_mem_before) {
+        IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE FAIL phase B buffer moved (backing %p → %p, dev_mem %p → %p) — recreate path is reallocating, not preserving\n",
+              backing_before, m_fb_backing, dev_mem_before, m_fb_device_memory);
+        setupFramebufferResource(saved_w, saved_h);
+        return;
+    }
+
+    // Phase C: restore to original dims. Must also succeed.
+    IOReturn restore_ret = setupFramebufferResource(saved_w, saved_h);
+    if (restore_ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE FAIL phase C restore returned 0x%x — framebuffer left at probe dims %ux%u\n",
+              restore_ret, probe_w, probe_h);
+        return;
+    }
+
+    // Phase D: buffer still must not have moved, and dims restored.
+    if (m_fb_backing != backing_before || m_fb_device_memory != dev_mem_before) {
+        IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE FAIL phase D buffer moved on restore\n");
+        return;
+    }
+    if (m_width != saved_w || m_height != saved_h) {
+        IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE FAIL phase D dims not restored (now %ux%u, expected %ux%u)\n",
+              m_width, m_height, saved_w, saved_h);
+        return;
+    }
+
+    IOLog("VMVirtIOFramebuffer::probeResourceRecreate: PROBE PASS (recreate at %ux%u → restore at %ux%u, buffer stable, resource=%u)\n",
+          probe_w, probe_h, saved_w, saved_h, m_fb_resource_id);
 }
 
 // IOFramebuffer optional overrides
@@ -1299,6 +1529,19 @@ IOReturn VMVirtIOFramebuffer::enableController()
                       "(expect error, not success)\n", test_ret);
             }
 
+            // One-shot resource-tracking self-check: prove findResource actually
+            // finds after pool unification (was a no-op for months because it
+            // indexed an empty m_resources OSArray). Same shape as the
+            // setscanout(999) probe above — deterministic, self-checking.
+            // Runs before the first real createResource2D so the device is up.
+            {
+                static bool resource_tracking_probed = false;
+                if (!resource_tracking_probed && m_gpu_driver) {
+                    resource_tracking_probed = true;
+                    m_gpu_driver->probeResourceTracking();
+                }
+            }
+
             // Allocate framebuffer backing, create VirtIO GPU resource, attach
             // backing (caller-owned, scatter-list), set scanout. Single helper
             // so mode changes can re-invoke the same path.
@@ -1306,6 +1549,20 @@ IOReturn VMVirtIOFramebuffer::enableController()
             if (setup_ret == kIOReturnSuccess) {
                 IOLog("VMVirtIOFramebuffer::enableController() - VirtIO GPU display resource ready (%ux%u)\n",
                       m_width, m_height);
+
+                // Phase 3 probe: verify the resource-recreate path works. Runs once.
+                // The recreate path was structurally unreachable before (the guard
+                // skipped it); this probe exercises it deterministically without
+                // waiting for a Phase 4 mode switch. The probe re-calls
+                // setupFramebufferResource at a smaller dim, then restores — buffer
+                // must stay stable across both recreates.
+                {
+                    static bool recreate_probed = false;
+                    if (!recreate_probed) {
+                        recreate_probed = true;
+                        probeResourceRecreate();
+                    }
+                }
 
                 // Initial transfer so the screen isn't garbage while WindowServer composes.
                 m_gpu_driver->transferToHost2D(m_fb_resource_id, 0, 0, 0, m_width, m_height);
@@ -1358,8 +1615,20 @@ IOReturn VMVirtIOFramebuffer::setDisplayMode(IODisplayModeID displayMode, IOInde
 {
     IOLog("VMVirtIOFramebuffer::setDisplayMode() - mode=%d, depth=%d\n", (int)displayMode, (int)depth);
     
-    if (displayMode < 1 || displayMode > (IODisplayModeID)m_mode_count) {
-        IOLog("VMVirtIOFramebuffer::setDisplayMode() - Invalid mode %d\n", (int)displayMode);
+    // Phase 4: filterModesByAllocation can produce a non-contiguous ID list
+    // (middle modes filtered out when allocation falls back). Validate by
+    // membership in m_display_modes, not by range — `displayMode > m_mode_count`
+    // would accept filtered-out IDs in the gap and reject valid ones past it.
+    bool mode_valid = false;
+    for (IOItemCount i = 0; i < m_mode_count; i++) {
+        if (m_display_modes[i] == displayMode) {
+            mode_valid = true;
+            break;
+        }
+    }
+    if (!mode_valid) {
+        IOLog("VMVirtIOFramebuffer::setDisplayMode() - Invalid mode %d (not in advertised list of %u)\n",
+              (int)displayMode, (unsigned)m_mode_count);
         return kIOReturnUnsupported;
     }
     
@@ -1397,10 +1666,16 @@ IOReturn VMVirtIOFramebuffer::setDisplayMode(IODisplayModeID displayMode, IOInde
         IOLog("VMVirtIOFramebuffer::setDisplayMode() - Failed to get mode information\n");
     }
 
-    // super::setDisplayMode removed: triggers IOFramebuffer internals that race
-    // with the AHCI workloop under TCG → pmap64_pde page fault. The real fix
-    // is a fixed-allocation aperture (stable across mode changes) so the base
-    // class can be called safely. Until then, return success directly.
+    // super::setDisplayMode bypassed: originally removed for an AHCI/workloop
+    // race that occurred under TCG. Investigation 2026-08-09 (cursor fix
+    // thread) showed it is NOT load-bearing for any currently-observed bug:
+    // WindowServer refreshes `__private->pixelInfo` independently via
+    // setupForCurrentConfig → doSetup → getPixelInformation after every
+    // setDisplayMode, so the cache doesn't strand. Leaving the bypass in
+    // place; re-enabling is at most a separate base-class-integration
+    // question, not a fix for anything broken today.
+    IOLog("VMVirtIOFramebuffer::setDisplayMode: complete — mode=%u live m_width=%u m_height=%u\n",
+          (unsigned)m_current_mode, (unsigned)m_width, (unsigned)m_height);
     return kIOReturnSuccess;
 }
 

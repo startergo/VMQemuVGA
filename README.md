@@ -1,97 +1,176 @@
-# VMQemuVGA v8.0 - Basic Display Driver for macOS Virtualization
+# VMQemuVGA
 
-**Honest Documentation - What Actually Works**
+Display driver (IOKit kext) for **macOS 10.6.8 Snow Leopard** guests running
+under QEMU/UTM, with support for both QXL and VirtIO GPU devices.
 
-Basic display driver for macOS virtualization with Snow Leopard compatibility. Provides essential framebuffer functionality and VirtIO GPU integration for QEMU/KVM virtual machines.
-
-## 🎯 What Actually Works
-
-### ✅ **Working Display Features**
-- **Basic 2D Framebuffer**: Functional display output with multiple resolutions
-- **Snow Leopard Compatibility**: Fully working on macOS 10.6.8
-- **VirtIO GPU Integration**: Basic GPU communication for display operations
-- **Resolution Support**: Multiple display modes up to 1920x1080
-- **Stable Installation**: Safe installer that won't cause kernel panics
-- **System Integration**: Proper IOKit framework integration
-
-### ✅ **Compatibility & Stability**
-- **Symbol Resolution**: All 14 missing Snow Leopard symbols resolved
-- **Stub Implementations**: 14 stub methods prevent crashes when advanced APIs are called
-- **Clean Termination**: Proper cleanup during driver shutdown
-- **Safe Installation**: Installer doesn't attempt to unload active display drivers
-
-## 🚫 What Doesn't Actually Work (Stub Functions Only)
-
-### **VMPhase3Manager Stubs (3 methods)**
-- `setDisplayScaling()` - Just logs and returns success
-- `configureColorSpace()` - Just logs and returns success  
-- `enableVariableRefreshRate()` - Just logs and returns success
-
-### **VMVirtIOGPU Stubs (11 methods)**
-- `enable3DAcceleration()` - Just logs "(stub)"
-- `enableVirgl()` - Just logs "(stub)"
-- `enableVSync()` - Just logs "(stub)" 
-- `updateDisplay()` - Just logs parameters and returns success
-- `mapGuestMemory()` - Sets gpu_addr to 0 and returns success
-- `setBasic3DSupport()` - Just logs "(stub)"
-- `enableResourceBlob()` - Just logs "(stub)"
-- `setOptimalQueueSizes()` - Just logs "(stub)" and returns true
-- `setupGPUMemoryRegions()` - Just logs "(stub)" and returns true
-- `initializeVirtIOQueues()` - Just logs "(stub)" and returns true
-- `setMockMode()` - Just logs "(stub)"
-
-## 📋 Technical Reality
-
-**What the system reports:**
-- IORegistry shows "3D Acceleration = Enabled" ✅
-- IORegistry shows "Shader Manager = Enabled" ✅ 
-- IORegistry shows "Max Texture Size = 4096" ✅
-- IORegistry shows various advanced features ✅
-
-**What actually happens:**
-- All advanced features are just stub functions that return success
-- No actual 3D acceleration, shaders, or texture processing
-- System thinks features work because stubs don't fail
-- Perfect for basic display needs, useless for actual 3D applications
-
-## 🎯 Best Use Cases
-
-**✅ Perfect For:**
-- Snow Leopard virtualization with working display
-- Basic desktop usage and application compatibility
-- Retro computing projects needing stable display
-- Development/testing environments
-
-**❌ Not Suitable For:**
-- Actual 3D applications or games
-- GPU-accelerated video processing
-- Modern graphics-intensive applications
-- Hardware-accelerated rendering
-
-## 🔧 Installation
-
-1. Download VMQemuVGA-v8.0-Private.pkg
-2. Run: `sudo installer -pkg VMQemuVGA-v8.0-Private.pkg -target /`
-3. Reboot (driver will be active after restart)
-
-**Note:** Installer is safe and won't cause kernel panics during installation.
-
-## ⚠️ Important Disclaimers
-
-- **No actual 3D acceleration** - all advanced features are stubs
-- **Basic display only** - works great for 2D desktop usage
-- **Compatibility stubs** prevent crashes but don't provide functionality
-- **IORegistry misleading** - reports features as working when they're just stubs
-- **Snow Leopard focused** - primarily tested on macOS 10.6.8
-
-## 📊 Success Metrics
-
-- ✅ **Zero kernel panics** during installation
-- ✅ **Stable system operation** on Snow Leopard
-- ✅ **All symbols resolved** - no more link failures
-- ✅ **Working display output** at various resolutions
-- ✅ **Clean driver lifecycle** - proper loading/unloading
+Fork of `ivanagui2/VMQemuVGA`, itself derived from Zenith432's original.
 
 ---
 
-**Bottom Line:** This is a working, stable display driver for Snow Leopard virtualization. It provides excellent basic display functionality while maintaining compatibility with modern graphics APIs through stub implementations. Perfect for retro computing, but don't expect actual 3D acceleration.
+## Status
+
+**Working: full 2D display through VirtIO GPU.** As of 2026-08-09 the driver
+brings up a correct Snow Leopard desktop on `virtio-gpu-gl-pci` under UTM on an
+Apple Silicon host — correct rendering, correct cursor, working resolution
+changes.
+
+**Not working: 3D acceleration.** The device offers it and the driver can see
+it, but nothing renders through it yet. See [3D status](#3d-status).
+
+This README states only what has been verified by a live boot, a negative
+control, or a visual check. Claims that rest on a success log alone are marked
+as such. Current state lives in [`LEDGER.md`](LEDGER.md); this file is the
+summary.
+
+---
+
+## Verified working
+
+Verified on `virtio-gpu-gl-pci` unless noted.
+
+| Capability | How it was verified |
+|---|---|
+| VirtIO split-virtqueue transport | Real descriptor table, avail/used rings, notification, used-ring polling. Response codes validated against `0x1100`/`0x1200`. |
+| Error path | Negative control: `SET_SCANOUT` on a nonexistent resource returns `0x1203` and is surfaced as `kIOReturnError`. |
+| Feature negotiation | `VIRTIO_GPU_F_VIRGL` + `VIRTIO_F_VERSION_1` negotiated; queue size 256. |
+| 2D display pipeline | `RESOURCE_CREATE_2D` → `ATTACH_BACKING` → `SET_SCANOUT` → `TRANSFER_TO_HOST_2D` → `RESOURCE_FLUSH`, all accepted by the host. |
+| WindowServer integration | Standard `IOFramebuffer` path: mode enumeration, `getApertureRange`, `getVRAMRange`, `setDisplayMode`. |
+| Desktop rendering | Visual check 2026-08-09 — correct desktop, no shearing or artifacts. |
+| Cursor | Visual check 2026-08-09 — software cursor renders correctly. |
+| Resolution changes | Real user-driven mode switch, resource recreated against a stable buffer, aperture mapping preserved. |
+| Resource tracking | Self-test probe at boot: create → duplicate-reject → destroy → verify-gone. |
+| QXL path | Previously verified. The QXL code path is the legacy `VMQemuVGA` class, separate from the VirtIO GPU work, so it should be unaffected — but it has not been re-tested since the fixed-allocation refactor. |
+
+### Devices
+
+- `virtio-gpu-gl-pci` — primary target, verified 2026-08-09
+- `virtio-ramfb-gl` — previously verified; not re-tested since the
+  fixed-allocation refactor
+- QXL / QEMU std VGA — legacy path; not re-tested since the fixed-allocation
+  refactor
+
+---
+
+## 3D status
+
+The groundwork is in place and none of the rendering is:
+
+- The host **does** offer `VIRTIO_GPU_F_VIRGL`, and the driver reads the capset
+  table successfully (VIRGL and VIRGL2 both advertised).
+- Nothing downstream of capset negotiation has ever executed. No 3D context has
+  produced a rendered frame.
+- **The guest half of the standard architecture does not exist.** virtio-gpu 3D
+  assumes the guest compiles GLSL to TGSI before anything leaves the VM — via
+  Mesa and Gallium. Snow Leopard has neither. Supplying that is the project, not
+  a detail.
+
+The `GLPlugin/` tree contains an in-progress `GLEngine` replacement. It reaches
+context creation and renders nothing. `virglrenderer-metal/` is a shelved host-
+side experiment that has never compiled inside virglrenderer and targets a
+Linux/Mesa guest.
+
+If you need 3D in a Snow Leopard VM today, this driver will not give it to you.
+
+---
+
+## Requirements
+
+- macOS 10.6.8 guest, x86_64
+- QEMU or UTM host with a VirtIO GPU or QXL display device
+- **One vCPU during development.** SMP under TCG emulation produces TLB
+  shootdown IPI panics that are artifacts of emulated APIC timing, not driver
+  bugs.
+
+Performance note: an x86_64 guest on an Apple Silicon host runs under TCG
+emulation, not hardware virtualization. The emulated CPU dominates; full-surface
+framebuffer transfers at 60 Hz are expensive.
+
+---
+
+## Building
+
+```sh
+./build-enhanced_private.sh --unsigned
+```
+
+Output lands in `build/Release/VMQemuVGA.kext`. `--unsigned` skips code-signing
+identity detection — the 10.6 guest does not check signatures.
+
+## Installing
+
+Copy the kext to the guest, then:
+
+```sh
+sudo chown -R root:wheel /System/Library/Extensions/VMQemuVGA.kext
+sudo chmod -R 755       /System/Library/Extensions/VMQemuVGA.kext
+sudo rm -rf /System/Library/Caches/com.apple.kext.caches
+sudo touch  /System/Library/Extensions
+sudo kextcache -system-caches
+```
+
+**Snapshot the VM first.** A bad kext produces an unbootable guest, and recovery
+from a snapshot takes seconds versus a mount-and-repair session.
+
+**Clear the caches and rebuild them explicitly.** A stale boot cache produces a
+page fault in `OSUnserializeXMLparse` during `_StartIOKit`, before any kext code
+runs — it looks exactly like a malformed `Info.plist` and is not one. Note that
+the caches live under `Caches/com.apple.kext.caches/Startup/`, not at the
+10.5-era `/System/Library/Extensions.mkext`.
+
+Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/rules/build-install.md).
+
+---
+
+## Known issues
+
+- **Software cursor only.** `getAttribute(crsr)` reports no hardware cursor, so
+  WindowServer composites into the framebuffer. Every mouse move dirties the
+  surface and costs a transfer. The fix is the virtio-gpu cursor queue
+  (`UPDATE_CURSOR` / `MOVE_CURSOR`), not yet implemented.
+- **Full-surface transfers.** Each refresh sends the whole framebuffer rather
+  than damaged rectangles. Expensive under TCG.
+- **Apple Remote Desktop** was reported to break at a 60 Hz refresh rate in an
+  earlier build. The rate is currently 60 Hz and this has not been re-tested.
+- **`VMVirtIOGPU::probe` reads no PCI properties.** vendor-id, device-id and
+  class-code all come back zero, so device-variant detection currently decides
+  on constants. It reaches the right branch by luck on `virtio-gpu-pci` and
+  would take the wrong one on `virtio-vga`.
+- **Misleading IORegistry properties.** Several advertised values are vestigial
+  or overclaim capability — invented VRAM figures (including an `ATY,memsize`
+  key on a VirtIO device), `IOAccelerator3D = Yes`, `model = "VirtIO GPU 3D"`,
+  and a falsified VGA-compatible `class-code` published for System Profiler's
+  benefit. These are being retired; do not treat IORegistry as a capability
+  report.
+- **No EDID, so Displays preferences cannot select a mode.** `readDDCBlock`
+  fails on every boot, so no `IODisplay` nub is built: System Profiler's
+  Graphics/Displays panel is empty, and Display preferences shows no resolution
+  list. The modes exist and mode switching works — the UI cannot surface them
+  without an `IOFramebufferParameterHandler`. Set modes programmatically or rely
+  on the boot default until a synthetic EDID is supplied.
+
+---
+
+## Development
+
+- [`LEDGER.md`](LEDGER.md) — current state: what is fixed, what is open, what is
+  unexplained. Updated every session.
+- [`.claude/CLAUDE.md`](.claude/CLAUDE.md) — environment facts and the ground
+  rules this project works under.
+- [`.claude/rules/`](.claude/rules/) — topic-specific notes on the virtio
+  protocol, framebuffer and IOKit matching, build and install, and the 3D
+  architecture.
+
+The ground rules exist because violating them was expensive. The most important
+one: **a success log proves nothing without a negative control.** For most of
+this driver's history `submitCommand` was a stub that reported success on every
+call without ever reaching the device, and every capability claim downstream of
+it was false. Verify against the device, not against your own logging.
+
+---
+
+## History
+
+Earlier versions of this README described a driver whose advanced features were
+stub functions returning success, with an IORegistry that reported them as
+working. That was accurate at the time. The transport is now real and verified;
+the 3D claims are not yet, and are marked accordingly above.

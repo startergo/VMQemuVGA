@@ -66,20 +66,22 @@ bool CLASS::init(OSDictionary* properties)
     m_is_virtio_gpu_pci = false;  // Default to VGA-compatible mode
     m_is_mock_device = false;      // Default to real VirtIO GPU hardware
     
-    m_resources = OSArray::withCapacity(64);
     m_resource_count = 0;
-    for (int i = 0; i < 64; i++) m_resource_pool[i].in_use = false;
+    for (int i = 0; i < 64; i++) {
+        m_resource_pool[i].resource_id = 0;  // tombstone — see .h
+        m_resource_pool[i].in_use = false;
+    }
     m_contexts = OSArray::withCapacity(16);
     m_next_resource_id = 1;
     m_next_context_id = 1;
     m_display_resource_id = 0;  // No display resource initially
     m_fence_id = 0;            // VirtIO 1.2: Initialize fence counter
-    
+
     m_resource_lock = IOLockAlloc();
     m_context_lock = IOLockAlloc();
     m_accelerator_service = nullptr;
-    
-    return (m_resources && m_contexts && m_resource_lock && m_context_lock);
+
+    return (m_contexts && m_resource_lock && m_context_lock);
 }
 
 void CLASS::free()
@@ -100,7 +102,6 @@ void CLASS::free()
         m_context_lock = nullptr;
     }
     
-    OSSafeReleaseNULL(m_resources);
     OSSafeReleaseNULL(m_contexts);
 
     // Release BAR mapping cache (one retain per cached BAR)
@@ -1257,6 +1258,8 @@ IOReturn CLASS::createResource2D(uint32_t resource_id, uint32_t format,
     IOLockLock(m_resource_lock);
 
     if (findResource(resource_id)) {
+        IOLog("VMVirtIOGPU::createResource2D: DUPLICATE id=%u rejected (findResource found existing slot)\n",
+              resource_id);
         IOLockUnlock(m_resource_lock);
         return kIOReturnBadArgument;
     }
@@ -1312,16 +1315,38 @@ IOReturn CLASS::createResource2D(uint32_t resource_id, uint32_t format,
 
     // Register in pool. Resource-owned backing is stored for later free;
     // caller-owned backing is NOT stored (caller frees it).
-    if (m_resource_count < 64) {
-        gpu_resource* slot = &m_resource_pool[m_resource_count++];
-        slot->resource_id = resource_id;
-        slot->width = width;
-        slot->height = height;
-        slot->format = format;
-        slot->backing_memory = driver_owns_backing ? backing_to_attach : nullptr;
-        slot->is_3d = false;
-        slot->in_use = true;
+    // Tombstone allocation: take the first slot with resource_id == 0.
+    // Pool-full is an error, not a silent drop — UNREF the just-created host
+    // resource and bail so the leak is visible.
+    gpu_resource* slot = nullptr;
+    for (unsigned int i = 0; i < 64; i++) {
+        if (m_resource_pool[i].resource_id == 0) {
+            slot = &m_resource_pool[i];
+            if (i >= m_resource_count) m_resource_count = i + 1;  // high-water mark
+            break;
+        }
     }
+    if (!slot) {
+        IOLog("VMVirtIOGPU::createResource2D: POOL FULL (64 slots), unref+reject id=%u\n",
+              resource_id);
+        struct virtio_gpu_resource_unref unref_cmd = {};
+        unref_cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
+        unref_cmd.resource_id = resource_id;
+        struct virtio_gpu_ctrl_hdr unref_resp = {};
+        submitCommand(&unref_cmd.hdr, sizeof(unref_cmd), &unref_resp, sizeof(unref_resp));
+        if (driver_owns_backing) {
+            backing_to_attach->release();  // already completed inside attachBacking
+        }
+        IOLockUnlock(m_resource_lock);
+        return kIOReturnNoSpace;
+    }
+    slot->resource_id = resource_id;
+    slot->width = width;
+    slot->height = height;
+    slot->format = format;
+    slot->backing_memory = driver_owns_backing ? backing_to_attach : nullptr;
+    slot->is_3d = false;
+    slot->in_use = true;
 
     IOLog("VMVirtIOGPU::createResource2D: resource=%u created (%s backing)\n",
           resource_id, driver_owns_backing ? "driver-owned" : "caller-owned");
@@ -1381,7 +1406,17 @@ IOReturn CLASS::createResource3D(uint32_t resource_id, uint32_t target,
             resource->backing_memory = nullptr;
             resource->is_3d = true;
             
-            if (m_resource_count < 64) { m_resource_pool[m_resource_count] = *resource; m_resource_pool[m_resource_count].in_use = true; m_resource_count++; }
+            // Tombstone allocation: first slot with resource_id == 0.
+            // Dead code path (3D not exercised) — pool-full silently drops here,
+            // surfaced as proper error only when/if 3D goes live.
+            for (unsigned int i = 0; i < 64; i++) {
+                if (m_resource_pool[i].resource_id == 0) {
+                    m_resource_pool[i] = *resource;
+                    m_resource_pool[i].in_use = true;
+                    if (i >= m_resource_count) m_resource_count = i + 1;
+                    break;
+                }
+            }
         }
     }
     
@@ -2555,14 +2590,18 @@ VMVirtIOGPU::gpu_resource* CLASS::findResource(uint32_t resource_id)
     IOLog("      ========================================\n");
 #endif  // VERBOSE_DIAGNOSTICS
     
-    // Simple linear search through resources array
-    if (m_resources) {
-        unsigned int count = m_resource_count;
-        for (unsigned int i = 0; i < count; i++) {
-            gpu_resource* res = (gpu_resource*)m_resources->getObject(i);
-            if (res && res->resource_id == resource_id) {
-                return res;
-            }
+    // Lock discipline: callers hold m_resource_lock (createResource2D :1257,
+    // deallocateResource :3252, createResource3D, etc.). findResource does NOT
+    // take the lock here — taking it would recursively lock (IOLock is
+    // recursive, but the discipline is "callers hold" so callers stay symmetric).
+    //
+    // Tombstone scan: slot.resource_id == 0 marks a free slot. 0 is never a
+    // valid virtio-gpu resource id, so the sentinel is safe. Live slots are
+    // scanned in [0, 64) for a matching resource_id.
+    for (unsigned int i = 0; i < 64; i++) {
+        if (m_resource_pool[i].resource_id == 0) continue;
+        if (m_resource_pool[i].resource_id == resource_id) {
+            return &m_resource_pool[i];
         }
     }
     return nullptr;
@@ -3252,12 +3291,12 @@ IOReturn CLASS::deallocateResource(uint32_t resource_id)
     IOLockLock(m_resource_lock);
 
     // Send UNREF unconditionally — the device is the source of truth for
-    // resource existence, not our internal pool. If findResource misses
-    // (pool split between m_resource_pool[] and m_resources OSArray after
-    // the typed-pool refactor), the device still needs the UNREF to actually
-    // free the resource. Without this, teardownFramebufferResource silently
-    // leaks resources on the device side, and the next createResource2D on
-    // the same ID gets 0x1203 (ERR_INVALID_RESOURCE_ID).
+    // resource existence, not our local pool. Even if local bookkeeping is
+    // wrong, the device needs the UNREF to free host-side state. Historically
+    // the local pool was split between m_resource_pool[] and a since-deleted
+    // m_resources OSArray, which is why this was made unconditional; the split
+    // is resolved (findResource walks m_resource_pool[] directly) but the
+    // "device truth wins" policy stays.
     struct virtio_gpu_resource_unref cmd = {};
     cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
     cmd.resource_id = resource_id;
@@ -3266,17 +3305,17 @@ IOReturn CLASS::deallocateResource(uint32_t resource_id)
     IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
 
     if (ret == kIOReturnSuccess) {
-        // Best-effort pool cleanup — may not find the resource if the pool
-        // is out of sync (that's the bug we're working around). The device
-        // has already freed the resource; this just tidies our cache.
-        for (unsigned int i = 0; i < m_resource_count; i++) {
-            gpu_resource* res = (gpu_resource*)m_resources->getObject(i);
-            if (res && res->resource_id == resource_id) {
-                if (res->backing_memory) {
-                    res->backing_memory->release();
+        // Tombstone the slot in m_resource_pool. The device already freed the
+        // resource (UNREF sent above); this just clears local tracking.
+        // Driver-owned backing_memory is released; caller-owned stays with caller.
+        for (unsigned int i = 0; i < 64; i++) {
+            if (m_resource_pool[i].resource_id == resource_id) {
+                if (m_resource_pool[i].backing_memory) {
+                    m_resource_pool[i].backing_memory->release();
                 }
-                m_resources->removeObject(i);
-                IOFree(res, sizeof(gpu_resource));
+                m_resource_pool[i].resource_id = 0;  // tombstone
+                m_resource_pool[i].in_use = false;
+                m_resource_pool[i].backing_memory = nullptr;
                 break;
             }
         }
@@ -4219,15 +4258,8 @@ bool CLASS::setupGPUMemoryRegions() {
     IOLog("VMVirtIOGPU::setupGPUMemoryRegions: *** HARDWARE ACCELERATION PROPERTIES CONFIGURED ***\n");
     IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Enhanced framebuffer properties configured\n");
     
-    // Initialize resource tracking arrays if not already done
-    if (!m_resources) {
-        m_resources = OSArray::withCapacity(16);
-        if (!m_resources) {
-            IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Failed to create resources array\n");
-            return false;
-        }
-    }
-    
+    // Initialize contexts array if not already done. Resource pool is a fixed
+    // m_resource_pool[64] array zeroed in the constructor — nothing to alloc here.
     if (!m_contexts) {
         m_contexts = OSArray::withCapacity(8);
         if (!m_contexts) {
@@ -6403,6 +6435,64 @@ IOReturn CLASS::attachBacking(uint32_t resource_id, IOMemoryDescriptor* backing_
     
     IOLog("VMVirtIOGPU::attachBacking: Backing attached successfully\n");
     return kIOReturnSuccess;
+}
+
+// One-shot self-check: prove findResource actually finds after pool unification.
+// Same shape as the SET_SCANOUT(999) negative control — deterministic,
+// self-checking. Called once from VMVirtIOFramebuffer::enableController before
+// the first real createResource2D, so the device is known-ready by then.
+//
+// Sequence: create a probe resource (id 0xFFFE, 1×1) → attempt a duplicate
+// create with the same id → assert the duplicate is rejected by findResource
+// → destroy the probe → verify findResource no longer finds it. Logs PROBE
+// PASS / PROBE FAIL with the failing phase.
+void CLASS::probeResourceTracking()
+{
+    const uint32_t probe_id = 0xFFFE;       // sentinel — won't collide with real allocations
+    const uint32_t probe_format = 0x1;      // VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM
+
+    IOLog("VMVirtIOGPU::probeResourceTracking: PROBE START id=0x%x\n", probe_id);
+
+    // Phase A: create the probe resource. 1×1 minimizes allocation.
+    IOReturn create1 = createResource2D(probe_id, probe_format, 1, 1, NULL);
+    if (create1 != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::probeResourceTracking: PROBE FAIL phase A create returned 0x%x (expected success)\n",
+              create1);
+        return;
+    }
+
+    // Phase B: create again with the same id — must be rejected by findResource
+    // catching the duplicate. If this returns success, findResource is still
+    // broken (the exact bug pool unification is supposed to fix).
+    IOReturn create2 = createResource2D(probe_id, probe_format, 1, 1, NULL);
+    if (create2 != kIOReturnBadArgument) {
+        IOLog("VMVirtIOGPU::probeResourceTracking: PROBE FAIL phase B create returned 0x%x (expected kIOReturnBadArgument — findResource not catching duplicate)\n",
+              create2);
+        // Clean up the probe resource so we don't leak host-side.
+        deallocateResource(probe_id);
+        return;
+    }
+
+    // Phase C: destroy the probe resource.
+    IOReturn destroy_ret = deallocateResource(probe_id);
+    if (destroy_ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::probeResourceTracking: PROBE FAIL phase C destroy returned 0x%x\n",
+              destroy_ret);
+        return;
+    }
+
+    // Phase D: post-destroy verification — findResource must NOT find the probe.
+    // Callers of findResource hold m_resource_lock; we do the same.
+    IOLockLock(m_resource_lock);
+    gpu_resource* after = findResource(probe_id);
+    IOLockUnlock(m_resource_lock);
+    if (after != nullptr) {
+        IOLog("VMVirtIOGPU::probeResourceTracking: PROBE FAIL phase D findResource returned %p after deallocate (slot not tombstoned)\n",
+              after);
+        return;
+    }
+
+    IOLog("VMVirtIOGPU::probeResourceTracking: PROBE PASS (create → dup-reject → destroy → not-found)\n");
 }
 
 //==============================================================================

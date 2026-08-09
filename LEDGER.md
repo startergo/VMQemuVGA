@@ -12,24 +12,59 @@ Rules for maintaining this file:
 - A claim earns "verified" only with a negative control or a visual check —
   never from a success log alone.
 - Never quietly drop an unexplained residual. If it stops mattering, say why.
+- When an entry is superseded by later findings, move it to the "Superseded"
+  section with a date and a note on what replaced it — don't delete it, and
+  don't leave it competing with the current truth.
 
-Last updated: 2026-08-08
+Last updated: 2026-08-09
+
+---
+
+## Critical methodological context
+
+**Wip's `submitCommand` is the fake.** Verified 2026-08-08: the function on
+`wip/checkpoint-20260807` is ~600 lines, writes the command to a single
+`queue_buffer`, notifies the device, then reads the response back from the
+*same* `queue_buffer`. No descriptor table, no avail/used rings, no
+response-code validation. Terminal `return kIOReturnSuccess;` is unconditional.
+The `#if VERBOSE_DIAGNOSTICS` decoration (`VirtIOQueueArchitecture`,
+`CommandValidationSystem`, etc.) is camouflage. **Implication: any "wip worked"
+memory based on lifecycle logs (start/enableController/refreshDisplay firing)
+is suspect — those logs fire on the guest side without the device ever seeing
+a real command. No pixel ever reached the host under wip's submitCommand.**
+This reverses the earlier assumption that wip was the forward branch. Any
+conclusion drawn from wip-era lifecycle logs is built on sand. The real
+virtqueue lives on `master` (commit `33fe55b`), and everything verified in
+this ledger is on that code path.
 
 ---
 
 ## Fixed and verified
 
-- **Milestone B: correct Snow Leopard desktop on virtio-ramfb-gl.** Verified
-  2026-08-08 by visual check (user confirmed: menu bar, dock, icons, wallpaper)
-  and negative control (`setscanout(999)` → `0x1203`). The full display
-  pipeline works end-to-end on virtio-ramfb-gl: `VMVirtIOFramebufferPCI`
-  matches → helper `VMVirtIOGPU` initializes virtqueue → `enableController`
-  creates resource + attaches backing + sets scanout → WindowServer connects
-  via delegated `newUserClient` → base class `setupForCurrentConfig` calls
-  `getApertureRange` → WindowServer maps 3MB aperture → draws desktop →
-  refresh timer transfers to host via virtio-gpu → host composites to
-  scanout → pixels on screen. Test pattern overwritten with real desktop
-  content.
+- **Milestone B: correct Snow Leopard desktop on virtio-gpu-gl-pci.
+  Confirmed visually 2026-08-09** — correct desktop below the menu bar
+  (icons, dock, windows visible) and correct cursor after the `pixelFormat`
+  fix. Negative control: `SET_SCANOUT(999)` returns `0x1203`, read back
+  correctly. Full pipeline works end-to-end on the running variant:
+  `VMVirtIOFramebufferPCI` matches the PCI device → helper `VMVirtIOGPU`
+  initializes virtqueue → `enableController` creates resource + attaches
+  backing + sets scanout → WindowServer connects via delegated
+  `newUserClient` → base class `setupForCurrentConfig` calls
+  `getApertureRange` → WindowServer maps the fixed aperture → draws desktop
+  → refresh timer transfers to host via virtio-gpu → host composites to
+  scanout → pixels on screen. Display comes up at 1920×1080 (Phase 4's
+  default mode); real user-driven mode switches through Displays prefs
+  work; cursor renders correctly at boot and after mode changes.
+
+  **Earlier retraction (2026-08-08) is superseded — see Superseded section.**
+  The retraction described horizontal-line shearing; that symptom was
+  recorded when `getApertureRange` returned NULL (before Phase 2) and the
+  visible pixels were the test pattern through a partial backing. Once the
+  fixed aperture path landed, the symptom stopped existing — but nobody
+  looked again until 2026-08-09, so the retraction survived in the ledger
+  as a competing claim. The "symptom described a superseded build" pattern
+  will recur; the guard is to check whether the symptom's preconditions
+  still hold before treating it as live.
 
   Fix chain that unblocked Milestone B (in order of discovery):
   1. Capset read fixes (`mapBarByNumber`, response buffer, device-cfg offset)
@@ -44,113 +79,169 @@ Last updated: 2026-08-08
      `open()` and `start()` (base class controls timing)
   7. `getApertureRange` / `getVRAMRange` return NULL when framebuffer not
      ready (no 4KB register BAR masquerading as VRAM)
-  8. `setupFramebufferResource` idempotent guard (no reallocation while live)
+  8. `setupFramebufferResource` idempotent guard (no reallocation while
+     live) — later relaxed by Phase 3's resource-recreate path
   9. Mode table trimmed to 1024×768 only (prevents per-mode reallocation
-     that corrupts zone free-list via freed-memory reuse)
-  10. Bounded test pattern fill (`getLength()` check prevents heap corruption
-      from out-of-bounds write when allocation is wrong size)
+     that corrupts zone free-list via freed-memory reuse) — **superseded
+     by Phase 4's mode table expansion; the fixed-allocation model made
+     the trim unnecessary**
+  10. Bounded test pattern fill (`getLength()` check prevents heap
+      corruption from out-of-bounds write when allocation is wrong size)
 
 - **Real split-virtqueue.** Descriptor table, avail/used rings, notification,
-  used-ring polling, response validation against `0x1100`/`0x1200`. Landed in
-  commit `33fe55b`.
+  used-ring polling, response validation against `0x1100`/`0x1200`. Landed
+  in commit `33fe55b`.
+
 - **Feature negotiation.** `VIRTIO_GPU_F_VIRGL` + `VIRTIO_F_VERSION_1`
   negotiated; queue size 256 accepted. Host offers VIRGL — device
-  `word0=0x30000013`, `word1=0x00000101`.
+  `word0=0x30000013`, `word1=0x00000101`. Capsets read cleanly: VIRGL
+  (id=1, version=1, size=308) and VIRGL2 (id=2, version=2, size=1408).
+
 - **Negative controls pass.** `SET_SCANOUT(999)` returns `0x1203`, read and
-  translated to `kIOReturnError` correctly. Both directions of the response path
-  are proven.
-- **Fake-`OSObject` pool refactor.** Replaced with typed pools. Cleared both the
-  load panic and the long-standing `kextunload` panic.
+  translated to `kIOReturnError` correctly. Both directions of the response
+  path are proven.
+
+- **Fake-`OSObject` pool refactor.** Replaced with typed pools. Cleared both
+  the load panic and the long-standing `kextunload` panic.
+
 - **Display backing ownership.** Framebuffer owns one allocation;
   `getApertureRange()` and `ATTACH_BACKING` point at the same memory; single
   attach with a scatter-list loop.
+
 - **Boot panic in `OSUnserializeXMLparse` was a stale kext cache**, not the
-  plist. Same kext + deleted caches boots cleanly. The install procedure is the
-  actual defect and still needs fixing.
+  plist. Same kext + deleted caches boots cleanly. The install procedure is
+  the actual defect and still needs fixing.
+
+- **Dual-instance virtqueue race eliminated.** Removing the `VMVirtIOGPU`
+  personality from `Info-FB.plist` (so only `VMVirtIOFramebufferPCI` matches
+  the PCI device) eliminated two `VMVirtIOGPU` instances driving the same
+  virtqueue. Single boot, single `this=` value across all `submit[N]` lines,
+  zero `transferToHost2D` failures, negative control still passes.
+
+- **Fixed-allocation model (Phases 1–4, all verified 2026-08-08 through
+  2026-08-09).** Replaces per-mode reallocation with one fixed aperture:
+  - **Phase 1: Pool unification.** `findResource` walks `m_resource_pool[]`
+    with tombstones; `m_resources` OSArray deleted; `probeResourceTracking`
+    self-check fires once per boot with `PROBE PASS`.
+  - **Phase 2: Buffer allocated once in `start()`** via fallback ladder
+    `{{4096,2160}, {2560,1600}, {1920,1200}, {1600,1200}, {1280,1024},
+    {1024,768}}`. Aperture invariant: walks segments, requires
+    `nr_entries == 1`, steps down if fragmented.
+  - **Phase 3: Resource-recreate path.** `setupFramebufferResource`'s
+    idempotent guard relaxed to allow recreate on mode change (UNREF +
+    CREATE_2D + ATTACH_BACKING + SET_SCANOUT, buffer preserved).
+    `probeResourceRecreate` self-check verifies buffer stability through
+    recreate cycles.
+  - **Phase 4: Mode table expansion.** `kSupportedModes[]` as single source
+    of truth (modes 1–7: 1024×768 through 3840×2160). `filterModesByAllocation`
+    populates `m_display_modes` at runtime based on which ceiling succeeded.
+    Default = 1920×1080. At the 16 MB ceiling: 6 modes advertised (1024×768
+    through 2560×1440); mode 7 (3840×2160) filtered out.
+
+- **Software cursor dashed-line bug — FIXED 2026-08-09.** Root cause:
+  `getPixelInformation` was not setting `pixelFormat` (an `IOPixelEncoding` =
+  `char[kIOMaxPixelBits]`), leaving it uninitialized. Callers reusing one
+  `IOPixelInformation` across mode enumeration inherited stale/garbage
+  values. The base-class cursor compositing reads `pixelFormat` to pick
+  how to interpret the framebuffer encoding for the cursor blit; a
+  wrong/stale encoding → stretched dashed-line cursor. **Fix:**
+  `bzero(pixelInfo, sizeof(*pixelInfo))` at entry, then
+  `strlcpy(pixelInfo->pixelFormat, IO32BitDirectPixels, …)` alongside all
+  existing field assignments. Cursor renders correctly at boot and through
+  real user-driven mode changes.
+
+  **Two adjacent concerns ruled out or fixed in the same thread:**
+  - **Non-contiguous 35 MB backing** — `kIOMemoryPhysicallyContiguous`
+    silently returns 2 segments at 35 MB on this 4 GB guest.
+    `IODeviceMemory::withRange(phys, 35 MB)` would have described memory
+    running past segment 1 into unrelated kernel pages. Fixed by the
+    aperture invariant in `start()`'s fallback ladder — walks segments,
+    requires `nr_entries == 1`, steps down to 16 MB. Latent
+    kernel-memory-corruption bug caught while investigating the cursor.
+  - **`super::setDisplayMode` re-enablement** — investigation showed it
+    is NOT load-bearing for any observed bug. WindowServer refreshes
+    `__private->pixelInfo` independently via `setupForCurrentConfig` →
+    `doSetup` → `getPixelInformation` after every `setDisplayMode`. The
+    bypass originally added for an AHCI/workloop race under TCG is left
+    in place; re-enabling is at most a base-class-integration question.
+
+- **`IOPowerManagement = {CurrentPowerState=0}` on the framebuffer node is
+  cosmetic, not a real "off."** `setPowerState` is a no-op returning
+  `kIOReturnSuccess` for any state, and the class never calls
+  `registerPowerDriver`. IOService publishes the default state-0 dict with
+  no power model behind it. Display work is not power-gated; refreshes are
+  not suppressed by it.
+
+- **`%zu` and `%u` format-specifier class** — CLAUDE.md rule that `%zu`
+  misbehaves on this target. `start()` log lines fixed in Phase 2 (`%llu`
+  with `(uint64_t)` cast). `createResource2D`'s `resource_size` log line
+  still uses `%u` (`size=6baa80u` observed) — one-line fix when next in
+  `VMVirtIOGPU.cpp`.
 
 ---
 
-## Active task — none (Milestone B achieved)
+## Active task — 3D transport
 
-**Milestone B verified 2026-08-08 on virtio-ramfb-gl.** Full SL desktop:
-menu bar, dock, icons. See "Fixed and verified" above for the complete
-fix chain.
+The original scope of this project includes 3D acceleration via virgl.
+`enable3DAcceleration` has capsets in hand (VIRGL id=1 v=1 size=308, VIRGL2
+id=2 v=2 size=1408) and `CTX_CREATE` has succeeded on the eager
+`initializeWebGLAcceleration` path (context 2 created, response `0x1100`).
+**Nothing downstream of context creation has ever executed on a path that
+matters.** Per the guardrails, the next step is proving the transport:
 
-**Next:** testing all virtio device variants. Current working state is
-virtio-ramfb-gl (UTM-specific). Other targets: virtio-gpu-gl-pci (vanilla
-QEMU), virtio-gpu (no GL), QXL (already confirmed working).
+1. Create a 3D context explicitly (control the call, don't rely on the
+   eager boot-time path).
+2. Submit a clear command to a 3D resource.
+3. `TRANSFER_FROM_HOST_3D` to read the cleared bytes back.
+4. Verify the bytes match the clear color.
 
-Open items (non-blocking for display):
-1. **Cursor — TEMPORARY fix shipped, permanent fix queued.** Temporary:
-   `getAttribute(crsr)` returns 0 (no hardware cursor), `setCursorImage`/
-   `setCursorState` return `kIOReturnUnsupported`. WindowServer falls back
-   to software cursor (composited into framebuffer, transferred by refresh
-   timer at 60 Hz). Cost: every mouse move dirties the framebuffer → 3 MB
-   transfer at 60 Hz = ~180 MB/s under TCG. Permanent: implement virtio-gpu
-   cursor queue (queue 1, `UPDATE_CURSOR` 0x240 / `MOVE_CURSOR` 0x241).
-   Host composites cursor, one small command per move, no framebuffer
-   transfer. Then flip `crsr` back to 1 and `setCursorImage/State` back
-   to success.
-2. **Fixed-allocation refactor** — per-mode reallocation in
-   `setupFramebufferResource` is latent zone-corruption risk. Allocate once
-   for largest mode, return stable aperture.
-3. **`deallocateResource` pool cleanup** — UNREF fires but OSArray cleanup
-   loop uses stale pool reference. Separate consistency fix.
-4. **`VMVirtIOGPU::probe` OSData/OSNumber** — variant detection correctness.
-5. **Install script** — cache deletion should be automated.
-6. **Wip merge** — 3D manager cleanup (deferred).
-
-## Previously fixed — refresh timeout
-
-Fixed and verified by instrumentation 2026-08-08. Removing the `VMVirtIOGPU`
-personality from `Info-FB.plist` (so only `VMVirtIOFramebufferPCI` matches the
-PCI device) eliminated the dual-instance race. Single boot, single `this=`
-value across all `submit[N]` lines, zero `transferToHost2D` failures, negative
-control still passes (`setscanout(999)` → `0x1203`), capset reads unchanged
-(VIRGL + VIRGL2).
-
-Root cause (kept for context): two `VMVirtIOGPU` instances were driving the
-same device virtqueue — the personality-matched instance from the `VMVirtIOGPU`
-personality, and the internal helper `VMVirtIOFramebuffer::start()` constructs
-via `m_gpu_driver = new VMVirtIOGPU()`. The helper's re-init of `avail->idx=0`
-clobbered the personality-matched instance's ring progress, causing every
-submit on the first instance to time out (150 ms poll expiry, `0xe00002d6`).
-
-Removing the personality also eliminated one copy of the eager
-`initializeWebGLAcceleration` pre-allocation (context + canvas + depth + 100 MB
-GPU memory) that ran on the dead instance. The helper still does this — see
-the wip-merge rationale below.
+Everything above that (shaders, textures, GL routing) is a userspace
+software problem. The transport proof is the load-bearing gate.
 
 ---
 
 ## Open
 
-- **`submitCommand` suppresses TIMEOUT logging for `0x104` (RESOURCE_FLUSH) and
-  `0x105` (TRANSFER_TO_HOST_2D).** The filter is `noisy = (cmd->type == 0x104 ||
-  cmd->type == 0x105)` (correctly written — both sides are full comparisons).
-  Effect: when `transferToHost2D` times out, `submitCommand` returns
-  `kIOReturnTimeout` (`0xe00002d6`) silently — the "TIMEOUT on cmd 0x%x" line is
-  suppressed. The `transferToHost2D: Command failed: 0xe00002d6` log seen in boot
-  output is the *caller's* failure log, not the timeout announcement. Any future
-  instrumentation that needs to see the timeout path for refresh commands has to
-  either bypass the filter or add a parallel unconditional log.
+- **Cursor queue for performance.** Current cursor is software-composited
+  into the framebuffer and transferred by the refresh timer at 60 Hz. Cost:
+  every mouse move dirties the framebuffer → 8 MB transfer at 60 Hz ≈
+  480 MB/s under TCG. Permanent fix: implement virtio-gpu cursor queue
+  (queue 1, `UPDATE_CURSOR` 0x240 / `MOVE_CURSOR` 0x241). Host composites
+  cursor natively, one small command per move. Then flip `crsr` back to 1
+  and `setCursorImage`/`setCursorState` back to success.
 
-- **Capset read fixes** — six edits, written but not landed:
-  1. `mapBarByNumber()` helper extracted as the single BAR→index translation.
-  2. Line 826 uses it instead of `mapDeviceMemoryWithIndex(bar_number)`.
-  3. `setupGPUMemoryRegions` refactored to call it.
-  4. Device-cfg read inserted between `setupGPUMemoryRegions()` and
-     `enable3DAcceleration()`, using the capability-reported offset.
-  5. `initHardwareDeferred()` deleted (dead, and reads the wrong offset).
-  6. Loop variable renamed `capset_id` → `capset_index`.
+- **ARD (Apple Remote Desktop) regression at 16 ms refresh.** The timer's
+  initial arm was shortened from 1000 ms to 16 ms; whether ARD's screen
+  capture works correctly at that cadence is untested.
 
-  Prediction when landed: `num_scanouts=1`, `num_capsets` 1 or 2.
+- **`VMVirtIOGPU::probe` OSData/OSNumber cast.** `probe()` reads `0x000000`
+  for class-code because IOPCIFamily publishes `vendor-id`/`device-id`/
+  `class-code` as OSData byte arrays, not OSNumber. `enableController`
+  bypasses this via `configRead32`. The kext reaches the correct branch by
+  accident today (zero routes the same as `0x0380`). Fix: use `configRead*`
+  in probe as `enableController` does, or handle OSData properly.
 
-- **3D beyond capsets** — nothing downstream of `enable3DAcceleration` has ever
-  executed. Expect novel failures there, not regressions.
+- **3D beyond capsets.** Nothing downstream of `enable3DAcceleration` has
+  executed on a meaningful path. Expect novel failures, not regressions.
 
 - **Install script** does not delete/regenerate kext caches. Highest-value
   process fix available.
+
+- **`submitCommand` suppresses TIMEOUT logging** for `0x104`
+  (`RESOURCE_FLUSH`) and `0x105` (`TRANSFER_TO_HOST_2D`). The filter is
+  correct; effect is that timeout failures in the refresh path are silent
+  on the submitCommand side (the caller's failure log still fires). Worth
+  knowing if the refresh path ever needs instrumentation.
+
+- **Diagnostic log noise.** `getPixelInformation` and `setDisplayMode`
+  log on every call; WindowServer iterates modes repeatedly for Display
+  prefs UI. Quiet down or gate behind a debug flag now that the cursor
+  investigation is done.
+
+- **Second `setscanout(0, 999, …)` in `enableController`** — this is the
+  deliberate negative-control probe (returns `0x1203`). Not stray code;
+  intentional. Worth noting as load-bearing for the negative-control
+  guarantee.
 
 ---
 
@@ -158,121 +249,124 @@ the wip-merge rationale below.
 
 Do not start this merge without asking.
 
-- `33fe55b` on `master` contains the virtqueue, the display-pipeline refactor,
-  the pool refactor, and the negative controls. This is what makes the current
-  boot work.
+- `33fe55b` on `master` contains the virtqueue, the display-pipeline
+  refactor, the pool refactor, and the negative controls. This is what
+  makes the current boot work.
 - `wip/checkpoint-20260807` predates it but contains
   `VMVirtIOGPU_IOFramebuffer.cpp` (+420 lines) and the working
   `VMVirtIOFramebufferPCI` personality.
-- **Wip's `submitCommand` is the fake** (CLAUDE.md ground rule). Verified
-  2026-08-08: function is ~600 lines, writes the command to a single
-  `queue_buffer`, notifies the device, then reads the response back from the
-  *same* `queue_buffer`. No descriptor table, no avail/used rings, no
-  response-code validation. Terminal `return kIOReturnSuccess;` is
-  unconditional. The `#if VERBOSE_DIAGNOSTICS` decoration
-  (`VirtIOQueueArchitecture`, `CommandValidationSystem`, etc.) is the
-  camouflage pattern described in CLAUDE.md. Implication: any "wip worked"
-  memory based on lifecycle logs (start/enableController/refreshDisplay
-  firing) is suspect — those logs fire on the guest side without the device
-  ever seeing a real command. No pixel ever reached the host under wip's
-  submitCommand.
-- Wip also removed substantial "3D manager" machinery that exists on master:
-  `VMShaderManager.cpp` deleted (-319), `VMPhase3Manager.cpp` -631 lines,
-  `VMTextureManager.cpp` -301 lines, `VMQemuVGAAccelerator.cpp` rewritten
-  (~869-line diff). This cleanup is needed independently of any specific bug —
-  the eager 3D pre-allocation at boot (`initializeWebGLAcceleration` creating
-  context + canvas + depth + 100 MB GPU memory) runs before the first refresh
-  and is suspect for state pollution even when its functions are byte-identical
-  to wip's. The merge is real work, not optional cleanup. **Named instance
-  confirmed 2026-08-08:** after the personality removal, the *helper* (the
-  single legitimate `VMVirtIOGPU`) still runs `initializeWebGLAcceleration`,
-  `VMTextureManager` Phase 1-5 init, and the full "3D managers initialized for
-  QXL/Hyper-V DDA mode" log spam — nothing on the display path consumes any of
-  it, and the eager `createRenderContext`/`createResource3D` calls happen
-  before the first `transferToHost2D`. This is concrete evidence (not "log
-  spam") for the wip merge as state-pollution prevention, not just tidiness.
-- Note: `VMVirtIOGPU_IOFramebuffer.cpp` is not in wip's `project.pbxproj`
-  either — it's uncompiled dead code on both branches. Treating it as "the
-  missing implementation" was a wrong turn.
+- **Wip's `submitCommand` is the fake** — see "Critical methodological
+  context" at the top of this file.
+- Wip also removed substantial "3D manager" machinery that exists on
+  master: `VMShaderManager.cpp` deleted (-319), `VMPhase3Manager.cpp` -631
+  lines, `VMTextureManager.cpp` -301 lines, `VMQemuVGAAccelerator.cpp`
+  rewritten (~869-line diff). This cleanup is needed independently of any
+  specific bug — the eager 3D pre-allocation at boot
+  (`initializeWebGLAcceleration` creating context + canvas + depth + 100 MB
+  GPU memory) runs before the first refresh and is suspect for state
+  pollution. Confirmed 2026-08-08: after the personality removal, the
+  helper still runs `initializeWebGLAcceleration`, `VMTextureManager`
+  Phase 1-5 init, and the full "3D managers initialized for QXL/Hyper-V DDA
+  mode" log spam — nothing on the display path consumes any of it.
+- `VMVirtIOGPU_IOFramebuffer.cpp` is not in wip's `project.pbxproj` either
+  — uncompiled dead code on both branches.
 - Reconciling is a four-way merge with a ~1582-line conflict in
   `VMVirtIOGPU.cpp`. High blast radius — and the wip side has a fake
   `submitCommand`, so "take wip's VMVirtIOGPU.cpp" is not a safe resolution.
   Any merge must preserve master's virtqueue and only borrow wip's
   personality + 3D-manager cleanup.
 
-Order: instrument the refresh timeout (one variable, current task), then start
-the merge as its own multi-step task. The timeout diagnosis may shape which
-parts of wip are actually load-bearing.
+- **Bogus IORegistry properties to retire during the merge** (observed on
+  the live `VMVirtIOFramebuffer` node 2026-08-08; all are vestigial from
+  the QXL/ATI path or overclaim current capability):
+  - `VRAM,totalMB = 512`, `VRAM,totalsize = 536870912`,
+    `IOAccelMemorySize = 536870912`, `ATY,memsize = 536870912` — invented
+    VRAM figures. `ATY,memsize` (ATI prefix) on a virtio device is absurd.
+    Actual framebuffer aperture is 16 MB at the current ceiling.
+  - `IOAccelerator3D = Yes` alongside `IOGraphicsAccelerator = No` and
+    `IODisplayAccelerated = No` — claims 3D the current path cannot deliver.
+  - `IOGLBundleName = "GLEngine"` on the framebuffer node vs.
+    `"VMVirtIOGLEngine"` on the `VMQemuVGAAccelerator` child — inconsistent.
+  - `IOMetalBundleName = ""`, `IOGLESBundleName = ""` — empty / vestigial.
+    (Metal does not exist on 10.6 per CLAUDE.md.)
+  - `model = "VirtIO GPU 3D"` — same overclaim as `IOAccelerator3D`.
+  - `class-code = <00000300>` on the framebuffer node — the "Override
+    class-code for System Profiler" hack publishing a falsified `0x0300`
+    (VGA-compat) on a device whose nub honestly reports `0x0380`.
 
 ---
 
 ## Unexplained residuals
 
-Keep these on the books until they are explained or explicitly retired.
+(None currently active. Items that were here have either been promoted to
+Open as actionable, or moved to Superseded as resolved. See those sections.)
 
-- **`deallocateResource` skips `RESOURCE_UNREF` when `findResource` returns NULL.**
-  Non-blocking for initial display (the first resource stays live and the
-  aperture is reusable), but blocks resolution changes and WindowServer
-  close/reopen cycles. Root cause: pool split between `m_resource_pool[]`
-  (typed pool, post-refactor) and `m_resources` (OSArray, "kept for compat").
-  `findResource` searches one, `deallocateResource`'s cleanup loop iterates
-  the other. Fix: make UNREF unconditional (device is source of truth for
-  resource existence), then unify on `m_resource_pool[]` and delete the OSArray.
-  Predicted verification: `cmd=0x102` (UNREF) appears in log before second
-  `createResource2D`, second create returns `0x1100`.
+---
 
-- **`VMVirtIOGPU::probe` is a correctness bug in variant detection, not a
-  logging nit.** Confirmed via `lspci` that hardware class code is `0x0380`
-  (Display / Other = virtio-gpu-pci, the pure-GPU variant). `VMVirtIOGPU::probe`
-  reads `0x000000` instead, and the same probe logs `"Could not read vendor-id
-  or device-id properties, Trusting IOPCIMatch"`. **probe reads nothing** —
-  vendor-id, device-id, class-code all come back empty or zero, so every
-  device-variant branch in probe()/start() is currently deciding on constant
-  zeros. Likely cause: IOPCIFamily publishes `vendor-id`, `device-id`, and
-  `class-code` on the nub as **OSData byte arrays, not OSNumber**. An
-  `OSDynamicCast(OSNumber, ...)` against them returns NULL on every cast,
-  producing exactly the "could not read" log plus zero class code.
-  `enableController` gets the right answer because it bypasses the properties
-  and uses `configRead32(kIOPCIConfigClassCode)` directly.
+## Superseded
 
-  Why this matters: `0x0380` vs `0x0300` is precisely the field that
-  distinguishes `virtio-gpu-pci` (no VGA BIOS, no aperture) from `virtio-vga`
-  (has VGA aperture). It's the input to `"Detected virtio-gpu-gl-pci (pure
-  GPU, no VGA BIOS)"` and the `hasVGACompat` / `requiresNative` decisions.
-  Today the kext reaches the correct branch *by accident* — zero happens to
-  route to the same branch as `0x0380` would. Point this kext at `virtio-vga`
-  and it will incorrectly take the pure-GPU path on a device that does have a
-  VGA aperture, skipping whatever VGA-compat setup that variant needs.
+Entries moved here when later findings contradicted them. Kept as history
+rather than deleted; each has a date and a note on what replaced it. **Do
+not treat these as competing claims about current state — they describe
+states that no longer exist.**
 
-  Fix is small (use `configRead16`/`configRead32` in probe as `enableController`
-  already does, or handle the OSData properly). Worth its own commit — it
-  changes what several conditionals mean.
+- **(2026-08-08 → 2026-08-09) Milestone B retraction ("horizontal-line
+  shearing below the menu bar").** Recorded 2026-08-08 based on a
+  screenshot taken when `getApertureRange` returned NULL and the visible
+  pixels were the test pattern through a partial backing. Retracted the
+  earlier "Milestone B achieved" claim. **Superseded by:** the
+  fixed-allocation aperture path (Phases 2–4) plus the `pixelFormat` fix
+  (2026-08-09). Visual confirmation 2026-08-09 shows correct desktop below
+  the menu bar, no shearing. **Lesson:** "symptom described a superseded
+  build" is a pattern that will recur — always check whether the symptom's
+  preconditions still hold before treating it as live.
 
-  Side benefit: retires the older "class 0x000000 + 1af4:1050 can't distinguish
-  ramfb-gl from gl-pci" reasoning. That reasoning was built on a value the
-  kext never actually read. The hardware was telling us `0x0380` the whole
-  time — it just wasn't being heard.
-- **Boot log inconsistency:** `enableController` logs "60 Hz" while
-  `displayRefreshTimer` re-arms with `setTimeoutMS(1000)` (1 Hz). If the timer
-  is the only path pushing updates, the desktop repaints once per second.
-- **A second `setscanout(999)` negative control in `enableController`** of
-  unverified origin. Confirm intentional or remove — a bogus `SET_SCANOUT` in
-  the display bring-up path should not become load-bearing by accident.
-- **Milestone B has not been confirmed.** No visual check of a correct desktop,
-  top to bottom, has been recorded. Until it is, the display pipeline is
-  "commands succeed," not "works."
+- **(2026-08-08 → 2026-08-08) `deallocateResource` skips `RESOURCE_UNREF`
+  when `findResource` returns NULL.** Described the pre-fix state where the
+  pool was split between `m_resource_pool[]` and `m_resources` OSArray.
+  **Superseded by:** Phase 1 pool unification — UNREF is unconditional
+  (verified by reading `VMVirtIOGPU.cpp:3250-3266`), `m_resources` OSArray
+  deleted, cleanup walks `m_resource_pool[]` with tombstones.
 
-  **UPDATE 2026-08-08: Milestone B NOT achieved.** Initial claim was made
-  without inspecting the screenshot — retracted. The actual display shows
-  **horizontal-line shearing / artifacting**: menu bar at top renders
-  correctly (white bar, "Snow Leopard" text, icons visible), but the entire
-  main display area below is garbled with a static-like horizontal-line
-  pattern. No windows, icons, or desktop content discernible below the menu
-  bar. Classic **stride mismatch** signature: first rows align correctly,
-  each subsequent row progressively offset. Investigating stride/rowBytes
-  contract between `getRowBytes()`, `RESOURCE_CREATE_2D` dimensions, backing
-  allocation, and what WindowServer writes into the aperture.
+- **(2026-08-08 → 2026-08-08) Capset read fixes "written but not landed".**
+  **Superseded by:** the fixes landed (they are item 1 of the Milestone B
+  fix chain). Capsets read cleanly on every boot: VIRGL id=1 v=1 size=308,
+  VIRGL2 id=2 v=2 size=1408.
 
-  **Lesson reinforced:** "the image is from the desktop" was treated as
-  "correct desktop visible" without visual inspection. CLAUDE.md ground
-  rule violated. Always inspect the image before claiming Milestone B.
+- **(2026-08-08 → 2026-08-09) "Fixed-allocation refactor" as a deferred
+  Open item.** Described per-mode reallocation as a latent zone-corruption
+  risk to be addressed later. **Superseded by:** Phases 1–4 delivered the
+  fixed-allocation model — buffer allocated once in `start()`, resource
+  recreated per mode change, aperture stable across the recreate.
+
+- **(2026-08-08 → 2026-08-09) "Mode table trimmed to 1024×768 only"
+  (fix chain item 9).** Described the temporary workaround for the
+  per-mode reallocation hazard. **Superseded by:** Phase 4's mode table
+  expansion to 7 modes (6 advertised at the 16 MB ceiling, boot at
+  1920×1080). The fixed-allocation model made the trim unnecessary.
+
+- **(2026-08-08 → 2026-08-09) Non-contiguous backing at 35 MB as a "defer
+  until 4K is needed" concern.** The 35 MB allocation was observed to
+  produce `nr_entries=2` in `attachBacking`. **Superseded by:** the
+  aperture invariant in `start()`'s fallback ladder (2026-08-09) walks
+  segments and requires `nr_entries == 1` or steps down. At 35 MB the
+  allocator returns 2 segments; we fall back to 16 MB. The concern about
+  4K-mode writes past segment 1 is moot because 4K mode is filtered out
+  by `filterModesByAllocation` when the buffer is 16 MB. Restoring 4K
+  requires investigating why `kIOMemoryPhysicallyContiguous` silently
+  returns 2 segments at tens-of-MB on this 4 GB guest.
+
+- **(2026-08-08 → 2026-08-08) Boot log "60 Hz vs 1 Hz" inconsistency.**
+  Resolved: the 1 s initial arm in `open()` was a real wart; fixed by
+  shortening to 16 ms. `enableController`'s "60 Hz" log at `:1341` was
+  already accurate (paired with the 16 ms arm at `:1340`). The timer's
+  self-rearm at `:2059` is 16 ms. `info->refreshRate = 60 << 16` at
+  `:662` is the declared-intent value.
+
+- **(2026-08-08 → 2026-08-08) Class-code three-way disagreement
+  (`lspci` 0x0380 / probe 0x000000 / ioreg 0x0300).** Two of three
+  explained by ioreg decode: PCI nub publishes `<00800300>` = `0x0380`
+  (honest, matches `lspci`); framebuffer node publishes `<00000300>` =
+  `0x0300` (the kext's falsified "Override class-code for System Profiler"
+  hack). Only `probe()`'s `0x000000` remains as a real bug — tracked in
+  Open as the OSData/OSNumber cast issue.

@@ -36,6 +36,13 @@ private:
     IOBufferMemoryDescriptor* m_fb_backing;
     IODeviceMemory*        m_fb_device_memory;  // wraps m_fb_backing's physical range for aperture/VRAMRange
     uint32_t               m_fb_resource_id;    // VirtIO GPU resource holding this backing
+    // Phase 2: m_fb_backing / m_fb_device_memory are allocated ONCE in start()
+    // sized for the largest advertised mode (the "ceiling"). Lives until free().
+    // setupFramebufferResource creates the virtio resource against this buffer
+    // but does NOT own or realloc it. Mode changes (Phase 3+) recreate the
+    // resource against the same buffer.
+    uint32_t               m_fb_allocation_width;   // ceiling width  the buffer was sized for
+    uint32_t               m_fb_allocation_height;  // ceiling height the buffer was sized for
     
     // Display configuration
     uint32_t               m_width;             // Display width
@@ -63,6 +70,17 @@ private:
     // Display refresh callback
     static void displayRefreshTimer(OSObject* owner, IOTimerEventSource* sender);
     void refreshDisplay();
+
+    // Phase 3 self-check: prove the resource-recreate path works (same buffer,
+    // new resource dims). Same shape as Phase 1's probeResourceTracking —
+    // deterministic, self-checking. Called once from enableController after
+    // the initial setupFramebufferResource, before WindowServer takes over.
+    void probeResourceRecreate();
+
+    // Phase 4: filter the supported mode list by which modes fit in the fixed
+    // buffer allocated in start(). Called after the buffer exists; populates
+    // m_display_modes / m_mode_count / m_current_mode.
+    void filterModesByAllocation();
     
 public:
     // IOService overrides

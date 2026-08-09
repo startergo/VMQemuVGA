@@ -1,14 +1,14 @@
 VMQemuVGA v8.0 Advanced Command Buffer Resource Dependency Management System
 Private Installation Guide
 
-PACKAGE: VMQemuVGA-v8.0-Private-20251114.pkg
-BUILD DATE: Fri Nov 14 10:19:26 EST 2025
+PACKAGE: VMQemuVGA-v8.0-Private-20260807.pkg
+BUILD DATE: Fri Aug  7 23:24:41 EDT 2026
 CERTIFICATE: Apple Developer ID (Private Distribution)
 
 === INSTALLATION INSTRUCTIONS ===
 
 1. DOWNLOAD AND VERIFY
-   • Download the package file: VMQemuVGA-v8.0-Private-20251114.pkg
+   • Download the package file: VMQemuVGA-v8.0-Private-20260807.pkg
    • Verify file integrity and signature before installation
 
 2. SYSTEM REQUIREMENTS

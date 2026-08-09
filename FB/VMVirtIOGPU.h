@@ -160,9 +160,16 @@ private:
         bool in_use;
     };
 
+    // Resource pool — fixed-size array of gpu_resource slots. Tombstone semantics:
+    //   slot[i].resource_id == 0  → free slot
+    //   slot[i].resource_id != 0  → live slot
+    // 0 is never a valid virtio-gpu resource id, so it's a safe sentinel.
+    // Allocation takes the first zero slot (scan); deallocate writes 0.
+    // m_resource_count is a high-water mark (diagnostic only), not a live count.
+    // Lock discipline: callers of findResource / slot-mutating ops hold
+    // m_resource_lock — the pool is touched from the workloop and from teardown.
     gpu_resource m_resource_pool[64];
     uint32_t m_resource_count;
-    OSArray* m_resources;  // kept for compatibility, not used for resource tracking
     uint32_t m_next_resource_id;
     uint32_t m_display_resource_id;  // Resource ID for primary display
     
@@ -233,6 +240,13 @@ private:
     IOReturn advancedQueueStateManagement();
     
 public:
+    // One-shot self-check: create a probe resource, attempt a duplicate create
+    // (must return kIOReturnBadArgument), then destroy it. Verifies findResource
+    // actually finds after the pool unification. Same shape as the
+    // SET_SCANOUT(999) negative control. Called once from the first
+    // createResource2D entry; gated by a static flag.
+    void probeResourceTracking();
+
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;
     virtual void stop(IOService* provider) override;
