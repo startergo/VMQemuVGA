@@ -419,14 +419,21 @@ bool CLASS::start(IOService* provider)
 	memcpy(&customMode, &modeList[0], sizeof(DisplayModeEntry));
 	
 	/* End Added */
-	//select the valid modes
+	// Select valid modes: filter by device max dimensions AND VRAM byte size.
+	// Without the byte check, a mode larger than the VRAM aperture can be
+	// advertised and selected — same defect class as the virtio path's
+	// filterModesByAllocation.
 	max_w = svga.getMaxWidth();
 	max_h = svga.getMaxHeight();
+	uint64_t vram_bytes;
+	vram_bytes = m_vram ? (uint64_t)m_vram->getLength() : (uint64_t)svga.getVRAMSize();
 	m_num_active_modes = 0U;
-	for (uint32_t i = 0U; i != NUM_DISPLAY_MODES; ++i)//26 in common_fb.h
+	for (uint32_t i = 0U; i != NUM_DISPLAY_MODES; ++i)
 	{
+		uint64_t mode_bytes = (uint64_t)modeList[i].width * (uint64_t)modeList[i].height * 4ULL;
 		if (modeList[i].width <= max_w &&
-			modeList[i].height <= max_h)
+			modeList[i].height <= max_h &&
+			(vram_bytes == 0 || mode_bytes <= vram_bytes))
 		{
 			m_modes[m_num_active_modes++] = i + 1U;
 		}

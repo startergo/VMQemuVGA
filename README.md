@@ -137,16 +137,19 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
   correctly on all variants — the probe bug is latent, not affecting the
   outcome.
 - **Misleading IORegistry properties.** Several advertised values overclaim
-  capability — `IOAccelerator3D = Yes`, `model = "VirtIO GPU 3D"`, and a
-  falsified VGA-compatible `class-code` published for System Profiler's
-  benefit. VRAM figures now publish the actual allocation size; `ATY,memsize`
-  removed. Do not treat IORegistry as a capability report.
+  capability — `IOAccelerator3D = Yes`, `model = "VirtIO GPU 3D"`. VRAM
+  figures now publish the actual allocation size; `ATY,memsize` removed;
+  class-code override hack removed (it published on the framebuffer node
+  but System Profiler reads the PCI nub — the hack never had any effect).
+  Do not treat IORegistry as a capability report.
 - **No EDID on any variant.** `readDDCBlock` fails on virtio-gpu-gl-pci,
-  virtio-ramfb-gl, and virtio-vga-gl. System Profiler's Graphics/Displays panel
-  shows a display entry on virtio-vga-gl but not on the pure-GPU variants —
-  the mechanism is unverified (it is not EDID). Display preferences offers no
-  selectable resolution list on any variant. The modes exist and mode
-  switching works; set modes programmatically or rely on the boot default.
+  virtio-ramfb-gl, and virtio-vga-gl. Display preferences still offers the
+  advertised resolutions and mode switching works — WindowServer builds the
+  list from the driver's mode table without needing EDID. The visible
+  consequence is System Profiler's Graphics/Displays panel, which shows a
+  display entry on virtio-vga-gl but not on the pure-GPU variants; the
+  mechanism is unverified. A synthetic EDID would populate that panel and
+  give WindowServer real timing data.
 
 ---
 

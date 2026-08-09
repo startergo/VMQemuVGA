@@ -310,25 +310,14 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
         setProperty("vendor-id", OSNumber::withNumber(0x1AF4, 16));      // Red Hat PCI vendor ID
         setProperty("device-id", OSNumber::withNumber(0x1050, 16));      // VirtIO GPU device ID
         
-        // TRICK: Override PCI class-code to make System Profiler recognize us as VGA device
-        // QEMU reports class 0x0000 (not VGA), but we tell macOS it's VGA-compatible
-        // This makes System Profiler show virtio-gpu-gl-pci in Graphics/Displays list
-        // class-code format: 0xBBSSPPRR (BaseClass, SubClass, ProgIF, RevisionID)
-        // 0x030000 = Display Controller (0x03), VGA-compatible (0x00), standard VGA (0x00)
-        // IORegistry stores as big-endian: <00 00 03 00> for 0x00030000
-        UInt32 vga_class_code = 0x00030000;  // 0x030000 = VGA-compatible display controller
-        OSData* vga_class = OSData::withBytes(&vga_class_code, 4);
-        if (vga_class) {
-            setProperty("class-code", vga_class);
-            vga_class->release();
-            IOLog("VMVirtIOFramebuffer::start() - Overrode class-code to 0x00030000 (VGA-compatible) for System Profiler\n");
-        }
-        
+        // class-code override removed 2026-08-09. The override published on
+        // the framebuffer node (this), but System Profiler reads the PCI nub
+        // (m_pci_device), which carries the real class-code (0x0380 for
+        // gl-pci, 0x0300 for vga-gl). The hack never had any effect.
+
         IOLog("VMVirtIOFramebuffer::start() - GPU properties set for virtio-gpu-gl-pci\n");
     } else {
-        // virtio-vga-gl (VGA-compatible mode) - already shows in System Profiler as VGA device
-        // No need to override class-code (already 0x030000 from QEMU)
-        IOLog("VMVirtIOFramebuffer::start() - virtio-vga-gl detected - skipping property overrides (already VGA-compatible)\n");
+        IOLog("VMVirtIOFramebuffer::start() - virtio-vga-gl detected (VGA-compatible)\n");
     }
     
     IOLog("VMVirtIOFramebuffer::start() - Device mode: %s, 3D support: %s\n",
