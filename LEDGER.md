@@ -221,30 +221,34 @@ software problem. The transport proof is the load-bearing gate.
 
 ## Open
 
-- **Hardware cursor viability — pending QXL discriminator test.** Queue 1
-  transport is proven (used ring advances, PROBE PASS). Guest-side cursor
+- **Hardware cursor — OPEN, pending GL/cursor-overlay investigation.**
+  Queue 1 transport proven (used ring advances, PROBE PASS). Guest-side
   setup verified correct (64×64 BGRA, alpha=0xFF, scanout_id=0,
-  TRANSFER_TO_HOST_2D before UPDATE_CURSOR, struct 56 bytes). QEMU
-  accepted the command (no guest error in debug log). SPICE cursor
-  channel delivered 16384 bytes of 64×64 alpha data to CocoaSpice client
-  (`set_cursor: type alpha(0), 0, 64x64`). **Cursor still not visible.**
+  TRANSFER_TO_HOST_2D before UPDATE_CURSOR, struct 56 bytes, resource
+  persists — no teardown). QEMU accepted (no guest error in debug log).
+  SPICE cursor channel delivered data to CocoaSpice
+  (`set_cursor: type alpha(0), 0, 64x64`). **Cursor not visible on
+  virtio-gpu-gl.**
 
-  The gap is between CocoaSpice receiving the cursor data and rendering
-  it on the UTM display window. One test discriminates: does QXL's
-  hardware cursor (VMQemuVGA reports `crsr = 1` with working
-  `setCursorImage`/`setCursorState`) appear as a genuine overlay on the
-  same UTM host? If yes, CocoaSpice renders cursor overlays and something
-  subtler is wrong for virtio-gpu. If no, CocoaSpice doesn't render
-  cursor overlays at all and hardware cursor is impossible in this UTM
-  configuration.
+  **QXL discriminator — POSITIVE.** QXL on the same UTM host shows a
+  visible hardware cursor (`crsr=1`, genuine overlay, not composited into
+  framebuffer). This confirms CocoaSpice renders cursor overlays —
+  hardware cursor is not categorically impossible on UTM.
 
-  **If negative:** record as environmental constraint (crsr = 0 with
-  WindowServer software compositing is the correct implementation on
-  UTM/CocoaSpice, not a workaround). Abandon build 2 — do not defer.
-  Redirect performance work to dirty rectangles: TRANSFER_TO_HOST_2D and
-  RESOURCE_FLUSH both take rect parameters; a cursor move dirties a few
-  thousand pixels instead of 2 million; helps every screen update, not
-  just the pointer. Under TCG this is the largest remaining win.
+  **Hypothesis (labelled, not established):** virtio-gpu-gl uses GL
+  scanout (DMABuf → Metal texture via `cs_gl_scanout`). Debug log
+  confirms GL scanout IS active (`gl scanout fd: 42`, `cs_gl_scanout:
+  got scanout`). QXL uses the 2D path (no GL scanout). CocoaSpice's
+  GL display path may not composite cursor overlays on GL-rendered
+  surfaces — explaining why cursor data reaches `set_cursor` but nothing
+  appears. My earlier "cocoa/gl capable but no gl yet" was WRONG: the
+  debug log proves GL scanout is active on virtio-gpu-gl boots.
+
+  **Build 2 status: open.** Not abandoned — the QXL result changes the
+  conclusion from "impossible" to "blocked on GL-path cursor compositing."
+  If a UTM build gains GL cursor compositing, or if the guest switches to
+  non-GL virtio-gpu (losing virgl but gaining cursor overlay), the
+  queue-1 transport code is ready.
 
   **Cursor queue constraint:** the cursor queue is one-way by design.
   QEMU's `virtio_gpu_handle_cursor` does `virtqueue_push(vq, elem, 0)` for
