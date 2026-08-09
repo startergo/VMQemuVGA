@@ -204,12 +204,31 @@ enum pipe_face {
 
 // Virgl command structure
 // All virgl commands start with a header: [length_in_dwords] [command_opcode]
+// UTM-authoritative bit layout (utmapp/virglrenderer, src/virgl_protocol.h):
+//   bits 0-7:   command opcode (VIRGL_CCMD_*)
+//   bits 8-15:  object type (VIRGL_OBJECT_*; 0 for non-object commands)
+//   bits 16-31: length in payload dwords (excluding header)
+#define VIRGL_CMD0(cmd, obj, len) ((cmd) | ((obj) << 8) | ((len) << 16))
+
+// VIRGL_CMD_HDR is equivalent to VIRGL_CMD0(cmd, 0, len) — kept for
+// backwards compat with existing VIRGL_SET_COMMAND call sites that
+// never set a nonzero object type.
 #define VIRGL_CMD_HDR(cmd, len) (((len) << 16) | (cmd))
 
 // Helper macros for building virgl commands
 #define VIRGL_SET_COMMAND(buf, idx, cmd, len) \
     do { \
         (buf)[idx] = VIRGL_CMD_HDR(cmd, len); \
+    } while(0)
+
+// Variant of VIRGL_SET_COMMAND that takes an object type — required for
+// CREATE_OBJECT / DESTROY_OBJECT / BIND_OBJECT, which carry the object
+// type in the header's option byte (bits 8-15). Using VIRGL_SET_COMMAND
+// for those commands would encode object type 0 (VIRGL_OBJECT_NULL) and
+// the host would silently reject the object.
+#define VIRGL_SET_COMMAND_OBJ(buf, idx, cmd, obj, len) \
+    do { \
+        (buf)[idx] = VIRGL_CMD0(cmd, obj, len); \
     } while(0)
 
 #define VIRGL_SET_DWORD(buf, idx, val) \
@@ -224,7 +243,47 @@ enum pipe_face {
 // dword 6: depth (as double, low 32 bits)
 // dword 7: depth (high 32 bits)
 // dword 8: stencil
+//
+// Two SIZE conventions exist in the wild — both produce the same on-wire value:
+//   VIRGL_CLEAR_SIZE = 9       (this header; total dwords including header)
+//   VIRGL_OBJ_CLEAR_SIZE = 8   (UTM/upstream; payload dwords excluding header)
+// Use VIRGL_CLEAR_SIZE-1 with VIRGL_SET_COMMAND, OR VIRGL_OBJ_CLEAR_SIZE
+// directly with VIRGL_CMD0 — either yields wire length-field value 8.
 #define VIRGL_CLEAR_SIZE 9
+#define VIRGL_OBJ_CLEAR_SIZE 8
+#define VIRGL_OBJ_CLEAR_BUFFERS   1
+#define VIRGL_OBJ_CLEAR_COLOR_0   2
+#define VIRGL_OBJ_CLEAR_COLOR_1   3
+#define VIRGL_OBJ_CLEAR_COLOR_2   4
+#define VIRGL_OBJ_CLEAR_COLOR_3   5
+#define VIRGL_OBJ_CLEAR_DEPTH_0   6
+#define VIRGL_OBJ_CLEAR_DEPTH_1   7
+#define VIRGL_OBJ_CLEAR_STENCIL   8
+
+// Virgl CREATE_OBJECT for surfaces (UTM virgl_protocol.h authoritative).
+// Header carries object type VIRGL_OBJECT_SURFACE in the option byte via
+// VIRGL_CMD0(VIRGL_CCMD_CREATE_OBJECT, VIRGL_OBJECT_SURFACE, VIRGL_OBJ_SURFACE_SIZE).
+// Payload is 5 dwords: handle, res_handle, format, level, layers.
+// Common mistake: encoding the object type as a payload dword. That
+// silently fails because the host sees VIRGL_OBJECT_NULL in the header.
+#define VIRGL_OBJ_SURFACE_SIZE 5
+#define VIRGL_OBJ_SURFACE_HANDLE              1
+#define VIRGL_OBJ_SURFACE_RES_HANDLE          2
+#define VIRGL_OBJ_SURFACE_FORMAT              3
+#define VIRGL_OBJ_SURFACE_TEXTURE_LEVEL       4
+#define VIRGL_OBJ_SURFACE_TEXTURE_LAYERS      5
+// Virgl DESTROY_OBJECT payload is a single dword (the handle).
+#define VIRGL_OBJ_DESTROY_HANDLE              1
+// Virgl SET_FRAMEBUFFER_STATE: variable length, nr_cbufs + 2 payload dwords.
+// NOTE: the legacy fixed-size `VIRGL_SET_FRAMEBUFFER_STATE_SIZE 11` defined
+// below is the max-8-cbufs case (8 + 3 header = 11 total dwords). Use the
+// _VAR macro for the actual wire length-field value (payload dwords,
+// excluding header); use the legacy constant only when sizing fixed
+// 8-cbufs stack buffers. They are NOT interchangeable.
+#define VIRGL_SET_FRAMEBUFFER_STATE_SIZE_VAR(nr_cbufs) ((nr_cbufs) + 2)
+#define VIRGL_SET_FRAMEBUFFER_STATE_NR_CBUFS         1
+#define VIRGL_SET_FRAMEBUFFER_STATE_NR_ZSURF_HANDLE  2
+#define VIRGL_SET_FRAMEBUFFER_STATE_CBUF_HANDLE(x)   ((x) + 3)
 
 // Virgl DRAW_VBO command layout:
 // dword 0: command header

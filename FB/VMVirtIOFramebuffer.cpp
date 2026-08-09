@@ -1592,6 +1592,20 @@ IOReturn VMVirtIOFramebuffer::enableController()
                     }
                 }
 
+                // 3D transport probe (build 2): CTX_CREATE → RESOURCE_CREATE_3D
+                // → ATTACH_BACKING → CREATE_OBJECT(surface) → CLEAR →
+                // TRANSFER_FROM_HOST_3D → byte-equal positive + negative
+                // control. Gate for all 3D/virgl work. Per CLAUDE.md: only the
+                // byte readback is a real signal — SUBMIT_3D returns 0x1100
+                // unconditionally, so phases F+ prove buffer-acceptance only.
+                {
+                    static bool transport3d_probed = false;
+                    if (!transport3d_probed && m_gpu_driver) {
+                        transport3d_probed = true;
+                        m_gpu_driver->probeTransport3D();
+                    }
+                }
+
                 // Initial transfer so the screen isn't garbage while WindowServer composes.
                 m_gpu_driver->transferToHost2D(m_fb_resource_id, 0, 0, 0, m_width, m_height);
                 m_gpu_driver->flushResource(m_fb_resource_id, 0, 0, m_width, m_height);

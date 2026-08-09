@@ -3690,6 +3690,652 @@ void CLASS::probeCursorTransport()
           "Visual: red test cursor at ~(300,300) + software cursor separately.\n");
 }
 
+// =============================================================================
+// probeTransport3D — 3D pipeline transport proof
+//
+// Goal: prove the VirtIO GPU 3D command pipeline transports bytes correctly:
+// guest builds a virgl CLEAR command → host virglrenderer executes it on a
+// 3D resource → guest reads back the cleared bytes via TRANSFER_FROM_HOST_3D
+// → bytes match the clear color.
+//
+// *** CRITICAL CAVEAT — SUBMIT_3D resp is not a correctness signal ***
+// QEMU's virgl_cmd_submit_3d hands the buffer to virgl_renderer_submit_cmd
+// and unconditionally pushes VIRTIO_GPU_RESP_OK_NODATA (0x1100) back to the
+// guest without propagating any decode result. Virgl decode errors are
+// asynchronous — they go to virglrenderer's host-side log, never back to
+// the guest response ring. Same trap as the cursor queue's used-ring
+// advance: a 0x1100 from SUBMIT_3D proves the buffer was *accepted*,
+// nothing more. A malformed CREATE_OBJECT produces the same 0x1100 as a
+// correct one. Consequently:
+//   - Phases F and G's SUBMIT_3D return values prove buffer-acceptance only.
+//   - The byte readback in Phase G is the ONLY real correctness signal.
+//   - QEMU's host-side virglrenderer log is a REQUIRED artifact for
+//     diagnosing any Phase G failure — without it, "which subcommand was
+//     malformed" is undiagnosable.
+// =============================================================================
+
+void CLASS::probeTransport3D()
+{
+    // Sentinel IDs — avoid collision with production resources:
+    //   0xFFFE = resource-tracking probe, 0xFFFD = cursor probe,
+    //   0xFFFC = WebGL canvas (eager init), 0x1 = display framebuffer.
+    const uint32_t PROBE_CTX  = 0xFFFB;
+    const uint32_t PROBE_RES  = 0xFFFA;
+    const uint32_t PROBE_SURF = 1;  // virgl object handle, not a resource_id
+    const uint32_t PROBE_FORMAT = VIRGL_FORMAT_R8G8B8A8_UNORM;  // 67
+
+    bool phase_b_reached = false, phase_c_reached = false, phase_d_reached = false;
+    bool phase_e_reached = false, phase_f_reached = false;
+    IOBufferMemoryDescriptor* readback_bmd = nullptr;
+
+    IOLog("VMVirtIOGPU::probeTransport3D: PROBE START — 3D transport "
+          "(ctx=0x%x res=0x%x surf=%u format=R8G8B8A8_UNORM)\n",
+          PROBE_CTX, PROBE_RES, PROBE_SURF);
+
+    // ===== Phase A: preconditions =====
+    if (!m_control_queue) {
+        IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL A — control queue not mapped\n");
+        return;
+    }
+    if (!supports3D() || m_num_capsets == 0) {
+        IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL A — supports3D=%d capsets=%u\n",
+              supports3D() ? 1 : 0, m_num_capsets);
+        return;
+    }
+
+    // ===== Phase B: CTX_CREATE (resp is a real signal) =====
+    {
+        struct virtio_gpu_ctx_create cmd = {};
+        initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_CREATE, PROBE_CTX, false);
+        cmd.nlen = 0;
+        cmd.context_init = 0;
+        // debug_name stays zeroed (empty)
+
+        IOLog("VMVirtIOGPU::probeTransport3D: phase B — CTX_CREATE sending ctx_id=0x%x\n",
+              cmd.hdr.ctx_id);
+        struct virtio_gpu_ctrl_hdr resp = {};
+        IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+        if (ret != kIOReturnSuccess || resp.type != VIRTIO_GPU_RESP_OK_NODATA) {
+            IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL B — CTX_CREATE ret=0x%x resp=0x%x (expected resp=0x1100) [real signal]\n",
+                  ret, resp.type);
+            goto cleanup;
+        }
+        phase_b_reached = true;
+        IOLog("VMVirtIOGPU::probeTransport3D: phase B ok — CTX_CREATE ctx=0x%x resp=0x1100 [real signal]\n",
+              PROBE_CTX);
+    }
+
+    // ===== Phase C: RESOURCE_CREATE_3D (inline; public helper zeroes ctx_id) =====
+    {
+        struct virtio_gpu_resource_create_3d cmd = {};
+        cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
+        cmd.hdr.flags = 0;
+        cmd.hdr.fence_id = 0;
+        cmd.hdr.ctx_id = PROBE_CTX;  // critical — set explicitly (createResource3D helper zeroes this at line 1408)
+        cmd.resource_id = PROBE_RES;
+        cmd.target = VIRGL_TARGET_2D;
+        cmd.format = PROBE_FORMAT;
+        cmd.bind = VIRGL_BIND_RENDER_TARGET;
+        cmd.width = 64;
+        cmd.height = 64;
+        cmd.depth = 1;
+        cmd.array_size = 1;
+        cmd.last_level = 0;
+        cmd.nr_samples = 0;
+        cmd.flags = 0;
+
+        IOLog("VMVirtIOGPU::probeTransport3D: phase C — RESOURCE_CREATE_3D sending ctx_id=0x%x res=0x%x\n",
+              cmd.hdr.ctx_id, cmd.resource_id);
+        struct virtio_gpu_ctrl_hdr resp = {};
+        IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+        if (ret != kIOReturnSuccess || resp.type != VIRTIO_GPU_RESP_OK_NODATA) {
+            IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL C — RESOURCE_CREATE_3D ret=0x%x resp=0x%x (expected resp=0x1100) [real signal]\n",
+                  ret, resp.type);
+            goto cleanup;
+        }
+        phase_c_reached = true;
+        IOLog("VMVirtIOGPU::probeTransport3D: phase C ok — RESOURCE_CREATE_3D res=0x%x ctx=0x%x resp=0x1100 [real signal]\n",
+              PROBE_RES, PROBE_CTX);
+    }
+
+    // ===== Phase D: allocate + zero readback buffer, attach backing =====
+    {
+        readback_bmd = IOBufferMemoryDescriptor::withCapacity(16384, kIODirectionInOut);
+        if (!readback_bmd) {
+            IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL D — readback buffer alloc failed\n");
+            goto cleanup;
+        }
+        memset(readback_bmd->getBytesNoCopy(), 0, 16384);
+
+        // attachBacking is resource-agnostic; works for 3D unchanged.
+        // Helper walks getPhysicalSegment and emits one mem_entry per segment.
+        // 16 KB IOBufferMemoryDescriptor is physically contiguous in kernel
+        // space, so we expect nr_entries == 1.
+        IOReturn ret = attachBacking(PROBE_RES, readback_bmd);
+        if (ret != kIOReturnSuccess) {
+            IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL D — attachBacking ret=0x%x\n", ret);
+            goto cleanup;
+        }
+        phase_d_reached = true;
+        IOLog("VMVirtIOGPU::probeTransport3D: phase D ok — backing attached res=0x%x 16384 bytes [real signal]\n",
+              PROBE_RES);
+    }
+
+    // ===== Phase E: CTX_ATTACH_RESOURCE (resp is a real signal, but non-fatal on failure) =====
+    {
+        struct virtio_gpu_ctx_resource cmd = {};
+        initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE, PROBE_CTX, false);
+        cmd.resource_id = PROBE_RES;
+        cmd.padding = 0;
+
+        IOLog("VMVirtIOGPU::probeTransport3D: phase E — CTX_ATTACH_RESOURCE sending ctx_id=0x%x res=0x%x\n",
+              cmd.hdr.ctx_id, cmd.resource_id);
+        struct virtio_gpu_ctrl_hdr resp = {};
+        IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+        if (ret != kIOReturnSuccess || resp.type != VIRTIO_GPU_RESP_OK_NODATA) {
+            // Non-fatal — virgl may not strictly require CTX_ATTACH_RESOURCE.
+            // Log and continue so we still test the downstream pipeline.
+            IOLog("VMVirtIOGPU::probeTransport3D: phase E WARN — CTX_ATTACH_RESOURCE ret=0x%x resp=0x%x (continuing; virgl may not require this)\n",
+                  ret, resp.type);
+        } else {
+            IOLog("VMVirtIOGPU::probeTransport3D: phase E ok — CTX_ATTACH_RESOURCE ctx=0x%x res=0x%x resp=0x1100 [real signal]\n",
+                  PROBE_CTX, PROBE_RES);
+        }
+        phase_e_reached = true;
+    }
+
+    // ===== Phase F: CREATE_OBJECT surface via SUBMIT_3D =====
+    // *** NON-SIGNAL: SUBMIT_3D returns 0x1100 unconditionally. This phase
+    // proves only that the 6-dword buffer was accepted as a well-formed
+    // SUBMIT_3D envelope. It does NOT prove the surface object exists on
+    // the host. A malformed CREATE_OBJECT produces the same response. ***
+    {
+        // Virgl CREATE_OBJECT for VIRGL_OBJECT_SURFACE — 6 dwords total.
+        // Header carries object type in option byte via VIRGL_CMD0:
+        //   VIRGL_CMD0(VIRGL_CCMD_CREATE_OBJECT=1, VIRGL_OBJECT_SURFACE=9, 5) = 0x00050901
+        // Payload (5 dwords): handle, res_handle, format, texture_level, texture_layers
+        uint32_t cmd_dwords[6];
+        cmd_dwords[0] = VIRGL_CMD0(VIRGL_CCMD_CREATE_OBJECT, VIRGL_OBJECT_SURFACE, VIRGL_OBJ_SURFACE_SIZE);
+        cmd_dwords[VIRGL_OBJ_SURFACE_HANDLE]         = PROBE_SURF;
+        cmd_dwords[VIRGL_OBJ_SURFACE_RES_HANDLE]     = PROBE_RES;
+        cmd_dwords[VIRGL_OBJ_SURFACE_FORMAT]         = PROBE_FORMAT;
+        cmd_dwords[VIRGL_OBJ_SURFACE_TEXTURE_LEVEL]  = 0;
+        cmd_dwords[VIRGL_OBJ_SURFACE_TEXTURE_LAYERS] = 0;  // first_layer=0 | last_layer=0<<16
+
+        IOLog("VMVirtIOGPU::probeTransport3D: phase F — CREATE_OBJECT hdr=0x%x handle=%u res=0x%x fmt=%u (SUBMIT_3D resp is a NON-SIGNAL)\n",
+              cmd_dwords[0], PROBE_SURF, PROBE_RES, PROBE_FORMAT);
+
+        IOBufferMemoryDescriptor* cmdDesc = IOBufferMemoryDescriptor::withBytes(
+            cmd_dwords, sizeof(cmd_dwords), kIODirectionOut);
+        if (!cmdDesc) {
+            IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL F — command buffer alloc failed\n");
+            goto cleanup;
+        }
+        IOReturn ret = executeCommands(PROBE_CTX, cmdDesc);
+        cmdDesc->release();
+        if (ret != kIOReturnSuccess) {
+            IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL F — executeCommands ret=0x%x (envelope rejected; NOT a virgl decode error)\n",
+                  ret);
+            goto cleanup;
+        }
+        phase_f_reached = true;
+        IOLog("VMVirtIOGPU::probeTransport3D: phase F accepted — CREATE_OBJECT envelope ok [NON-SIGNAL: 0x1100 from SUBMIT_3D proves buffer accepted, not that surface exists]\n");
+    }
+
+    // ===== Phases G and G′: SET_FRAMEBUFFER_STATE + CLEAR + NOP → TRANSFER → verify =====
+    // Phase G uses clear color #1; Phase G′ memsets the buffer with 0xCD and
+    // uses clear color #2. Readback MUST change between G and G′ — otherwise
+    // the host is returning stale cached bytes.
+    //
+    // *** The byte readback is the ONLY real correctness signal in the probe. ***
+    {
+        // Clear colors — chosen as values that map to exact uint8 unorm at any
+        // reasonable precision. Each float32 representation is a slight
+        // over-approximation of the exact decimal value, so ×255 rounds cleanly
+        // to the intended integer with no .5 boundary to land on:
+        //   (0.20, 0.40, 0.60, 1.00) → (51, 102, 153, 255)
+        //   (0.80, 0.20, 0.40, 1.00) → (204, 51, 102, 255)
+        // Avoid values like 0.9, where the float32 product 0.9f × 255 rounds
+        // to exactly 229.5f and the GL spec permits the host rasterizer ±1 ULP
+        // either way — no guest formula reproduces the host's choice by
+        // construction, so the probe would noise the log with tolerance
+        // engagement on every dword. With non-boundary colors, the ±1
+        // tolerance below should never fire in normal operation; it stays as
+        // a quiet guard against real regressions.
+        //
+        // These are the SAME variables used to pack the CLEAR command payload
+        // below (via virgl_pack_float). Per the prophylactic rule in the
+        // LEDGER: derive expected bytes from the float32 you sent, not by
+        // re-deriving from the constant of origin.
+        const float clear1_rgba[4] = { 0.20f, 0.40f, 0.60f, 1.00f };
+        const float clear2_rgba[4] = { 0.80f, 0.20f, 0.40f, 1.00f };
+
+        // Expected readback bytes — R8G8B8A8_UNORM packs each channel as
+        // uint8 = round(channel_float × 255). NOT raw IEEE 754 float bits.
+        // __builtin_lrintf evaluates round-to-nearest-even; with non-boundary
+        // colors the result is precision-independent (any reasonable
+        // evaluation gives the same integer).
+        const uint32_t c1_r = (uint32_t)__builtin_lrintf(clear1_rgba[0] * 255.0f);
+        const uint32_t c1_g = (uint32_t)__builtin_lrintf(clear1_rgba[1] * 255.0f);
+        const uint32_t c1_b = (uint32_t)__builtin_lrintf(clear1_rgba[2] * 255.0f);
+        const uint32_t c1_a = (uint32_t)__builtin_lrintf(clear1_rgba[3] * 255.0f);
+        const uint32_t c2_r = (uint32_t)__builtin_lrintf(clear2_rgba[0] * 255.0f);
+        const uint32_t c2_g = (uint32_t)__builtin_lrintf(clear2_rgba[1] * 255.0f);
+        const uint32_t c2_b = (uint32_t)__builtin_lrintf(clear2_rgba[2] * 255.0f);
+        const uint32_t c2_a = (uint32_t)__builtin_lrintf(clear2_rgba[3] * 255.0f);
+
+        bool g1_ok = false;        // did Phase G readback match any pattern?
+        uint32_t g1_pattern = 0;   // which pattern (1..4) matched
+        uint32_t g1_first_dword = 0;
+
+        // ---- Phase G (positive control) ----
+        {
+            // Build SET_FRAMEBUFFER_STATE (4 dwords) + CLEAR (9 dwords) + NOP (1 dword) = 14 dwords.
+            // SET_FRAMEBUFFER_STATE: VIRGL_CMD0(VIRGL_CCMD_SET_FRAMEBUFFER_STATE=5, 0, 3)
+            //   dword 1: nr_cbufs = 1
+            //   dword 2: zsurf_handle = 0
+            //   dword 3: cbuf[0] = PROBE_SURF
+            // CLEAR: VIRGL_CMD0(VIRGL_CCMD_CLEAR=7, 0, 8)
+            //   dword 1: buffers = PIPE_CLEAR_COLOR0 (0x04)
+            //   dword 2-5: packed floats RGBA
+            //   dword 6-7: depth lo/hi (0)
+            //   dword 8: stencil (0)
+            // NOP: VIRGL_CMD0(0, 0, 0) = 0x00000000  (virgl has no standalone FLUSH opcode)
+            uint32_t buf[14];
+            unsigned idx = 0;
+            buf[idx++] = VIRGL_CMD0(VIRGL_CCMD_SET_FRAMEBUFFER_STATE, 0, 3);
+            buf[idx++] = 1;            // nr_cbufs
+            buf[idx++] = 0;            // zsurf_handle
+            buf[idx++] = PROBE_SURF;   // cbuf[0]
+            buf[idx++] = VIRGL_CMD0(VIRGL_CCMD_CLEAR, 0, VIRGL_OBJ_CLEAR_SIZE);
+            buf[idx++] = PIPE_CLEAR_COLOR0;
+            buf[idx++] = virgl_pack_float(clear1_rgba[0]);
+            buf[idx++] = virgl_pack_float(clear1_rgba[1]);
+            buf[idx++] = virgl_pack_float(clear1_rgba[2]);
+            buf[idx++] = virgl_pack_float(clear1_rgba[3]);
+            buf[idx++] = 0;  // depth lo
+            buf[idx++] = 0;  // depth hi
+            buf[idx++] = 0;  // stencil
+            buf[idx++] = VIRGL_CMD0(VIRGL_CCMD_NOP, 0, 0);
+
+            IOLog("VMVirtIOGPU::probeTransport3D: phase G — submitting SET_FB+CLEAR+NOP (%u dwords) [SUBMIT_3D resp is NON-SIGNAL]\n",
+                  (unsigned)idx);
+
+            IOBufferMemoryDescriptor* cmdDesc = IOBufferMemoryDescriptor::withBytes(
+                buf, idx * sizeof(uint32_t), kIODirectionOut);
+            if (!cmdDesc) {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G — command buffer alloc failed\n");
+                goto cleanup;
+            }
+            IOReturn ret = executeCommands(PROBE_CTX, cmdDesc);
+            cmdDesc->release();
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G — SET_FB+CLEAR executeCommands ret=0x%x\n",
+                      ret);
+                goto cleanup;
+            }
+        }
+
+        // TRANSFER_FROM_HOST_3D built inline (the helper at line 6533 zeroes ctx_id — bug).
+        // stride=0 lets the host compute it from format+width; layer_stride=0 likewise.
+        // box must be (x=0,y=0,z=0,w=64,h=64,d=1) — virgl_box has 6 dwords; a depth
+        // of 0 copies nothing and returns success, which was the first-boot failure
+        // signature before this struct was fixed (rect was 4 dwords, host read 6).
+        {
+            struct virtio_gpu_transfer_to_host_3d cmd = {};
+            cmd.hdr.type = VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D;
+            cmd.hdr.flags = 0;
+            cmd.hdr.fence_id = 0;
+            cmd.hdr.ctx_id = PROBE_CTX;  // critical — bypass helper bug
+            cmd.resource_id = PROBE_RES;
+            cmd.level = 0;
+            cmd.offset = 0;
+            cmd.stride = 0;        // host computes from format+width
+            cmd.layer_stride = 0;  // host computes
+            cmd.box.x = 0;
+            cmd.box.y = 0;
+            cmd.box.z = 0;
+            cmd.box.w = 64;
+            cmd.box.h = 64;
+            cmd.box.d = 1;
+
+            IOLog("VMVirtIOGPU::probeTransport3D: phase G — TRANSFER_FROM_HOST_3D ctx=0x%x res=0x%x lvl=0 off=0 stride=0 layer_stride=0 box=(0,0,0,64,64,1)\n",
+                  cmd.hdr.ctx_id, cmd.resource_id);
+            struct virtio_gpu_ctrl_hdr resp = {};
+            IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+            if (ret != kIOReturnSuccess || resp.type != VIRTIO_GPU_RESP_OK_NODATA) {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G — TRANSFER ret=0x%x resp=0x%x (expected resp=0x1100) [real signal]\n",
+                      ret, resp.type);
+                goto cleanup;
+            }
+            IOLog("VMVirtIOGPU::probeTransport3D: phase G — TRANSFER accepted resp=0x1100 [real signal — but byte correctness is checked below]\n");
+        }
+
+        // Walk readback. Log first 16 dwords raw, then check against 4 byte-order patterns.
+        {
+            uint32_t* px = (uint32_t*)readback_bmd->getBytesNoCopy();
+            g1_first_dword = px[0];
+
+            IOLog("VMVirtIOGPU::probeTransport3D: phase G readback first 16 dwords (hex): "
+                  "%08x %08x %08x %08x %08x %08x %08x %08x "
+                  "%08x %08x %08x %08x %08x %08x %08x %08x\n",
+                  px[0], px[1], px[2], px[3], px[4], px[5], px[6], px[7],
+                  px[8], px[9], px[10], px[11], px[12], px[13], px[14], px[15]);
+
+            // Compute all four byte-order interpretations from the unorm bytes.
+            // We don't predict byte order — we observe it. The dword in memory
+            // is little-endian, so byte at offset 0 is the low byte of the dword.
+            // Each pattern names which color channel lives at byte offset 0.
+            const uint32_t pat_rgba = c1_r | (c1_g << 8) | (c1_b << 16) | (c1_a << 24);
+            const uint32_t pat_bgra = c1_b | (c1_g << 8) | (c1_r << 16) | (c1_a << 24);
+            const uint32_t pat_argb = c1_a | (c1_r << 8) | (c1_g << 16) | (c1_b << 24);
+            const uint32_t pat_abgr = c1_a | (c1_b << 8) | (c1_g << 16) | (c1_r << 24);
+
+            IOLog("VMVirtIOGPU::probeTransport3D: phase G expected packed patterns "
+                  "RGBA=0x%08x BGRA=0x%08x ARGB=0x%08x ABGR=0x%08x\n",
+                  pat_rgba, pat_bgra, pat_argb, pat_abgr);
+
+            // Check first 64 dwords against each pattern with byte-wise ±1 tolerance.
+            // With non-boundary clear colors, the tolerance should never fire in normal
+            // operation — it stays as a guard against real regressions (e.g. wrong
+            // resource format, broken stride, partial readback). When it does fire,
+            // log a single summary line per phase so a real regression reads
+            // differently from precision noise: "G: 64/64 exact" is quiet;
+            // "G′: 0/64 exact, 64/64 within ±1, drift: G-1 (systematic)" is loud
+            // but compact; "G: 12/64 within ±1, random" would indicate a real bug.
+            const uint32_t patterns_arr[4] = { pat_rgba, pat_bgra, pat_argb, pat_abgr };
+            const char* names[4] = { "RGBA", "BGRA", "ARGB", "ABGR" };
+            const char* chan = "RGBA";
+            for (int p = 0; p < 4; p++) {
+                uint32_t expected = patterns_arr[p];
+                unsigned exact_count = 0;
+                unsigned tolerance_count = 0;
+                uint32_t first_tol_actual = 0;
+                bool all_pass = true;
+                for (unsigned i = 0; i < 64; i++) {
+                    uint32_t actual = px[i];
+                    if (actual == expected) { exact_count++; continue; }
+                    bool within_tol = true;
+                    for (int b = 0; b < 4; b++) {
+                        uint32_t ab = (actual >> (b * 8)) & 0xFF;
+                        uint32_t eb = (expected >> (b * 8)) & 0xFF;
+                        uint32_t diff = (ab > eb) ? (ab - eb) : (eb - ab);
+                        if (diff > 1) { within_tol = false; break; }
+                    }
+                    if (within_tol) {
+                        if (tolerance_count == 0) first_tol_actual = actual;
+                        tolerance_count++;
+                    } else {
+                        all_pass = false;
+                        break;
+                    }
+                }
+                if (all_pass) {
+                    g1_ok = true;
+                    g1_pattern = (uint32_t)(p + 1);
+                    if (tolerance_count == 0) {
+                        IOLog("VMVirtIOGPU::probeTransport3D: phase G — %s pattern: %u/64 exact [POSITIVE CONTROL PASS]\n",
+                              names[p], exact_count);
+                    } else {
+                        // Single summary line. Drift signature computed from the
+                        // first tolerance dword; "systematic" if every dword
+                        // engaged tolerance (consistent offset), else "random"
+                        // (would indicate a real regression, not precision noise).
+                        char drift[64]; int dn = 0;
+                        for (int b = 0; b < 4; b++) {
+                            int32_t ab = (first_tol_actual >> (b * 8)) & 0xFF;
+                            int32_t eb = (expected >> (b * 8)) & 0xFF;
+                            int32_t d = ab - eb;
+                            if (d != 0) dn += snprintf(drift + dn, sizeof(drift) - dn, " %c%+d", chan[b], d);
+                        }
+                        IOLog("VMVirtIOGPU::probeTransport3D: phase G — %s pattern: %u/64 exact, %u/64 within ±1, drift:%s %s [POSITIVE CONTROL PASS — tolerance engaged]\n",
+                              names[p], exact_count, tolerance_count, drift,
+                              (tolerance_count == 64 ? "(systematic)" : "(random)"));
+                    }
+                    break;
+                }
+            }
+            if (!g1_ok) {
+                IOLog("VMVirtIOGPU::probeTransport3D: phase G — readback did NOT match any of the 4 patterns in all first 64 dwords "
+                      "(first dword=0x%08x). Continuing to negative control to determine if readback is deterministic at all.\n",
+                      g1_first_dword);
+                // Not a hard fail yet — proceed to G′. If G′ also doesn't match,
+                // the transport is broken and we'll fail there.
+            }
+        }
+
+        // ---- Phase G′ (negative control — different clear color, buffer re-filled with 0xCD) ----
+        // Fill with 0xCD so "device never wrote" is visually distinct from "device wrote zeros".
+        memset(readback_bmd->getBytesNoCopy(), 0xCD, 16384);
+
+        {
+            uint32_t buf[14];
+            unsigned idx = 0;
+            buf[idx++] = VIRGL_CMD0(VIRGL_CCMD_SET_FRAMEBUFFER_STATE, 0, 3);
+            buf[idx++] = 1;
+            buf[idx++] = 0;
+            buf[idx++] = PROBE_SURF;
+            buf[idx++] = VIRGL_CMD0(VIRGL_CCMD_CLEAR, 0, VIRGL_OBJ_CLEAR_SIZE);
+            buf[idx++] = PIPE_CLEAR_COLOR0;
+            buf[idx++] = virgl_pack_float(clear2_rgba[0]);
+            buf[idx++] = virgl_pack_float(clear2_rgba[1]);
+            buf[idx++] = virgl_pack_float(clear2_rgba[2]);
+            buf[idx++] = virgl_pack_float(clear2_rgba[3]);
+            buf[idx++] = 0;  // depth lo
+            buf[idx++] = 0;  // depth hi
+            buf[idx++] = 0;  // stencil
+            buf[idx++] = VIRGL_CMD0(VIRGL_CCMD_NOP, 0, 0);
+
+            IOBufferMemoryDescriptor* cmdDesc = IOBufferMemoryDescriptor::withBytes(
+                buf, idx * sizeof(uint32_t), kIODirectionOut);
+            if (!cmdDesc) {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G′ — command buffer alloc failed\n");
+                goto cleanup;
+            }
+            IOReturn ret = executeCommands(PROBE_CTX, cmdDesc);
+            cmdDesc->release();
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G′ — SET_FB+CLEAR executeCommands ret=0x%x\n",
+                      ret);
+                goto cleanup;
+            }
+        }
+        {
+            struct virtio_gpu_transfer_to_host_3d cmd = {};
+            cmd.hdr.type = VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D;
+            cmd.hdr.flags = 0;
+            cmd.hdr.fence_id = 0;
+            cmd.hdr.ctx_id = PROBE_CTX;
+            cmd.resource_id = PROBE_RES;
+            cmd.level = 0;
+            cmd.offset = 0;
+            cmd.stride = 0;
+            cmd.layer_stride = 0;
+            cmd.box.x = 0; cmd.box.y = 0; cmd.box.z = 0;
+            cmd.box.w = 64; cmd.box.h = 64; cmd.box.d = 1;
+
+            struct virtio_gpu_ctrl_hdr resp = {};
+            IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+            if (ret != kIOReturnSuccess || resp.type != VIRTIO_GPU_RESP_OK_NODATA) {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G′ — TRANSFER ret=0x%x resp=0x%x\n",
+                      ret, resp.type);
+                goto cleanup;
+            }
+        }
+
+        // Verify bytes changed between G and G′.
+        {
+            uint32_t* px = (uint32_t*)readback_bmd->getBytesNoCopy();
+            IOLog("VMVirtIOGPU::probeTransport3D: phase G′ readback first 16 dwords (hex): "
+                  "%08x %08x %08x %08x %08x %08x %08x %08x "
+                  "%08x %08x %08x %08x %08x %08x %08x %08x\n",
+                  px[0], px[1], px[2], px[3], px[4], px[5], px[6], px[7],
+                  px[8], px[9], px[10], px[11], px[12], px[13], px[14], px[15]);
+
+            // First: did the readback change at all between G and G′?
+            if (px[0] == g1_first_dword) {
+                // Identical readback despite 0xCD re-fill + different clear color.
+                // The host is returning stale cached bytes (or never wrote at all).
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G′ — readback first dword unchanged between G (0x%08x) and G′ (0x%08x) "
+                      "despite 0xCD re-fill + different clear color. Stale/cached bytes suspected. "
+                      "Next boot: try VIRTIO_GPU_FLAG_FENCE on transfer.\n",
+                      g1_first_dword, px[0]);
+                goto cleanup;
+            }
+
+            // Readback changed — transport is alive. Now check if G′ matches color #2 in some order.
+            // Same unorm encoding as the G block above; same four byte orders.
+            const uint32_t pat2_rgba = c2_r | (c2_g << 8) | (c2_b << 16) | (c2_a << 24);
+            const uint32_t pat2_bgra = c2_b | (c2_g << 8) | (c2_r << 16) | (c2_a << 24);
+            const uint32_t pat2_argb = c2_a | (c2_r << 8) | (c2_g << 16) | (c2_b << 24);
+            const uint32_t pat2_abgr = c2_a | (c2_b << 8) | (c2_g << 16) | (c2_r << 24);
+            const uint32_t* pats[4] = { &pat2_rgba, &pat2_bgra, &pat2_argb, &pat2_abgr };
+            const char* names[4] = { "RGBA", "BGRA", "ARGB", "ABGR" };
+
+            IOLog("VMVirtIOGPU::probeTransport3D: phase G′ expected packed patterns "
+                  "RGBA=0x%08x BGRA=0x%08x ARGB=0x%08x ABGR=0x%08x\n",
+                  pat2_rgba, pat2_bgra, pat2_argb, pat2_abgr);
+
+            bool g2_ok = false;
+            uint32_t g2_pattern = 0;
+            const char* chan2 = "RGBA";
+            for (int p = 0; p < 4; p++) {
+                uint32_t expected = *pats[p];
+                unsigned exact_count = 0;
+                unsigned tolerance_count = 0;
+                uint32_t first_tol_actual = 0;
+                bool all_pass = true;
+                for (unsigned i = 0; i < 64; i++) {
+                    uint32_t actual = px[i];
+                    if (actual == expected) { exact_count++; continue; }
+                    bool within_tol = true;
+                    for (int b = 0; b < 4; b++) {
+                        uint32_t ab = (actual >> (b * 8)) & 0xFF;
+                        uint32_t eb = (expected >> (b * 8)) & 0xFF;
+                        uint32_t diff = (ab > eb) ? (ab - eb) : (eb - ab);
+                        if (diff > 1) { within_tol = false; break; }
+                    }
+                    if (within_tol) {
+                        if (tolerance_count == 0) first_tol_actual = actual;
+                        tolerance_count++;
+                    } else {
+                        all_pass = false;
+                        break;
+                    }
+                }
+                if (all_pass) {
+                    g2_ok = true;
+                    g2_pattern = (uint32_t)(p + 1);
+                    if (tolerance_count == 0) {
+                        IOLog("VMVirtIOGPU::probeTransport3D: phase G′ — %s pattern: %u/64 exact\n",
+                              names[p], exact_count);
+                    } else {
+                        char drift[64]; int dn = 0;
+                        for (int b = 0; b < 4; b++) {
+                            int32_t ab = (first_tol_actual >> (b * 8)) & 0xFF;
+                            int32_t eb = (expected >> (b * 8)) & 0xFF;
+                            int32_t d = ab - eb;
+                            if (d != 0) dn += snprintf(drift + dn, sizeof(drift) - dn, " %c%+d", chan2[b], d);
+                        }
+                        IOLog("VMVirtIOGPU::probeTransport3D: phase G′ — %s pattern: %u/64 exact, %u/64 within ±1, drift:%s %s [tolerance engaged]\n",
+                              names[p], exact_count, tolerance_count, drift,
+                              (tolerance_count == 64 ? "(systematic)" : "(random)"));
+                    }
+                    break;
+                }
+            }
+
+            if (!g1_ok && !g2_ok) {
+                // Neither clear produced a recognizable pattern. Transport is broken.
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G′ — neither G nor G′ readback matched any color pattern "
+                      "(g1_first=0x%08x g2_first=0x%08x). Diagnose with QEMU host log.\n",
+                      g1_first_dword, px[0]);
+                goto cleanup;
+            }
+            if (g1_ok && g2_ok && g1_pattern != g2_pattern) {
+                // Pattern interpretation differs between runs — suspicious.
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE FAIL G′ — byte-order pattern differed between G (%s) and G′ (%s). "
+                      "Suspect partial/strided readback.\n",
+                      names[g1_pattern - 1], names[g2_pattern - 1]);
+                goto cleanup;
+            }
+            // Either:
+            //   - Both passed with the same byte order (transport verified), OR
+            //   - One passed and the other changed (transport alive but partially broken — still progress).
+            if (g1_ok && g2_ok) {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE PASS — 3D transport verified "
+                      "(clear → readback → byte match positive + negative control, byte order %s)\n",
+                      names[g1_pattern - 1]);
+            } else {
+                IOLog("VMVirtIOGPU::probeTransport3D: PROBE PASS (PARTIAL) — negative control confirmed readback changes with clear color "
+                      "(g1 %s, g2 %s). At least one clear's bytes did not fully match a known pattern. "
+                      "See QEMU host log + first-16-dword dumps above.\n",
+                      g1_ok ? names[g1_pattern - 1] : "no-match",
+                      g2_ok ? names[g2_pattern - 1] : "no-match");
+            }
+        }
+    }
+
+cleanup:
+    // Best-effort cleanup. Order matters: destroy surface object first, then
+    // detach resource, then unref resource, then destroy context. The
+    // readback buffer is released last.
+    IOLog("VMVirtIOGPU::probeTransport3D: cleanup — phases reached B=%d C=%d D=%d E=%d F=%d\n",
+          phase_b_reached ? 1 : 0, phase_c_reached ? 1 : 0, phase_d_reached ? 1 : 0,
+          phase_e_reached ? 1 : 0, phase_f_reached ? 1 : 0);
+
+    // 1. DESTROY_OBJECT for surf_handle (only if Phase F reached)
+    if (phase_f_reached) {
+        uint32_t buf[2];
+        buf[0] = VIRGL_CMD0(VIRGL_CCMD_DESTROY_OBJECT, VIRGL_OBJECT_SURFACE, 1);
+        buf[1] = PROBE_SURF;  // VIRGL_OBJ_DESTROY_HANDLE
+        IOBufferMemoryDescriptor* cmdDesc = IOBufferMemoryDescriptor::withBytes(
+            buf, sizeof(buf), kIODirectionOut);
+        if (cmdDesc) {
+            IOReturn ret = executeCommands(PROBE_CTX, cmdDesc);
+            cmdDesc->release();
+            IOLog("VMVirtIOGPU::probeTransport3D: cleanup — DESTROY_OBJECT surf=%u ret=0x%x [NON-SIGNAL]\n",
+                  PROBE_SURF, ret);
+        }
+    }
+
+    // 2. CTX_DETACH_RESOURCE (only if Phase E reached)
+    if (phase_e_reached) {
+        struct virtio_gpu_ctx_resource cmd = {};
+        initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_DETACH_RESOURCE, PROBE_CTX, false);
+        cmd.resource_id = PROBE_RES;
+        cmd.padding = 0;
+        struct virtio_gpu_ctrl_hdr resp = {};
+        IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+        IOLog("VMVirtIOGPU::probeTransport3D: cleanup — CTX_DETACH_RESOURCE ret=0x%x resp=0x%x\n",
+              ret, resp.type);
+    }
+
+    // 3. RESOURCE_UNREF (only if Phase C reached). Sends RESOURCE_UNREF +
+    //    tombstones local pool slot. Caller-owned backing_memory (our
+    //    readback_bmd) is NOT released by deallocateResource — released below.
+    if (phase_c_reached) {
+        IOReturn ret = deallocateResource(PROBE_RES);
+        IOLog("VMVirtIOGPU::probeTransport3D: cleanup — RESOURCE_UNREF res=0x%x ret=0x%x\n",
+              PROBE_RES, ret);
+    }
+
+    // 4. CTX_DESTROY (only if Phase B reached)
+    if (phase_b_reached) {
+        IOReturn ret = destroy3DContext(PROBE_CTX);
+        IOLog("VMVirtIOGPU::probeTransport3D: cleanup — CTX_DESTROY ctx=0x%x ret=0x%x\n",
+              PROBE_CTX, ret);
+    }
+
+    // 5. Release readback buffer
+    if (readback_bmd) {
+        readback_bmd->release();
+        readback_bmd = nullptr;
+    }
+
+    IOLog("VMVirtIOGPU::probeTransport3D: probe complete\n");
+}
+
 //=============================================================================
 
 IOReturn CLASS::updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y,

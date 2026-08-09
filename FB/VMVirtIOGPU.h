@@ -274,6 +274,15 @@ public:
     // sends UPDATE_CURSOR + MOVE_CURSOR on queue 1. Pass: two cursors on screen.
     void probeCursorTransport();
 
+    // One-shot 3D-transport self-check: CTX_CREATE → RESOURCE_CREATE_3D →
+    // ATTACH_BACKING → CTX_ATTACH_RESOURCE → CREATE_OBJECT(surface) →
+    // SET_FRAMEBUFFER_STATE + CLEAR → TRANSFER_FROM_HOST_3D → byte-equal
+    // positive control + negative control (different clear color, readback
+    // must change). Per CLAUDE.md "code should self-check": the only
+    // trustworthy signal is the byte readback; SUBMIT_3D responses are
+    // unconditional 0x1100 and prove nothing about virgl decode success.
+    void probeTransport3D();
+
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;
     virtual void stop(IOService* provider) override;
