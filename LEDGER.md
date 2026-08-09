@@ -20,6 +20,77 @@ Last updated: 2026-08-09
 
 ---
 
+## Refresh-throttle optimisation — landed 2026-08-09
+
+Display refresh reduced from 60 Hz to ~15 Hz full-surface (every 4th
+timer tick). **No image quality regression — verified visually** on
+virtio-gpu-gl-pci at 1920×1080: no artifacts during continuous mouse
+motion, no smear on window drags, dock and menus respond normally.
+
+**Cost model — the win is guest-CPU, not bandwidth.** Each refresh is
+two commands (TRANSFER_TO_HOST_2D + RESOURCE_FLUSH), each with an MMIO
+doorbell write and a poll loop. Under TCG every doorbell is expensive;
+going from 120 cmd/s to 30 cmd/s is a real guest-CPU saving. Host-side
+memcpy on Apple Silicon is cheap and was never near a limit —
+"120 MB/s vs 480 MB/s" framing is misleading, and a future session
+reading that framing would reasonably conclude dirty rects are the
+obvious next optimisation. They are not, for the reason above and the
+three closed investigations below.
+
+**Three dirty-rect paths investigated and falsified 2026-08-09:**
+
+1. **`setCursorState` override** — unreachable while `crsr = 0`.
+   IOFramebuffer base only routes it to drivers that advertised a
+   hardware cursor. Past boot logs that showed "Position (x,y)" lines
+   were from a different code state; on the current path the method
+   is structurally never called. Verified absent in boot log.
+
+2. **`shmem->cursorLoc` / `cursorSize`** — sampled static across 3 s
+   of continuous mouse motion. (The one-shot diagnostic that logged
+   "shmem=0 UNAVAILABLE" on the first call was misleading: priv
+   starts NULL but is populated shortly after. The shmem pointer was
+   live; the cursor fields themselves were frozen.)
+
+3. **`shmem->cursorRect` / `shmem->oldCursorRect`** — same. Layout
+   canary passed (`screenBounds` reads correctly as 0,0,1920,1080;
+   `sizeof(StdFBShmem_t)=240` vs `structSize=278768` is struct +
+   cursor image storage, not a mismatch), so the region is mapped
+   right. The fields just aren't being written.
+
+**Mechanism:** with `crsr = 0` on 10.6, WindowServer composites the
+cursor into the aperture from userspace via CoreGraphics. The kernel
+never participates, which is why every in-kernel cursor field is
+frozen at the boot-console state near (15,15). Nothing was broken —
+there is simply no in-guest signal to hook. The real cursor-
+responsiveness fix is **host-composited hardware cursor**, which is
+blocked on the UTM GL cursor-compositing question (see Open: Hardware
+cursor), not on anything in this driver.
+
+**Content-diff dirty tracking rejected as backwards on this
+configuration.** Bytes are not the bottleneck (cheap host memcpy);
+command count is. Sub-rects would still cost two commands per tick
+plus the TCG-emulated CPU for content hashing — net regression.
+
+**Methodology lessons (2026-08-09, this thread):**
+
+- **One-shot diagnostics can lock in wrong conclusions.** The
+  "shmem=0 UNAVAILABLE" log fired before priv was populated; "shmem
+  is NULL throughout" was wrong by 1 second. Verify values persist
+  across multiple calls before claiming "X is NULL throughout."
+- **Cost-model framing matters in the ledger.** "120 MB/s" would
+  invite a future session to chase dirty rects; "30 doorbell round-
+  trips/s" correctly identifies the throttle as terminal.
+- **Empirical claims from memory need source verification.** "Real
+  coords from setCursorState in past boot logs" was cited as
+  evidence for an approach that turned out to be structurally
+  unreachable. Past states may not match present configuration.
+- **Struct field choice matters.** `cursorLoc` and `cursorSize`
+  sounded like the on-screen cursor rectangle; `cursorRect` and
+  `oldCursorRect` are. In the end none were live, but sampling the
+  wrong fields first cost an extra diagnostic boot.
+
+---
+
 ## Critical methodological context
 
 **Wip's `submitCommand` is the fake.** Verified 2026-08-08: the function on
