@@ -321,10 +321,12 @@ public:
                              uint32_t x, uint32_t y, uint32_t width, uint32_t height);
     IOReturn transferToHost3D(uint32_t resource_id, uint32_t level,
                              uint32_t x, uint32_t y, uint32_t z,
-                             uint32_t width, uint32_t height, uint32_t depth);
+                             uint32_t width, uint32_t height, uint32_t depth,
+                             uint32_t ctx_id);
     IOReturn transferFromHost3D(uint32_t resource_id, uint32_t level,
                                uint32_t x, uint32_t y, uint32_t z,
-                               uint32_t width, uint32_t height, uint32_t depth);
+                               uint32_t width, uint32_t height, uint32_t depth,
+                               uint32_t ctx_id);
     
     // 3D acceleration interface
     IOReturn allocateResource3D(uint32_t* resource_id, uint32_t target, uint32_t format,

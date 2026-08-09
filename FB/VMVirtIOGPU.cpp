@@ -6746,6 +6746,12 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
         case 0x3008: // Transfer to host 3D
             IOLog("VMVirtIOGPUUserClient: TransferToHost3D selector=0x3008\n");
             if (args->scalarInputCount >= 8 && args->scalarInput && m_gpu_device) {
+                // ctx_id (scalarInput[8]) is optional — legacy callers pass 8
+                // scalars and implicitly rely on the now-fixed ctx_id=0 path,
+                // which silently did the wrong thing. If absent, log loudly
+                // so the caller sees the issue, and pass 0 (preserves ABI).
+                // The transferToHost3D helper itself logs the warning.
+                uint32_t ctx_id = (args->scalarInputCount >= 9) ? (uint32_t)args->scalarInput[8] : 0;
                 return m_gpu_device->transferToHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                       (uint32_t)args->scalarInput[1],  // level
                                                       (uint32_t)args->scalarInput[2],  // x
@@ -6753,14 +6759,16 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                                                       (uint32_t)args->scalarInput[4],  // z
                                                       (uint32_t)args->scalarInput[5],  // width
                                                       (uint32_t)args->scalarInput[6],  // height
-                                                      (uint32_t)args->scalarInput[7]); // depth
+                                                      (uint32_t)args->scalarInput[7],  // depth
+                                                      ctx_id);                         // ctx_id
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferToHost3D\n");
             return kIOReturnBadArgument;
-            
+
         case 0x3009: // Transfer from host 3D (copy rendered pixels back to guest)
             IOLog("VMVirtIOGPUUserClient: TransferFromHost3D selector=0x3009\n");
             if (args->scalarInputCount >= 8 && args->scalarInput && m_gpu_device) {
+                uint32_t ctx_id = (args->scalarInputCount >= 9) ? (uint32_t)args->scalarInput[8] : 0;
                 return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                         (uint32_t)args->scalarInput[1],  // level
                                                         (uint32_t)args->scalarInput[2],  // x
@@ -6768,7 +6776,8 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                                                         (uint32_t)args->scalarInput[4],  // z
                                                         (uint32_t)args->scalarInput[5],  // width
                                                         (uint32_t)args->scalarInput[6],  // height
-                                                        (uint32_t)args->scalarInput[7]); // depth
+                                                        (uint32_t)args->scalarInput[7],  // depth
+                                                        ctx_id);                         // ctx_id
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferFromHost3D\n");
             return kIOReturnBadArgument;
@@ -7139,19 +7148,34 @@ IOReturn CLASS::transferToHost2D(uint32_t resource_id, uint64_t offset,
 // Transfer 3D resource to host for display
 IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
                                  uint32_t x, uint32_t y, uint32_t z,
-                                 uint32_t width, uint32_t height, uint32_t depth)
+                                 uint32_t width, uint32_t height, uint32_t depth,
+                                 uint32_t ctx_id)
 {
     if (!m_pci_device || !m_control_queue) {
         IOLog("VMVirtIOGPU::transferToHost3D: VirtIO GPU not ready\n");
         return kIOReturnNotReady;
     }
-    
+
+    // hdr.ctx_id is passed straight to virgl_renderer_transfer_write_iov by
+    // QEMU's virgl_cmd_transfer_to_host_3d. A zero ctx_id means the transfer
+    // is not associated with any virgl context — the host will either apply
+    // it to the wrong context's resource state or no-op silently. Every 3D
+    // transfer must be associated with a context that has CTX_ATTACH_RESOURCE'd
+    // the resource. Log loudly when ctx_id==0 so caller bugs are visible at
+    // runtime; proceed anyway so legitimate no-context cases (rare) still work.
+    if (ctx_id == 0) {
+        IOLog("VMVirtIOGPU::transferToHost3D: WARNING ctx_id=0 — transfer will not "
+              "be associated with a virgl context. Caller bug? (resource=%u level=%u "
+              "box=(%u,%u,%u, %ux%ux%u))\n",
+              resource_id, level, x, y, z, width, height, depth);
+    }
+
     // Create VirtIO GPU transfer to host 3D command
     struct virtio_gpu_transfer_to_host_3d cmd = {};
     cmd.hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
     cmd.hdr.flags = 0;
     cmd.hdr.fence_id = 0;
-    cmd.hdr.ctx_id = 0;  // Will be set by context if needed
+    cmd.hdr.ctx_id = ctx_id;  // was hardcoded 0 — bug fixed 2026-08-09
     cmd.resource_id = resource_id;
     cmd.level = level;
     cmd.offset = 0;
@@ -7180,20 +7204,32 @@ IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
 // Transfer 3D resource pixels FROM host GPU TO guest memory
 IOReturn CLASS::transferFromHost3D(uint32_t resource_id, uint32_t level,
                                    uint32_t x, uint32_t y, uint32_t z,
-                                   uint32_t width, uint32_t height, uint32_t depth)
+                                   uint32_t width, uint32_t height, uint32_t depth,
+                                   uint32_t ctx_id)
 {
     if (!m_pci_device || !m_control_queue) {
         IOLog("VMVirtIOGPU::transferFromHost3D: VirtIO GPU not ready\n");
         return kIOReturnNotReady;
     }
-    
+
+    // Same ctx_id discipline as transferToHost3D — see comment there. QEMU's
+    // virgl_cmd_transfer_from_host_3d passes hdr.ctx_id straight to
+    // virgl_renderer_transfer_read_iov; a zero ctx_id silently does the
+    // wrong thing.
+    if (ctx_id == 0) {
+        IOLog("VMVirtIOGPU::transferFromHost3D: WARNING ctx_id=0 — transfer will not "
+              "be associated with a virgl context. Caller bug? (resource=%u level=%u "
+              "box=(%u,%u,%u, %ux%ux%u))\n",
+              resource_id, level, x, y, z, width, height, depth);
+    }
+
     // Create VirtIO GPU transfer from host 3D command
     // Uses same structure as TRANSFER_TO_HOST_3D but with different command type
     struct virtio_gpu_transfer_to_host_3d cmd = {};  // Reuse structure
     cmd.hdr.type = VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D;
     cmd.hdr.flags = 0;
     cmd.hdr.fence_id = 0;
-    cmd.hdr.ctx_id = 0;
+    cmd.hdr.ctx_id = ctx_id;  // was hardcoded 0 — bug fixed 2026-08-09
     cmd.resource_id = resource_id;
     cmd.level = level;
     cmd.offset = 0;
