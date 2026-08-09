@@ -158,11 +158,6 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
   on this configuration.
 - **Apple Remote Desktop** was reported to break at a 60 Hz refresh rate in an
   earlier build. The refresh is now ~15 Hz and this has not been re-tested.
-- **`VMVirtIOGPU::probe` reads no PCI properties.** vendor-id, device-id and
-  class-code all come back zero due to an OSData/OSNumber cast bug. Variant
-  detection in `enableController` bypasses this via `configRead32` and works
-  correctly on all variants — the probe bug is latent, not affecting the
-  outcome.
 - **Misleading IORegistry properties.** Several advertised values overclaim
   capability — `IOAccelerator3D = Yes`, `model = "VirtIO GPU 3D"`. VRAM
   figures now publish the actual allocation size; `ATY,memsize` removed;

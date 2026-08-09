@@ -500,9 +500,10 @@ software problem. The transport proof is the load-bearing gate.
   `class-code` as OSData byte arrays, not OSNumber. `enableController`
   bypasses this via `configRead32`. The kext reaches the correct branch by
   accident today (zero routes the same as `0x0380`). Fix: use `configRead*`
-  in probe as `enableController` does, or handle OSData properly.
-
-- **3D beyond capsets.** Nothing downstream of `enable3DAcceleration` has
+  in probe as `enableController` does, or handle OSData properly. **Fixed
+  2026-08-09** — probe now uses `configRead32(kIOPCIConfigVendorID)` /
+  `kIOPCIConfigClassCode` directly, same pattern as
+  `VMVirtIOFramebuffer::probe`. See "Superseded" section.- **3D beyond capsets.** Nothing downstream of `enable3DAcceleration` has
   executed on a meaningful path. Expect novel failures, not regressions.
 
 - **Install script** does not delete/regenerate kext caches. Highest-value
@@ -589,6 +590,18 @@ Entries moved here when later findings contradicted them. Kept as history
 rather than deleted; each has a date and a note on what replaced it. **Do
 not treat these as competing claims about current state — they describe
 states that no longer exist.**
+
+- **(2026-08-09) `VMVirtIOGPU::probe` reads no PCI properties.** Was listed
+  as a latent open bug: `probe()` used `OSDynamicCast(OSNumber, getProperty(...))`
+  but IOPCIFamily publishes `vendor-id`/`device-id`/`class-code` as OSData,
+  so the cast returned nullptr and the values came back zero. Outcome was
+  unaffected because zero class-code routes to the same branch as `0x0380`,
+  and `enableController` does its own variant detection via `configRead32`.
+  **Superseded by:** `c7f13d2 fix(probe): use configRead32 for PCI property
+  reads, not OSDynamicCast(OSNumber)` — probe now uses
+  `configRead32(kIOPCIConfigVendorID)` / `configRead32(kIOPCIConfigClassCode)`
+  directly, matching `VMVirtIOFramebuffer::probe` at line 120. Single source
+  of truth for variant detection across probe and enableController.
 
 - **(2026-08-08 → 2026-08-09) Milestone B retraction ("horizontal-line
   shearing below the menu bar").** Recorded 2026-08-08 based on a
