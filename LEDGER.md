@@ -66,6 +66,14 @@ responsiveness fix is **host-composited hardware cursor**, which is
 blocked on the UTM GL cursor-compositing question (see Open: Hardware
 cursor), not on anything in this driver.
 
+**Cross-variant evidence (2026-08-09):** QXL on the same UTM host
+advertises `crsr = 1`, and on QXL both (a) shmem cursor fields track
+the mouse and (b) the hardware cursor renders visibly. Same host,
+same driver family, different `crsr` setting, different cursor
+pipeline. That confirms the gate is `crsr`, not anything virtio-gpu-
+specific — and on virtio-gpu-gl, `crsr = 1` is gated on the UTM GL
+cursor-compositing question, which is why this driver reports 0.
+
 **Content-diff dirty tracking rejected as backwards on this
 configuration.** Bytes are not the bottleneck (cheap host memcpy);
 command count is. Sub-rects would still cost two commands per tick
