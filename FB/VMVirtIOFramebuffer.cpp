@@ -1580,6 +1580,17 @@ IOReturn VMVirtIOFramebuffer::enableController()
                     }
                 }
 
+                // Cursor queue transport probe (build 1): creates a test cursor
+                // resource, sends UPDATE_CURSOR + MOVE_CURSOR on queue 1. Pass:
+                // two cursors on screen (red test cursor + software cursor).
+                {
+                    static bool cursor_probed = false;
+                    if (!cursor_probed && m_gpu_driver) {
+                        cursor_probed = true;
+                        m_gpu_driver->probeCursorTransport();
+                    }
+                }
+
                 // Initial transfer so the screen isn't garbage while WindowServer composes.
                 m_gpu_driver->transferToHost2D(m_fb_resource_id, 0, 0, 0, m_width, m_height);
                 m_gpu_driver->flushResource(m_fb_resource_id, 0, 0, m_width, m_height);

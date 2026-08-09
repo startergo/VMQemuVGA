@@ -60,7 +60,24 @@ bool CLASS::init(OSDictionary* properties)
     m_cmd_buf = nullptr;
     m_resp_buf = nullptr;
     m_vq_initialized = false;
-    m_submit_count = 0;       // refresh-timeout instrumentation (throttled, see submitCommand)
+
+    // Cursor queue (queue 1) members
+    m_cursor_vring_mem = nullptr;
+    m_cursor_vq_desc = nullptr;
+    m_cursor_vq_avail = nullptr;
+    m_cursor_vq_used = nullptr;
+    m_cursor_vq_size = 0;
+    m_cursor_vq_free_head = 0;
+    m_cursor_vq_last_used = 0;
+    m_cursor_vq_avail_idx = 0;
+    m_cursor_vq_free_next = nullptr;
+    m_cursor_vq_lock = IOLockAlloc();
+    m_cursor_cmd_buf = nullptr;
+    m_cursor_resp_buf = nullptr;
+    m_cursor_notify_offset = 0;
+    m_cursor_vq_initialized = false;
+
+    m_submit_count = 0;
     m_notify_count = 0;
     
     m_is_virtio_gpu_pci = false;  // Default to VGA-compatible mode
@@ -81,7 +98,7 @@ bool CLASS::init(OSDictionary* properties)
     m_context_lock = IOLockAlloc();
     m_accelerator_service = nullptr;
 
-    return (m_contexts && m_resource_lock && m_context_lock);
+    return (m_contexts && m_resource_lock && m_context_lock && m_cursor_vq_lock);
 }
 
 void CLASS::free()
@@ -103,6 +120,18 @@ void CLASS::free()
     }
     
     OSSafeReleaseNULL(m_contexts);
+
+    // Cursor queue teardown — set initialized=false first (prevents submissions),
+    // then release kernel resources.
+    m_cursor_vq_initialized = false;
+    if (m_cursor_vq_lock) { IOLockFree(m_cursor_vq_lock); m_cursor_vq_lock = nullptr; }
+    if (m_cursor_vq_free_next) {
+        IOFree(m_cursor_vq_free_next, m_cursor_vq_size ? m_cursor_vq_size * sizeof(uint16_t) : sizeof(uint16_t));
+        m_cursor_vq_free_next = nullptr;
+    }
+    if (m_cursor_cmd_buf)  { m_cursor_cmd_buf->complete(kIODirectionInOut);  OSSafeReleaseNULL(m_cursor_cmd_buf); }
+    if (m_cursor_resp_buf) { m_cursor_resp_buf->complete(kIODirectionInOut); OSSafeReleaseNULL(m_cursor_resp_buf); }
+    if (m_cursor_vring_mem) { m_cursor_vring_mem->complete(kIODirectionInOut); OSSafeReleaseNULL(m_cursor_vring_mem); }
 
     // Release BAR mapping cache (one retain per cached BAR)
     for (int i = 0; i < 6; i++) {
@@ -1611,28 +1640,32 @@ bool CLASS::readNotifyConfig(uint8_t* out_bar, uint32_t* out_offset,
         return false;
     }
 
-    // notify_off_multiplier is in the 4 bytes after virtio_pci_cap header
-    // (offset+length covers the cap header; multiplier is at length within the cap)
-    IOMemoryMap* map = m_pci_device->mapDeviceMemoryWithIndex(bar_idx);
-    if (!map) {
-        IOLog("VMVirtIOGPU: failed to map notify BAR %d\n", bar_idx);
-        return false;
-    }
-
-    volatile uint8_t* notify_bar_base = (volatile uint8_t*)map->getVirtualAddress();
-
-    // Read notify_off_multiplier: it's at offset (length) from the cap
-    // Actually per spec: the cap struct has an extra u32 notify_off_multiplier
-    // after the standard virtio_pci_cap fields. The cap's length field in the
-    // PCI capability covers only the standard header. The multiplier is at
-    // cap_offset + sizeof(virtio_pci_cap) within the BAR.
-    // But the findVirtIOCapability gives us offset/length of the cap itself.
-    // The multiplier is at offset + sizeof(virtio_pci_cap) in the BAR.
-    // sizeof(virtio_pci_cap) = 20 bytes (cap_vndr, cap_next, cap_len,
-    //   cfg_type, bar, padding[3], offset, length)
+    // Read notify_off_multiplier from PCI CONFIG SPACE (not BAR memory).
+    // The multiplier is a le32 at offset +16 within the notify capability
+    // struct in PCI config space. The previous code read from BAR memory
+    // (notify_bar_base + offset + 20), which is the doorbell register region,
+    // not the capability metadata — giving 0 instead of QEMU's expected 4.
     uint32_t mult = 0;
-    if (map->getLength() >= offset + 24) {
-        mult = vring_read32(notify_bar_base + offset + 20);
+    UInt8 cap_walk = m_pci_device->configRead8(0x34);
+    while (cap_walk >= 0x40 && cap_walk < 0xfc) {
+        UInt8 cap_id = m_pci_device->configRead8(cap_walk);
+        UInt8 cap_next = m_pci_device->configRead8(cap_walk + 1);
+        if (cap_id == 0x09) {
+            UInt8 cfg = m_pci_device->configRead8(cap_walk + 3);
+            if (cfg == VIRTIO_PCI_CAP_NOTIFY_CFG) {
+                mult = m_pci_device->configRead32(cap_walk + 16);
+                // Diagnostic: dump raw capability bytes from PCI config
+                IOLog("VMVirtIOGPU: notify cap at config 0x%02x — raw:", cap_walk);
+                for (int b = 0; b < 20; b += 4) {
+                    IOLog(" %08x", m_pci_device->configRead32(cap_walk + b));
+                }
+                IOLog("\n");
+                IOLog("VMVirtIOGPU: notify_off_multiplier = %u (read from PCI config 0x%02x+16)\n",
+                      mult, cap_walk);
+                break;
+            }
+        }
+        cap_walk = cap_next;
     }
 
     *out_bar = bar_idx;
@@ -1823,6 +1856,10 @@ bool CLASS::setupControlVirtQueue()
         IOLog("VMVirtIOGPU: queue enable failed (read back %u)\n", enable_check);
         // Non-fatal — some devices don't read back 1 immediately
     }
+
+    // 11a. Set up cursor queue (queue 1) before DRIVER_OK — per virtio spec,
+    // all queues must be configured before signaling driver-ready.
+    setupCursorQueue(cfg);
 
     // 11. Set DRIVER_OK
     uint8_t status = vring_read8(cfg + VIRTIO_COMMON_DEVICE_STATUS);
@@ -2030,13 +2067,17 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
                   m_notify_cap_offset, m_notify_offset, m_notify_off_multiplier);
         }
     } else if (m_notify_map) {
-        // Fallback: use existing m_notify_offset directly
+        // Fallback: same formula as proper path but using m_notify_map VA.
+        // m_notify_cap_offset is the base (e.g. 0x3000), m_notify_offset is
+        // Q_NOTIFY_OFF (0 for control), m_notify_off_multiplier is the per-queue stride.
         volatile uint32_t* notify_addr = (volatile uint32_t*)
-            ((uint8_t*)m_notify_map->getVirtualAddress() + m_notify_offset);
+            ((uint8_t*)m_notify_map->getVirtualAddress() +
+             m_notify_cap_offset + m_notify_offset * m_notify_off_multiplier);
         *notify_addr = VIRTIO_GPU_QUEUE_CONTROL;
         if (instr) {
-            IOLog("VMVirtIOGPU::submit[%u] NOTIFY #%u addr=%p (fallback m_notify_map+%u)\n",
-                  m_submit_count, m_notify_count, (void*)notify_addr, m_notify_offset);
+            IOLog("VMVirtIOGPU::submit[%u] NOTIFY #%u addr=%p (fallback map+cap=%u+off=%u*mult=%u)\n",
+                  m_submit_count, m_notify_count, (void*)notify_addr,
+                  m_notify_cap_offset, m_notify_offset, m_notify_off_multiplier);
         }
     } else {
         IOLog("VMVirtIOGPU::submitCommand: no notify mapping\n");
@@ -3394,63 +3435,300 @@ IOReturn CLASS::enableFeature(uint32_t feature_flags)
     return kIOReturnSuccess;
 }
 
-IOReturn CLASS::updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y, 
+//=============================================================================
+// Cursor queue (queue 1) — separate vring, lock, and submit path.
+//=============================================================================
+
+bool CLASS::setupCursorQueue(volatile uint8_t* cfg)
+{
+    vring_write16(cfg + VIRTIO_COMMON_Q_SELECT, 1);  // select cursor queue
+
+    uint16_t qsize = vring_read16(cfg + VIRTIO_COMMON_Q_SIZE);
+    if (qsize == 0) {
+        IOLog("VMVirtIOGPU: cursor queue not offered by device (size=0)\n");
+        return false;
+    }
+    if (qsize > 16) qsize = 16;
+    uint16_t pow2 = 1;
+    while (pow2 * 2 <= qsize) pow2 *= 2;
+    qsize = pow2;
+    vring_write16(cfg + VIRTIO_COMMON_Q_SIZE, qsize);
+
+    m_cursor_notify_offset = vring_read16(cfg + VIRTIO_COMMON_Q_NOTIFY_OFF);
+    IOLog("VMVirtIOGPU: cursor queue: size=%u notify_off=%u (control was %u)\n",
+          qsize, m_cursor_notify_offset, m_notify_offset);
+
+    uint32_t desc_size  = qsize * sizeof(VRingDesc);
+    uint32_t avail_size = 4 + 2 * qsize + 2;
+    uint32_t used_size  = 4 + sizeof(VRingUsedElem) * qsize + 2;
+    uint32_t avail_offset = (desc_size + 1) & ~1u;
+    uint32_t used_offset  = (avail_offset + avail_size + 3) & ~3u;
+    uint32_t total_size   = (used_offset + used_size + 4095) & ~4095u;
+
+    m_cursor_vring_mem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous,
+        total_size, 0x00000000FFFFFFFFULL);
+    if (!m_cursor_vring_mem) {
+        IOLog("VMVirtIOGPU: cursor vring alloc failed (%u bytes)\n", total_size);
+        return false;
+    }
+    m_cursor_vring_mem->prepare();
+    void* va = m_cursor_vring_mem->getBytesNoCopy();
+    bzero(va, total_size);
+    IOPhysicalAddress phys = m_cursor_vring_mem->getPhysicalSegment(0, nullptr);
+
+    m_cursor_vq_desc  = (volatile VRingDesc*)((uint8_t*)va);
+    m_cursor_vq_avail = (volatile VRingAvail*)((uint8_t*)va + avail_offset);
+    m_cursor_vq_used  = (volatile VRingUsed*)((uint8_t*)va + used_offset);
+    m_cursor_vq_size  = qsize;
+    m_cursor_vq_free_head = 0;
+    m_cursor_vq_last_used = 0;
+    m_cursor_vq_avail_idx = 0;
+
+    m_cursor_vq_free_next = (uint16_t*)IOMalloc(qsize * sizeof(uint16_t));
+    if (!m_cursor_vq_free_next) {
+        IOLog("VMVirtIOGPU: cursor free-list alloc failed\n");
+        m_cursor_vring_mem->complete(kIODirectionInOut);
+        m_cursor_vring_mem->release();
+        m_cursor_vring_mem = nullptr;
+        return false;
+    }
+    for (uint16_t i = 0; i < qsize; i++)
+        m_cursor_vq_free_next[i] = (i + 1 < qsize) ? (i + 1) : (uint16_t)-1;
+
+    m_cursor_cmd_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous,
+        128, 0x00000000FFFFFFFFULL);
+    m_cursor_resp_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+        kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous,
+        64, 0x00000000FFFFFFFFULL);
+    if (!m_cursor_cmd_buf || !m_cursor_resp_buf) {
+        IOLog("VMVirtIOGPU: cursor cmd/resp alloc failed\n");
+        return false;
+    }
+    m_cursor_cmd_buf->prepare();
+    m_cursor_resp_buf->prepare();
+
+    vring_write32(cfg + VIRTIO_COMMON_Q_DESC_LOW,  (uint32_t)phys);
+    vring_write32(cfg + VIRTIO_COMMON_Q_DESC_HIGH, (uint32_t)((uint64_t)phys >> 32));
+    vring_write32(cfg + VIRTIO_COMMON_Q_AVAIL_LOW,  (uint32_t)(phys + avail_offset));
+    vring_write32(cfg + VIRTIO_COMMON_Q_AVAIL_HIGH, (uint32_t)(((uint64_t)phys + avail_offset) >> 32));
+    vring_write32(cfg + VIRTIO_COMMON_Q_USED_LOW,   (uint32_t)(phys + used_offset));
+    vring_write32(cfg + VIRTIO_COMMON_Q_USED_HIGH,  (uint32_t)(((uint64_t)phys + used_offset) >> 32));
+    __sync_synchronize();
+
+    vring_write16(cfg + VIRTIO_COMMON_Q_ENABLE, 1);
+    __sync_synchronize();
+    IOSleep(1);
+
+    // Diagnostic: verify queue 1 is actually enabled
+    vring_write16(cfg + VIRTIO_COMMON_Q_SELECT, 1);
+    uint16_t q_enable_rb = vring_read16(cfg + VIRTIO_COMMON_Q_ENABLE);
+    uint16_t q_size_rb = vring_read16(cfg + VIRTIO_COMMON_Q_SIZE);
+    IOLog("VMVirtIOGPU: cursor queue read-back: ENABLE=%u SIZE=%u (phys=0x%llx)\n",
+          q_enable_rb, q_size_rb, (uint64_t)phys);
+    IOLog("VMVirtIOGPU: cursor notify params: notify_offset=%u cursor_off=%u mult=%u map=%p\n",
+          m_notify_offset, m_cursor_notify_offset, m_notify_off_multiplier,
+          m_notify_map ? (void*)m_notify_map->getVirtualAddress() : nullptr);
+
+    if (m_notify_base && m_notify_off_multiplier > 0) {
+        volatile uint8_t* addr = m_notify_base + m_notify_cap_offset +
+                                 m_cursor_notify_offset * m_notify_off_multiplier;
+        IOLog("VMVirtIOGPU: cursor queue enabled — notify addr=%p (cap_off=%u + cursor_off=%u * mult=%u)\n",
+              (void*)addr, m_notify_cap_offset, m_cursor_notify_offset, m_notify_off_multiplier);
+    }
+    m_cursor_vq_initialized = true;
+    IOLog("VMVirtIOGPU: cursor queue initialized (size=%u)\n", qsize);
+    return true;
+}
+
+IOReturn CLASS::submitCursorCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
+                                     virtio_gpu_ctrl_hdr* resp, size_t resp_size)
+{
+    if (!m_cursor_vq_initialized || !m_cursor_vq_desc)
+        return kIOReturnNotReady;
+
+    IOLockLock(m_cursor_vq_lock);
+
+    uint16_t cmd_desc = m_cursor_vq_free_head;
+    if (cmd_desc == (uint16_t)-1) { IOLockUnlock(m_cursor_vq_lock); return kIOReturnNoResources; }
+    m_cursor_vq_free_head = m_cursor_vq_free_next[cmd_desc];
+
+    uint16_t resp_desc = m_cursor_vq_free_head;
+    if (resp_desc == (uint16_t)-1) {
+        m_cursor_vq_free_next[cmd_desc] = m_cursor_vq_free_head;
+        m_cursor_vq_free_head = cmd_desc;
+        IOLockUnlock(m_cursor_vq_lock);
+        return kIOReturnNoResources;
+    }
+    m_cursor_vq_free_head = m_cursor_vq_free_next[resp_desc];
+
+    memcpy(m_cursor_cmd_buf->getBytesNoCopy(), cmd, cmd_size);
+    IOPhysicalAddress cmd_phys = m_cursor_cmd_buf->getPhysicalSegment(0, nullptr);
+    IOPhysicalAddress resp_phys = m_cursor_resp_buf->getPhysicalSegment(0, nullptr);
+
+    m_cursor_vq_desc[cmd_desc].addr  = cmd_phys;
+    m_cursor_vq_desc[cmd_desc].len   = (uint32_t)cmd_size;
+    m_cursor_vq_desc[cmd_desc].flags = VRING_DESC_F_NEXT;
+    m_cursor_vq_desc[cmd_desc].next  = resp_desc;
+
+    m_cursor_vq_desc[resp_desc].addr  = resp_phys;
+    m_cursor_vq_desc[resp_desc].len   = (resp_size < 64) ? (uint32_t)resp_size : 64;
+    m_cursor_vq_desc[resp_desc].flags = VRING_DESC_F_WRITE;
+    m_cursor_vq_desc[resp_desc].next  = 0;
+
+    __sync_synchronize();
+
+    uint16_t idx = m_cursor_vq_avail_idx % m_cursor_vq_size;
+    m_cursor_vq_avail->ring[idx] = cmd_desc;
+    __sync_synchronize();
+    m_cursor_vq_avail->idx = ++m_cursor_vq_avail_idx;
+    __sync_synchronize();
+
+    if (m_notify_base && m_notify_off_multiplier > 0) {
+        volatile uint32_t* addr = (volatile uint32_t*)
+            (m_notify_base + m_notify_cap_offset +
+             m_cursor_notify_offset * m_notify_off_multiplier);
+        *addr = 1;
+        IOLog("VMVirtIOGPU: cursor notify (proper) addr=%p val=1\n", (void*)addr);
+    } else if (m_notify_map) {
+        volatile uint32_t* addr = (volatile uint32_t*)
+            ((uint8_t*)m_notify_map->getVirtualAddress() +
+             m_notify_cap_offset +
+             m_cursor_notify_offset * m_notify_off_multiplier);
+        *addr = 1;
+        IOLog("VMVirtIOGPU: cursor notify (fallback) addr=%p val=1 (base=%p + cap=%u + cursor_off=%u*mult=%u)\n",
+              (void*)addr, (void*)m_notify_map->getVirtualAddress(),
+              m_notify_cap_offset, m_cursor_notify_offset, m_notify_off_multiplier);
+    } else {
+        IOLog("VMVirtIOGPU: cursor notify — NO NOTIFY PATH (notify_base=%p notify_map=%p)\n",
+              (void*)m_notify_base, m_notify_map ? (void*)m_notify_map->getVirtualAddress() : nullptr);
+    }
+
+    AbsoluteTime deadline;
+    clock_interval_to_deadline(150, kMillisecondScale, &deadline);
+    IOReturn ret = kIOReturnSuccess;
+    while (m_cursor_vq_used->idx == m_cursor_vq_last_used) {
+        AbsoluteTime now;
+        clock_get_uptime(&now);
+        if (now >= deadline) { ret = kIOReturnTimeout; break; }
+    }
+
+    if (ret == kIOReturnSuccess) {
+        if (resp && resp_size > 0)
+            memcpy(resp, m_cursor_resp_buf->getBytesNoCopy(), (resp_size < 64) ? resp_size : 64);
+        m_cursor_vq_last_used++;
+    }
+
+    m_cursor_vq_free_next[resp_desc] = m_cursor_vq_free_head;
+    m_cursor_vq_free_head = resp_desc;
+    m_cursor_vq_free_next[cmd_desc] = m_cursor_vq_free_head;
+    m_cursor_vq_free_head = cmd_desc;
+
+    IOLockUnlock(m_cursor_vq_lock);
+    return ret;
+}
+
+void CLASS::probeCursorTransport()
+{
+    IOLog("VMVirtIOGPU::probeCursorTransport: PROBE START\n");
+    if (!m_cursor_vq_initialized) {
+        IOLog("VMVirtIOGPU::probeCursorTransport: PROBE FAIL — cursor queue not initialized\n");
+        return;
+    }
+
+    // 1. Create 64×64 ARGB cursor resource on the control queue
+    const uint32_t cursor_res = 0xFFFD;  // avoid collision with eager 3D init's resource 2
+    IOReturn cr = createResource2D(cursor_res, 0x1, 64, 64, NULL);
+    if (cr != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::probeCursorTransport: PROBE FAIL A — createResource2D 0x%x\n", cr);
+        return;
+    }
+
+    // 2. Fill backing with solid red test pattern
+    gpu_resource* res = findResource(cursor_res);
+    if (!res || !res->backing_memory) {
+        IOLog("VMVirtIOGPU::probeCursorTransport: PROBE FAIL B — no backing\n");
+        return;
+    }
+    IOBufferMemoryDescriptor* bmd = OSDynamicCast(IOBufferMemoryDescriptor, res->backing_memory);
+    if (bmd) {
+        uint32_t* px = (uint32_t*)bmd->getBytesNoCopy();
+        for (size_t i = 0; i < 64 * 64; i++) px[i] = 0xFFFF0000;  // ARGB red
+    }
+
+    // 3. Transfer pixel data to host (required before UPDATE_CURSOR)
+    IOReturn xr = transferToHost2D(cursor_res, 0, 0, 0, 64, 64);
+    if (xr != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::probeCursorTransport: PROBE FAIL C — transferToHost2D 0x%x\n", xr);
+        return;
+    }
+
+    // 4. UPDATE_CURSOR on cursor queue at (100,100)
+    uint16_t used_before = m_cursor_vq_used->idx;
+    IOReturn ur = updateCursor(cursor_res, 0, 0, 0, 100, 100);
+    uint16_t used_after = m_cursor_vq_used->idx;
+    if (ur != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::probeCursorTransport: PROBE FAIL D — updateCursor 0x%x (used %u→%u)\n",
+              ur, used_before, used_after);
+        return;
+    }
+    IOLog("VMVirtIOGPU::probeCursorTransport: UPDATE_CURSOR ok — used->idx %u→%u\n",
+          used_before, used_after);
+
+    // 5. MOVE_CURSOR twice
+    IOSleep(50);
+    IOReturn m1 = moveCursor(0, 200, 200);
+    IOSleep(50);
+    IOReturn m2 = moveCursor(0, 300, 300);
+    if (m1 != kIOReturnSuccess || m2 != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU::probeCursorTransport: PROBE FAIL E — MOVE_CURSOR m1=0x%x m2=0x%x\n", m1, m2);
+        return;
+    }
+
+    IOLog("VMVirtIOGPU::probeCursorTransport: PROBE PASS — cursor commands on queue 1. "
+          "Visual: red test cursor at ~(300,300) + software cursor separately.\n");
+}
+
+//=============================================================================
+
+IOReturn CLASS::updateCursor(uint32_t resource_id, uint32_t hot_x, uint32_t hot_y,
                             uint32_t scanout_id, uint32_t x, uint32_t y)
 {
-    if (!m_cursor_queue) {
+    if (!m_cursor_vq_initialized) {
         IOLog("VMVirtIOGPU::updateCursor: cursor queue not initialized\n");
         return kIOReturnNotReady;
     }
-    
-    // Create update cursor command
+
     struct virtio_gpu_update_cursor cmd = {};
     cmd.hdr.type = VIRTIO_GPU_CMD_UPDATE_CURSOR;
-    cmd.hdr.flags = 0;
-    cmd.hdr.fence_id = 0;
     cmd.pos.scanout_id = scanout_id;
     cmd.pos.x = x;
     cmd.pos.y = y;
     cmd.resource_id = resource_id;
     cmd.hot_x = hot_x;
     cmd.hot_y = hot_y;
-    
+
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
-    
-    if (ret != kIOReturnSuccess) {
-        IOLog("VMVirtIOGPU::updateCursor: command failed with error %d\n", ret);
-    }
-    
-    return ret;
+    return submitCursorCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
 }
 
 IOReturn CLASS::moveCursor(uint32_t scanout_id, uint32_t x, uint32_t y)
 {
-    if (!m_cursor_queue) {
+    if (!m_cursor_vq_initialized) {
         IOLog("VMVirtIOGPU::moveCursor: cursor queue not initialized\n");
         return kIOReturnNotReady;
     }
-    
-    // Create move cursor command (update cursor with resource_id = 0)
+
     struct virtio_gpu_update_cursor cmd = {};
     cmd.hdr.type = VIRTIO_GPU_CMD_MOVE_CURSOR;
-    cmd.hdr.flags = 0;
-    cmd.hdr.fence_id = 0;
     cmd.pos.scanout_id = scanout_id;
     cmd.pos.x = x;
     cmd.pos.y = y;
-    cmd.resource_id = 0;  // 0 means just move, don't update cursor image
-    cmd.hot_x = 0;
-    cmd.hot_y = 0;
-    
+    cmd.resource_id = 0;
+
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
-    
-    if (ret != kIOReturnSuccess) {
-        IOLog("VMVirtIOGPU::moveCursor: command failed with error %d\n", ret);
-    }
-    
-    return ret;
+    return submitCursorCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
 }
 
 void CLASS::setPreferredRefreshRate(uint32_t hz) {
@@ -3980,6 +4258,14 @@ bool CLASS::setOptimalQueueSizes() {
 }
 
 bool CLASS::setupGPUMemoryRegions() {
+    // Invalidate m_notify_base from readNotifyConfig's initial mapping.
+    // This function replaces m_notify_map with a new mapping but previously
+    // didn't update m_notify_base, leaving it pointing at the old (stale)
+    // virtual address. Nulling it forces the fallback notify path (which
+    // uses m_notify_map — always current) in both submitCommand and
+    // submitCursorCommand.
+    m_notify_base = nullptr;
+
     IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Configuring VirtIO GPU memory regions\n");
     IOLog("BAR_DIAGNOSTIC_START ===================================================\n");
     
@@ -4135,7 +4421,7 @@ bool CLASS::setupGPUMemoryRegions() {
 
                                 // Store offset within mapped page
                                 notify_offset = (uint32_t)page_offset;
-                                m_notify_offset = notify_offset;
+                                m_notify_cap_offset = notify_offset;
 
                                 IOLog("VMVirtIOGPU::setupGPUMemoryRegions: ✅ Modern VirtIO notification enabled via direct mapping (offset=0x%x)\n", notify_offset);
                                 notify_desc->release();
@@ -4184,7 +4470,7 @@ bool CLASS::setupGPUMemoryRegions() {
     IOLog("VMVirtIOGPU::setupGPUMemoryRegions: === BAR MAPPING DIAGNOSTIC END (SUCCESS) ===\n");
     
     // Store the notify offset for use in submitCommand
-    m_notify_offset = notify_offset;
+    m_notify_cap_offset = notify_offset;
     IOLog("VMVirtIOGPU::setupGPUMemoryRegions: Mapped notify region at BAR %d + 0x%x (BAR size: %llu bytes)\n", 
           notify_bar_index, notify_offset, m_notify_map->getLength());
     

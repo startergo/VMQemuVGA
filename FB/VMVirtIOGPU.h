@@ -142,6 +142,24 @@ private:
     IOBufferMemoryDescriptor* m_resp_buf;        // pre-allocated response buffer (physically contiguous)
     bool m_vq_initialized;                       // true once virtqueue is live
 
+    // Cursor queue (queue 1) — separate vring, lock, and buffers.
+    // Decoupled from the control queue so mouse moves don't contend
+    // with 60 Hz framebuffer transfers.
+    IOBufferMemoryDescriptor* m_cursor_vring_mem;
+    volatile VRingDesc*  m_cursor_vq_desc;
+    volatile VRingAvail* m_cursor_vq_avail;
+    volatile VRingUsed*  m_cursor_vq_used;
+    uint16_t m_cursor_vq_size;
+    uint16_t m_cursor_vq_free_head;
+    uint16_t m_cursor_vq_last_used;
+    uint16_t m_cursor_vq_avail_idx;
+    uint16_t* m_cursor_vq_free_next;
+    IOLock* m_cursor_vq_lock;
+    IOBufferMemoryDescriptor* m_cursor_cmd_buf;
+    IOBufferMemoryDescriptor* m_cursor_resp_buf;
+    uint32_t m_cursor_notify_offset;
+    bool m_cursor_vq_initialized;
+
     // Refresh-timeout instrumentation. Throttled to first N submissions so the
     // boot log captures the succeed→fail transition without flooding afterward.
     // Counts persist for the lifetime of the object; bump when extending instrumentation.
@@ -220,6 +238,11 @@ private:
                           virtio_gpu_ctrl_hdr* resp, size_t resp_size);
     IOReturn processControlQueue();
 
+    // Cursor queue (queue 1) — separate submit path, lock, and vring.
+    IOReturn submitCursorCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
+                                  virtio_gpu_ctrl_hdr* resp, size_t resp_size);
+    bool setupCursorQueue(volatile uint8_t* cfg);
+
     // NOTE: unrefResource/detachBacking are declared but unimplemented.
     // Use deallocateResource (public) instead — it sends RESOURCE_UNREF which
     // makes the host drop both resource and backing attachment in one command.
@@ -246,6 +269,10 @@ public:
     // SET_SCANOUT(999) negative control. Called once from the first
     // createResource2D entry; gated by a static flag.
     void probeResourceTracking();
+
+    // One-shot cursor queue transport probe: creates a 64×64 test cursor,
+    // sends UPDATE_CURSOR + MOVE_CURSOR on queue 1. Pass: two cursors on screen.
+    void probeCursorTransport();
 
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;
