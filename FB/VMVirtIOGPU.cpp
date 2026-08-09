@@ -147,7 +147,7 @@ void CLASS::free()
 IOService* CLASS::probe(IOService* provider, SInt32* score)
 {
     IOLog("VMVirtIOGPU::probe: Probing VirtIO GPU device\n");
-    
+
     // Cast to PCI device to check vendor/device ID FIRST
     IOPCIDevice* pciDevice = OSDynamicCast(IOPCIDevice, provider);
     if (!pciDevice) {
@@ -155,59 +155,55 @@ IOService* CLASS::probe(IOService* provider, SInt32* score)
         return nullptr;
     }
 
-    // Use safer property-based reading to avoid potential hangs with non-VirtIO devices
-    OSNumber* vendorProp = OSDynamicCast(OSNumber, pciDevice->getProperty("vendor-id"));
-    OSNumber* deviceProp = OSDynamicCast(OSNumber, pciDevice->getProperty("device-id"));
-    
-    UInt16 vendorID = 0;
-    UInt16 deviceID = 0;
-    
-    if (vendorProp && deviceProp) {
-        vendorID = vendorProp->unsigned16BitValue();
-        deviceID = deviceProp->unsigned16BitValue();
-        IOLog("VMVirtIOGPU::probe: Read device VID:DID = %04x:%04x\n", vendorID, deviceID);
-        
-        // Verify this is actually a VirtIO device
-        if (vendorID != 0x1af4 || (deviceID != 0x1050 && deviceID != 0x1051 && deviceID != 0x1052)) {
-            IOLog("VMVirtIOGPU::probe: REJECTING non-VirtIO device (%04x:%04x) - not our responsibility\n", vendorID, deviceID);
-            return nullptr;
-        }
-    } else {
-        IOLog("VMVirtIOGPU::probe: Could not read vendor-id or device-id properties\n");
-        IOLog("VMVirtIOGPU::probe: Trusting IOPCIMatch - proceeding as VirtIO device\n");
-        // Trust that IOPCIMatch brought us here for a valid VirtIO device
-        // This handles cases where property reading fails due to timing issues
+    // Read VID:DID via configRead32 (single 32-bit read at kIOPCIConfigVendorID
+    // returns vendor in low 16 bits, device in high 16 bits). Same pattern as
+    // VMVirtIOFramebuffer::probe at line 120.
+    //
+    // DO NOT use the "vendor-id"/"device-id"/"class-code" IOKit properties
+    // via OSDynamicCast(OSNumber, ...) -- IOPCIFamily publishes these as OSData
+    // byte arrays on this guest, not OSNumber, so the cast returns nullptr and
+    // the values come back zero. enableController bypasses this via configRead32
+    // and works correctly; probe historically didn't, which left it misclassifying
+    // virtio-vga-gl as virtio-gpu-gl-pci (zero class-code routes to the same
+    // branch as 0x0380 by accident, so outcome was unaffected -- latent bug).
+    UInt32 vid_did = pciDevice->configRead32(kIOPCIConfigVendorID);
+    UInt16 vendorID = (UInt16)(vid_did & 0xFFFF);
+    UInt16 deviceID = (UInt16)((vid_did >> 16) & 0xFFFF);
+
+    IOLog("VMVirtIOGPU::probe: Read device VID:DID = %04x:%04x\n", vendorID, deviceID);
+
+    // Verify this is actually a VirtIO device. IOPCIMatch should already have
+    // filtered, but reject explicitly in case matching ever expands.
+    if (vendorID != 0x1af4 || (deviceID != 0x1050 && deviceID != 0x1051 && deviceID != 0x1052)) {
+        IOLog("VMVirtIOGPU::probe: REJECTING non-VirtIO device (%04x:%04x) - not our responsibility\n", vendorID, deviceID);
+        return nullptr;
     }
-    
-    // Call parent probe ONLY after confirming this is a VirtIO device (or IOPCIMatch brought us here)
+
+    // Call parent probe after confirming this is a VirtIO device.
     IOService* result = super::probe(provider, score);
     if (!result) {
         IOLog("VMVirtIOGPU::probe: Parent probe failed for VirtIO device\n");
         return nullptr;
     }
-    
+
     IOLog("VMVirtIOGPU::probe: Found VirtIO GPU device %04x:%04x\n", vendorID, deviceID);
-    
-    // Detect VirtIO GPU device type by checking PCI class
+
+    // Detect VirtIO GPU device type by checking PCI class code via configRead32
+    // -- same source of truth as enableController. PCI class-code register layout:
+    //   bits 0-7:   revision ID
+    //   bits 8-15:  programming interface
+    //   bits 16-23: subclass
+    //   bits 24-31: base class
     bool isVirtIOVGA = false;
     bool isVirtIOGPUPCI = false;
-    
-    // Read class code from properties to avoid potential config space issues
-    OSNumber* classProp = OSDynamicCast(OSNumber, pciDevice->getProperty("class-code"));
-    
-    // DEBUG: Let's see what we're actually getting
-    if (classProp) {
-        UInt32 rawClassCode = classProp->unsigned32BitValue();
-        IOLog("VMVirtIOGPU::probe: Raw class-code property value: 0x%08x\n", rawClassCode);
-    }
-    
-    UInt32 classCode = classProp ? classProp->unsigned32BitValue() >> 8 : 0;
-    
-    IOLog("VMVirtIOGPU::probe: Detected PCI class code: 0x%06x\n", classCode);
-    
-    UInt8 baseClass = (classCode >> 16) & 0xFF;
-    UInt8 subClass = (classCode >> 8) & 0xFF;
-    
+
+    UInt32 rawClassCode = pciDevice->configRead32(kIOPCIConfigClassCode);
+    UInt8 baseClass = (rawClassCode >> 24) & 0xFF;
+    UInt8 subClass = (rawClassCode >> 16) & 0xFF;
+
+    IOLog("VMVirtIOGPU::probe: Raw class-code register: 0x%08x (base=0x%02x sub=0x%02x)\n",
+          rawClassCode, baseClass, subClass);
+
     if (baseClass == 0x03 && subClass == 0x00) {
         // VGA-compatible controller (virtio-vga-gl)
         isVirtIOVGA = true;
