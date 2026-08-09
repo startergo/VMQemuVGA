@@ -80,10 +80,15 @@ Verified on `virtio-gpu-gl-pci` unless noted.
   command generation belongs in userspace, and that userspace is the project,
   not a detail.
 
-The `GLPlugin/` tree contains an in-progress `GLEngine` replacement. It reaches
-context creation and renders nothing. `virglrenderer-metal/` is a shelved host-
-side experiment that has never compiled inside virglrenderer and targets a
-Linux/Mesa guest.
+The `GLPlugin/` tree is **superseded 2026-08-09** (see
+[`GLPlugin/SUPERSEDED.md`](GLPlugin/SUPERSEDED.md)). It attempted to replace
+`GLEngine.bundle` directly; CGL never discovered the renderer on either 10.6 or
+10.15, and the remaining gap was the entire GL spec. Kept as reference for the
+GLI/CGL plumbing findings, which are still useful for a future CGL shim. The
+chosen direction is Mesa + virgl + a CGL shim — see
+[`.claude/rules/acceleration.md`](.claude/rules/acceleration.md) for the seam
+analysis. `virglrenderer-metal/` is a shelved host-side experiment that has
+never compiled inside virglrenderer and targets a Linux/Mesa guest.
 
 If you need 3D in a Snow Leopard VM today, this driver will not give it to you.
 
@@ -158,11 +163,21 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
   on this configuration.
 - **Apple Remote Desktop** was reported to break at a 60 Hz refresh rate in an
   earlier build. The refresh is now ~15 Hz and this has not been re-tested.
-- **Misleading IORegistry properties.** Several advertised values overclaim
-  capability — `IOAccelerator3D = Yes`, `model = "VirtIO GPU 3D"`. VRAM
-  figures now publish the actual allocation size; `ATY,memsize` removed;
-  class-code override hack removed (it published on the framebuffer node
-  but System Profiler reads the PCI nub — the hack never had any effect).
+- **`IOAccelerator3D = Yes` overclaim.** Published in multiple places
+  (`FB/VMVirtIOFramebuffer.cpp:356`, `FB/VMVirtIOGPU.cpp:415`/`:453`,
+  `FB/VMQemuVGA.cpp:1012`/`:1068`). Same failure class as a hardware-cursor
+  gate that claims `crsr=1`: advertise a capability the system can't
+  deliver, and consumers requesting `kCGLPFAAccelerated` would get a
+  context that renders nothing instead of falling back to the working
+  software renderer. Latent today because CGL's discovery path is broken
+  on both 10.6 and 10.15 (see `notes/SNOW_LEOPARD_CGL_ARCHITECTURE_FINDINGS.md`),
+  so nothing consumes the property — but the right state until something
+  actually renders is `kOSBooleanFalse`. Tracked in [`LEDGER.md`](LEDGER.md).
+- **Other misleading IORegistry properties.** `model = "VirtIO GPU 3D"`
+  overclaims; VRAM figures now publish the actual allocation size;
+  `ATY,memsize` removed; class-code override hack removed (it published
+  on the framebuffer node but System Profiler reads the PCI nub — the
+  hack never had any effect).
   Do not treat IORegistry as a capability report.
 - **No EDID on any variant.** `readDDCBlock` fails on virtio-gpu-gl-pci,
   virtio-ramfb-gl, and virtio-vga-gl. Display preferences still offers the

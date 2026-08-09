@@ -149,6 +149,57 @@ architecture), not what to submit next from the kext. Treating this as
 a kext task would expand blast radius past transport back into command
 generation — exactly the boundary the guardrails exist to enforce.
 
+### Seam decision — Mesa + virgl, GLPlugin/ superseded — 2026-08-09
+
+`GLPlugin/` marked superseded. The tree attempted option 1 from
+`.claude/rules/acceleration.md` (replace `GLEngine.bundle`); strategic
+direction moves to option 3 (libGL + CGL shim via
+`DYLD_INSERT_LIBRARIES`) with Mesa's virgl Gallium driver as the GL
+implementation. Rationale:
+
+1. **Empirical**: CGL never discovered this renderer on either 10.6
+   (`notes/SNOW_LEOPARD_CGL_ARCHITECTURE_FINDINGS.md`) or 10.15
+   (`notes/CATALINA_CGL_RENDERER_DISCOVERY_ISSUE.md`). Even a working
+   GLPlugin couldn't have been loaded by CGL.
+2. **Strategic**: replacing `GLEngine.bundle` means writing OpenGL 2.1
+   (the v3.0 list — command submission, texture upload, shader
+   compilation, draw calls). Mesa already contains all of it.
+3. **Methodological**: `IMPLEMENTATION_STATUS.md`'s success criteria
+   were all unfalsifiable (absence of error; a stub returning
+   `kCGLNoError` satisfies them) — the `submitCommand` pattern one
+   layer up. And the doc self-contradicted (advertised
+   `accelerated: 1` / `video_memory: 256 MB` / `OpenGL 2.1` while
+   admitting rendering used Apple's software rasterizer). That's the
+   `crsr = 1` failure class.
+
+Salvageable as reference: GLI/CGL plumbing research (renderer
+discovery, pixel format attribute parsing, the IOServiceOpen path) is
+what a CGL shim for the Mesa direction needs. Tree kept per project
+"superseded, not deleted" rule; banner-annotated at
+`GLPlugin/SUPERSEDED.md`.
+
+### Open — kext still publishes IOAccelerator3D = Yes — 2026-08-09
+
+Same `crsr = 1` failure class at the kext property level, surfaced via
+the GLPlugin review. `IOAccelerator3D = kOSBooleanTrue` is set in
+multiple places:
+
+- `FB/VMVirtIOFramebuffer.cpp:356`
+- `FB/VMVirtIOGPU.cpp:415`, `:453`
+- `FB/VMQemuVGA.cpp:1012`, `:1068`
+
+Latent today because CGL's discovery path is broken (per the notes
+above), so nothing currently consumes the property — but the right
+state until something actually renders is `kOSBooleanFalse`. If CGL
+discovery is ever fixed (or any consumer reads the property directly),
+apps requesting `kCGLPFAAccelerated` would get a context that renders
+nothing instead of falling back to the working software renderer.
+
+Same fix pattern as the helper `ctx_id` zeroing — known-broken claim
+left in place because nothing currently consumes it. Per the project
+pattern: make it correct proactively, don't wait for the consumer to
+inherit a silent failure.
+
 ---
 
 ## Refresh-throttle optimisation — landed 2026-08-09

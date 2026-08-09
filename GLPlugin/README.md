@@ -1,3 +1,9 @@
+> **⚠️ SUPERSEDED 2026-08-09 — see [`SUPERSEDED.md`](SUPERSEDED.md).**
+> This tree is reference-only. The approach documented here (replacing
+> `GLEngine.bundle`) is shelved in favour of Mesa + virgl + a CGL shim.
+> CGL never discovered the renderer on either 10.6 or 10.15 (see
+> `notes/SNOW_LEOPARD_CGL_ARCHITECTURE_FINDINGS.md`).
+
 # VMVirtIOGLEngine - OpenGL Renderer Plugin
 
 This is an OpenGL renderer plugin that allows macOS to use the VMVirtIOGPUAccelerator for hardware-accelerated 3D rendering.
