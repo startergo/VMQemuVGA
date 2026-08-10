@@ -149,6 +149,47 @@ architecture), not what to submit next from the kext. Treating this as
 a kext task would expand blast radius past transport back into command
 generation — exactly the boundary the guardrails exist to enforce.
 
+### Mesa-on-10.6 build investigation — 2026-08-09
+
+**Mesa builds for 10.6 with mechanical patching.** Investigation on the
+`cross-10.6` branch in the `Mesa-VirGL` repo (startergo/Mesa-VirGL,
+based on alexvorxx's fork, Mesa 24.3.0-devel). Cross-compiled on Apple
+Silicon targeting x86_64-apple-macos10.6 using:
+
+- 10.6 SDK at `/Applications/Xcode.app/.../MacOSX10.6.sdk`
+- libcxx 5.0.1 from `leopard-webkit-build/dist/libcxx/`
+- meson cross file at `cross-compat/mesa-cross-10.6.txt`
+
+Meson cross-configure succeeds (1 patch: rt library guard for darwin).
+All 146 compile targets compile (9 source patches + 4 cross-compat
+files). Static libraries link. First dynamic link attempt fails on
+archive format (tooling mismatch — fix: use `llvm-ar` from the same
+LLVM as clang 21, which handles Mach-O members and accepts GNU-style
+flags). Static symbol resolution test (nm diff of all 96 compiled
+objects against 10.6 SDK libSystem + libcxx + compat): **1 real
+platform gap** (`open_memstream`, macOS 10.13+, trivial shim). 10.6's
+libSystem resolves essentially every symbol Mesa's virgl build
+references.
+
+**TLS gate behavioral risk:** the `u_thread.h` patch
+(`__THREAD_INITIAL_EXEC` gated on macOS >= 10.7) is a **correctness
+compromise**, not a portability shim. Falling back to plain globals for
+what was thread-local in the GL dispatch path (`_glapi_tls_Dispatch` /
+`_glapi_tls_Context` in `src/mapi/`) is correct only for single-threaded
+GL usage. Mesa's GL dispatch is single-context-per-thread by design, so
+it's likely fine for a first port — but it should be marked as such so
+nobody later assumes it's safe under threading. A proper fix requires
+either TLS runtime support (patched dyld) or `pthread_key_create` /
+`pthread_getspecific` on the dispatch hot path (per-GL-call overhead
+under TCG).
+
+**Scoping caveat (verbatim):** this is "Mesa's OS layer is portable to
+10.6 with mechanical patching," not "Mesa works on 10.6," and certainly
+not "3D works." Two unknowns remain: the link (archive format fix is a
+meson tooling issue, not a platform gap; symbol resolution is clean with
+1 trivial gap) and the CGL shim (the other half of the userspace stack,
+independent of whether Mesa compiles).
+
 ### Seam decision — Mesa + virgl, GLPlugin/ superseded — 2026-08-09
 
 `GLPlugin/` marked superseded. The tree attempted option 1 from
