@@ -149,7 +149,64 @@ architecture), not what to submit next from the kext. Treating this as
 a kext task would expand blast radius past transport back into command
 generation — exactly the boundary the guardrails exist to enforce.
 
-### Mesa-on-10.6 build investigation — 2026-08-09
+### Debug log analysis — UTM host log 2026-08-09 — 2026-08-10
+
+Reviewed the UTM host debug log (1.2M lines, boots from
+16:45 to 19:32). Three signals found:
+
+**1. SET_SCANOUT negative control fires correctly (4×).**
+
+`virtio_gpu_virgl_process_cmd: ctrl 0x103, error 0x1203` — ctrl 0x103
+is `SET_SCANOUT` (not RESOURCE_UNREF which is 0x102). This is the
+negative control at `VMVirtIOFramebuffer.cpp:1544`
+(`setscanout(0, 999, ...)`), doing exactly what the CLAUDE.md ground
+rules require: proving the error path returns `ERR_INVALID_RESOURCE_ID`
+for a nonexistent resource. Four occurrences = two probes per boot (one
+in `VMVirtIOGPU::start`-area, one in `enableController`). Expected,
+deliberate.
+
+**2. `command size incorrect` absent — independent host-side
+confirmation of box-vs-rect fix.**
+
+`LOG_GUEST_ERROR` IS captured in this log (proven by the 0x1203 lines
+themselves, which go through that macro). The box-vs-rect bug would
+have produced `command size incorrect 64 vs 72` via the same macro for
+every `TRANSFER_FROM_HOST_3D` / `TRANSFER_TO_HOST_3D`. Its absence is
+independent host-side confirmation that the struct fix landed and
+transfer commands are now correctly sized. Positive result, not a
+capture gap.
+
+**3. `no gl-unblock` / `no gl-draw-done` — ≥1s ack stalls (19 pairs).**
+
+`console: no gl-unblock within one second` + `spice: no gl-draw-done
+within one second` — QEMU's console layer blocked waiting for
+`graphic_hw_gl_flushed` from CocoaSpice, and CocoaSpice didn't call it
+within QEMU's fixed 1-second timeout. QEMU force-unblocks and recovers.
+The ≥1s is QEMU's watchdog floor, not a measurement of the actual stall
+duration — the client could be 1.001s or indefinitely late.
+
+19 pairs over ~2 hours at ~10 Hz frame rate is ~0.02% of frames —
+occasional, self-recovering. Densest cluster: 7 pairs in 4 minutes
+(18:48–18:52). Starting at 17:58, ~12 minutes after boot.
+
+**Untested hypothesis: window occlusion / backgrounding.** The burst
+pattern (long stretches clean, then a cluster, then clean again) fits
+macOS Metal layer throttling under occlusion better than load — nothing
+about the guest changed at 18:48. A Metal layer that isn't visible
+(UTM backgrounded, window occluded, host display dimming) will stall
+`nextDrawable`, and a renderer that signals draw-done after acquiring
+a drawable would fail exactly this way. Cheap to falsify: one run with
+UTM frontmost and untouched, one with it backgrounded behind another
+app for a few minutes. Not tested yet — log says what, not why.
+
+**For UTM issue filing:** the cursor-overlay bug is the report —
+deterministic, every boot, clean QXL A/B on the same host, QEMU-side
+proof the pixels arrived. The draw-done stalls are supporting evidence
+in a subordinate section (GL scanout path has ack/composite gaps),
+not a co-equal symptom. Leading with two symptoms of comparable weight
+invites a maintainer to fix the easy one and close the issue.
+
+---
 
 **Mesa builds for 10.6 with mechanical patching.** Investigation on the
 `cross-10.6` branch in the `Mesa-VirGL` repo (startergo/Mesa-VirGL,
@@ -510,66 +567,69 @@ software problem. The transport proof is the load-bearing gate.
 
 ## Open
 
-- **Hardware cursor — OPEN, pending GL/cursor-overlay investigation.**
+- **Hardware cursor — OPEN, unresolved whether GL scanout is the cause.**
   Queue 1 transport proven (used ring advances, PROBE PASS). Guest-side
-  setup verified correct (64×64 BGRA, alpha=0xFF, scanout_id=0,
+  setup verified correct (64x64 BGRA, alpha=0xFF, scanout_id=0,
   TRANSFER_TO_HOST_2D before UPDATE_CURSOR, struct 56 bytes, resource
-  persists — no teardown). QEMU accepted (no guest error in debug log).
+  persists - no teardown). QEMU accepted (no guest error in debug log).
   SPICE cursor channel delivered data to CocoaSpice
   (`set_cursor: type alpha(0), 0, 64x64`). **Cursor not visible on
-  virtio-gpu-gl.**
+  virtio-vga-gl.**
 
-  **QXL discriminator — POSITIVE.** QXL on the same UTM host shows a
-  visible hardware cursor (`crsr=1`, genuine overlay, not composited into
-  framebuffer). This confirms CocoaSpice renders cursor overlays —
-  hardware cursor is not categorically impossible on UTM.
+  **Boundary precisely stated:** cursor data is delivered to CocoaSpice
+  via the SPICE cursor channel. CocoaSpice does not render it as a
+  visible overlay. Whether it should is unresolved - the answer depends
+  on SPICE mouse mode (see below).
 
-  **Hypothesis (labelled, not established):** virtio-gpu-gl uses GL
-  scanout (DMABuf → Metal texture via `cs_gl_scanout`). Debug log
-  confirms GL scanout IS active (`gl scanout fd: 42`, `cs_gl_scanout:
-  got scanout`). QXL uses the 2D path (no GL scanout). CocoaSpice's
-  GL display path may not composite cursor overlays on GL-rendered
-  surfaces — explaining why cursor data reaches `set_cursor` but nothing
-  appears. My earlier "cocoa/gl capable but no gl yet" was WRONG: the
-  debug log proves GL scanout is active on virtio-gpu-gl boots.
+  **QXL comparison - NOT a valid control.** QXL shows a visible hardware
+  cursor on the same UTM host, but QXL uses a different display path
+  entirely (no GL scanout). The difference could be the display path, or
+  it could be mouse mode, or both. Using QXL as evidence that "GL scanout
+  should composite a cursor" is a non sequitur - it differs in exactly
+  the variable under test.
 
-  **CocoaSpice source review (github.com/utmapp/CocoaSpice):** the
-  cursor data model is fully implemented for GL mode — `cs_cursor_set`
-  uploads to a Metal texture, sets `cursorHidden = NO`, invalidates the
-  display, which triggers the renderer. No code path is conditional on
-  `isGLEnabled`. The actual renderer (a `CSRenderer` conformer) lives
-  in UTM, not CocoaSpice — it decides how to composite the cursor source
-  (`display.cursorSource`) alongside the display source. The gap is
-  between CocoaSpice providing the cursor data and UTM's renderer drawing
-  it in GL mode. Filed as an upstream issue candidate.
+  **Reference client behaviour (spice-gtk):** `spice_egl_update_display`
+  composites the cursor pixbuf on top of the GL scanout texture - after
+  binding the scanout texture and drawing it, it uploads the cursor
+  pixbuf as a texture and draws it on top. This IS gated on conditions:
+  server mouse mode (`SPICE_MOUSE_MODE_SERVER`), valid guest coordinates,
+  `!show_cursor`, pointer grabbed, non-NULL pixbuf. In client mouse mode,
+  spice-gtk does NOT composite at all - it hides the guest cursor and
+  sets the local window cursor from the cursor-channel bitmap, letting
+  the window system draw it. Two different rendering strategies for the
+  same cursor data, selected by mouse mode.
 
-  **Note for future work:** `CSCursor.isInverted` returns
-  `!self.display.isGLEnabled`. In GL mode the cursor would NOT be
-  inverted; in 2D mode it IS. If a future UTM renderer fix enables
-  GL cursor compositing, the cursor may initially appear upside-down —
-  this property is the reason. Not the cause of invisibility (flipping
-  doesn't hide), but the first thing to check if it renders wrong.
+  **Which mouse mode is UTM in? - UNVERIFIED.** This is the cheapest
+  next check and the one that determines the investigation direction:
+  - If server mouse mode: the failure is in CocoaSpice's GL scanout
+    path not compositing the cursor overlay (spice-gtk does, CocoaSpice
+    apparently does not).
+  - If client mouse mode: the failure could be in cursor-channel to
+    NSCursor plumbing, nothing to do with GL scanout at all.
 
-  **Confound to check before filing upstream:** the QXL and virtio-gpu
-  VMs may differ in pointer device (usb-tablet vs PS/2 mouse) or UTM
-  display settings (Retina/scaling). Different pointer devices change
-  SPICE mouse mode, which could affect cursor compositing independently
-  of the display device. Check both VM configs are otherwise identical
-  before attributing the difference to display device type alone.
+  Readable from CocoaSpice source (`CSCursor.isInverted` returns
+  `!display.isGLEnabled`, suggesting GL-specific cursor handling exists
+  - but which branch the session takes is unverified).
 
-  **Build 2 status: open, gated on UTM.** Not abandoned — the QXL
-  result changes the conclusion from "impossible" to "blocked on
-  GL-path cursor compositing in UTM's renderer." crsr = 0 with
-  WindowServer software compositing is the correct implementation on
-  this configuration and works. The queue-1 transport code is ready
-  if the UTM gap is resolved or a non-GL virtio-gpu variant is used.
+  **No upstream filing.** The QXL comparison as the centerpiece would
+  get a fair rebuttal (not a valid control). The apples-to-apples A/B
+  would be a different SPICE client (remote-viewer, spicy) against the
+  same virtio-gpu-gl + GL scanout path - awkward on Apple Silicon but
+  the only test that isolates the client. Not worth the effort yet (see
+  below).
+
+  **Software cursor is the status quo, not a concession.** crsr = 0
+  with WindowServer software compositing works - every mouse move
+  dirties the surface and costs a transfer, which the 15 Hz throttle
+  absorbs. The hardware cursor is an optimisation (dirty-rect enabler
+  during mouse motion), not a missing feature. Leaving this unresolved
+  costs close to zero.
 
   **Cursor queue constraint:** the cursor queue is one-way by design.
   QEMU's `virtio_gpu_handle_cursor` does `virtqueue_push(vq, elem, 0)` for
   every command (zero response bytes), accepted or rejected. "Used ring
   advanced" is the only feedback this queue offers. Future PROBE PASS on
   this queue means descriptor consumed, nothing more.
-
 - **ARD (Apple Remote Desktop) regression at 16 ms refresh.** The timer's
   initial arm was shortened from 1000 ms to 16 ms; whether ARD's screen
   capture works correctly at that cadence is untested.
