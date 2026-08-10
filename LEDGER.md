@@ -227,6 +227,22 @@ are disabled and there is no CGL binding layer. The static libraries
 are the complete Mesa implementation; they need a final link against
 a CGL shim to produce a loadable GL library.
 
+**Real link test: zero platform gaps.** Force-loaded the virgl driver
++ vtest winsys + common into the OSMesa shared library target to test
+symbol resolution against 10.6's libSystem + libcxx 5.0.1 + compat
+shims. 8 undefined symbols remain, ALL Mesa-internal (DRI config
+parser from xmlconfig.c, excluded by shader-cache=disabled; video
+buffer helpers from gallium/auxiliary/vl/, not linked into OSMesa).
+Every external symbol — C++ runtime (libc++ + libc++abi), NIR, GLSL
+compiler, Gallium auxiliary, zlib, pthreads, math — resolves against
+10.6 libSystem. **The link test question is answered: 10.6's platform
+is compatible with Mesa's virgl build.**
+
+DRM stub provenance: extracted from startergo/Mesa-VirGL fork's
+`.github/workflows/macos.yml` at commits 1577651647d and 8681e0ec7d9.
+Stub functions changed from return-success to abort() per the project's
+fail-loud pattern.
+
 **TLS gate behavioral risk:** the `u_thread.h` patch
 (`__THREAD_INITIAL_EXEC` gated on macOS >= 10.7) is a **correctness
 compromise**, not a portability shim. Falling back to plain globals for
