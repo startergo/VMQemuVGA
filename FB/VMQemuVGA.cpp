@@ -470,8 +470,10 @@ bool CLASS::start(IOService* provider)
 		// Catalina VirtIO GPU GL Hardware Acceleration Mode
 		IOLog("VMQemuVGA: Configuring Catalina VirtIO GPU GL hardware acceleration\n");
 		
-		// Enable true hardware acceleration with VirtIO GPU GL
-		setProperty("model", "VirtIO GPU 3D (Hardware Accelerated)");
+		// Model string must not claim 3D until end-to-end rendering works
+		// (Mesa + CGL shim). The QXL/SVGA path this block runs in has no 3D
+		// transport at all — claim plain "VirtIO GPU" for now.
+		setProperty("model", "VirtIO GPU");
 		
 		// Configure for hardware acceleration
 		setProperty("IOPrimaryDisplay", kOSBooleanTrue);
@@ -1007,9 +1009,14 @@ bool CLASS::initVirtIOGPUAcceleration()
 	IOLog("VMQemuVGA: VirtIO GPU accelerator registered successfully\n");
 	
 	m_3d_acceleration_enabled = true;
-	setProperty("3D Acceleration", "Enabled");
+	// QXL/SVGA path has no 3D transport at all (no VIRTIO_GPU_F_VIRGL offered,
+	// no virgl capsets). These properties were unconditionally True — always
+	// wrong on this path. Hardcoded False / no-3D-claim; doesn't share
+	// VMVirtIOGPU::m_3d_functional because QXL should always disagree with the
+	// VirtIO GPU path, even after Mesa lands.
+	setProperty("3D Acceleration", "Disabled");
 	setProperty("3D Backend", "VirtIO GPU");
-	setProperty("IOAccelerator3D", kOSBooleanTrue);  // Required for Snow Leopard WindowServer
+	setProperty("IOAccelerator3D", kOSBooleanFalse);
 	
 	// Enable accelerator updates for proper GPU utilization reporting
 	useAccelUpdates(true);
@@ -1063,9 +1070,10 @@ bool CLASS::initTraditionalAcceleration()
 	IOLog("VMQemuVGA: Traditional QXL/SVGA accelerator registered successfully\n");
 	
 	m_3d_acceleration_enabled = true;
-	setProperty("3D Acceleration", "Enabled");
+	// QXL/SVGA backend — no 3D transport. See matching comment above.
+	setProperty("3D Acceleration", "Disabled");
 	setProperty("3D Backend", "QXL/SVGA");
-	setProperty("IOAccelerator3D", kOSBooleanTrue);  // Required for Snow Leopard WindowServer
+	setProperty("IOAccelerator3D", kOSBooleanFalse);
 	
 	// Enable accelerator updates for proper GPU utilization reporting
 	useAccelUpdates(true);

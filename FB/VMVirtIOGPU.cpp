@@ -410,9 +410,11 @@ bool CLASS::start(IOService* provider)
     IOLog("VMVirtIOGPU: VRAM properties controlled by IONDRVFramebuffer\n");
     IOLog("VMVirtIOGPU: Resolution limited by IONDRV's VRAM detection on VirtIO devices\n");
     
-    // d74: ENABLE 3D acceleration properties on parent device so system_profiler can see them
-    setProperty("IOGraphicsAccelerator", kOSBooleanTrue);
-    setProperty("IOAccelerator3D", kOSBooleanTrue);
+    // d74 origin: 3D acceleration properties on parent device so system_profiler can see them.
+    // Values from m_3d_functional (currently always false — see VMVirtIOGPU.h). The transport
+    // being offered (supports3D() == true) does not mean rendering works.
+    setProperty("IOGraphicsAccelerator", m_3d_functional ? kOSBooleanTrue : kOSBooleanFalse);
+    setProperty("IOAccelerator3D",       m_3d_functional ? kOSBooleanTrue : kOSBooleanFalse);
     setProperty("IOAcceleratorFamily", "IOGraphicsFamily");
     
     // d74: ENABLE accelerator types array
@@ -5168,11 +5170,15 @@ bool CLASS::setupGPUMemoryRegions() {
         gpuCoreCount->release();
     }
     
-    // ENABLED: GL bundle names trigger WindowServer to use OpenGL/Metal hardware rendering
+    // GL bundle names — currently claim "GLEngine" (the system software renderer)
+    // for both GL and GLES. Inconsistent across nodes (accelerator child publishes
+    // "VMVirtIOGLEngine" elsewhere), and GLPlugin is superseded — separate
+    // cleanup, tracked in LEDGER. Leaving as-is for this commit.
     setProperty("IOGLBundleName", "GLEngine");
     setProperty("IOGLESBundleName", "GLEngine");
     setProperty("AAPL,slot-name", "SLOT-1");               // PCI slot identification
-    setProperty("model", "VirtIO GPU (Hardware 3D Acceleration)");
+    // Model from m_3d_functional — claims "3D" only when rendering works.
+    setProperty("model", m_3d_functional ? "VirtIO GPU (Hardware 3D Acceleration)" : "VirtIO GPU");
     
     // Catalina Metal and OpenGL hardware acceleration properties
     // Note: MetalPluginName removed - let system use default Metal path through IOAccelerator

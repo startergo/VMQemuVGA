@@ -107,6 +107,17 @@ private:
     uint64_t m_fence_id;    // VirtIO 1.2: Fence ID counter for command synchronization
     bool m_is_virtio_gpu_pci;  // true = pure GPU mode (no VGA), false = VGA-compatible mode
     bool m_is_mock_device;     // true = mock device for QXL compatibility, false = real VirtIO GPU
+
+    // Single source of truth for whether end-to-end 3D rendering is functional
+    // (not just whether the host offers VIRTIO_GPU_F_VIRGL, which supports3D()
+    // reports). False until a userspace GL stack exists (Mesa + CGL shim).
+    // Published from every site that sets IOAccelerator3D / model = "VirtIO GPU
+    // 3D" / related capability claims via is3DFunctional(), so the eventual
+    // flip when Mesa lands is one line. See LEDGER for the crsr=1 rationale:
+    // advertising 3D capability that the system can't deliver makes consumers
+    // request kCGLPFAAccelerated and get a context that renders nothing
+    // instead of falling back to the working software renderer.
+    bool m_3d_functional = false;
     
     // Command queue management (legacy — kept for compatibility, superseded by vring)
     IOBufferMemoryDescriptor* m_control_queue;
@@ -362,9 +373,15 @@ public:
     
     // Capability queries
     uint32_t getMaxScanouts() const { return m_max_scanouts; }
-    bool supports3D() const { 
-        return m_num_capsets > 0; 
+    bool supports3D() const {
+        return m_num_capsets > 0;
     }
+    // End-to-end 3D rendering is functional (Mesa + CGL shim landed). Distinct
+    // from supports3D() which reports transport availability (host offers
+    // VIRTIO_GPU_F_VIRGL). Used by every site that publishes a 3D-capability
+    // property (IOAccelerator3D, model = "VirtIO GPU 3D", etc.) so the eventual
+    // flip is one line. See m_3d_functional comment above.
+    bool is3DFunctional() const { return m_3d_functional; }
     IOReturn enableFeature(uint32_t feature_flags);
     uint32_t readVirtIODeviceFeatures() const;
     bool supportsFeature(uint32_t feature_flags) const;

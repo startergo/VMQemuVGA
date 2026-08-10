@@ -292,17 +292,17 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     // Check if this VirtIO GPU has 3D acceleration capability (VIRGL feature flag)
     bool has_3d_support = (m_gpu_driver && m_gpu_driver->supports3D());
     
-    // Set GPU model/vendor properties based on device type
+    // Set GPU model/vendor properties based on device type.
+    // The model string must not claim 3D capability until is3DFunctional()
+    // returns true (Mesa + CGL shim lands) — see the m_3d_functional comment
+    // in VMVirtIOGPU.h. Today it always returns false.
+    const bool functional_3d = m_gpu_driver && m_gpu_driver->is3DFunctional();
     if (is_pure_gpu_mode) {
         // virtio-gpu-gl-pci (pure GPU mode) - needs GPU properties for System Profiler
         IOLog("VMVirtIOFramebuffer::start() - Setting GPU properties for virtio-gpu-gl-pci (pure GPU mode)\n");
-        
+
         // Set GPU model and vendor information (visible in About This Mac > Displays)
-        if (has_3d_support) {
-            setProperty("model", "VirtIO GPU 3D");                       // GPU model name (3D capable)
-        } else {
-            setProperty("model", "VirtIO GPU");                          // GPU model name (2D only)
-        }
+        setProperty("model", functional_3d ? "VirtIO GPU 3D" : "VirtIO GPU");
         setProperty("IOName", "VMQemuVGA VirtIO GPU");                   // Device name
         setProperty("IOProviderClass", "VMVirtIOGPU");                   // Provider class
         
@@ -343,31 +343,41 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
         IOLog("VMVirtIOFramebuffer::start() - ERROR: Failed to create OSNumber objects for VRAM properties\n");
     }
     
-    // *** CRITICAL: OpenGL/Hardware Acceleration Properties ***
-    
+    // *** 3D-capability property block ***
+    //
+    // has_3d_support below is the TRANSPORT gate (host offers VIRTIO_GPU_F_VIRGL
+    // via capsets). The published VALUES come from functional_3d (rendering
+    // end-to-end works), which is currently always false — see m_3d_functional
+    // in VMVirtIOGPU.h. Transport being offered doesn't mean rendering works;
+    // publishing IOAccelerator3D = True before Mesa + CGL shim land is the
+    // crsr=1 pattern (advertise a capability you can't deliver, consumers stop
+    // falling back to the working software renderer).
+    //
+    // When functional_3d flips true, all four properties flip with it via this
+    // single block — no per-site edit needed.
     if (has_3d_support) {
-        // ENABLE hardware acceleration - VirtIO GPU 3D pipeline is now fully functional (v8.0.0d94)
-        // Since d93: contexts, resources, submit3D, transferToHost3D, flushResource all working
-        // Since d94: transferFromHost3D implemented to copy rendered pixels to guest framebuffer
-        // Works for BOTH virtio-vga-gl (VGA-compatible) and virtio-gpu-gl-pci (pure GPU)
-        setProperty("IOAcceleratorFamily", kOSBooleanTrue);      // We support IOAccelerator protocol
-        setProperty("IOGraphicsAccelerator", kOSBooleanTrue);    // Graphics acceleration available
-        setProperty("IODisplayAccelerated", kOSBooleanTrue);     // Display has acceleration
-        setProperty("IOAccelerator3D", kOSBooleanTrue);          // 3D acceleration available
-        
-        // OpenGL configuration for CGL discovery
-        setProperty("IOGLBundleName", "GLEngine");               // Use system GLEngine (software for now)
-        setProperty("IOAccelIndex", (uint64_t)0, 32);            // Accelerator index 0
-        
-        IOLog("VMVirtIOFramebuffer::start() - Hardware acceleration properties enabled\n");
+        setProperty("IOAcceleratorFamily",   functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
+        setProperty("IOGraphicsAccelerator", functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
+        setProperty("IODisplayAccelerated",  functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
+        setProperty("IOAccelerator3D",       functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
+
+        // OpenGL configuration for CGL discovery. IOGLBundleName is inconsistent
+        // across nodes today (framebuffer publishes "GLEngine", accelerator child
+        // publishes "VMVirtIOGLEngine") and the GLPlugin tree is superseded —
+        // separate cleanup, tracked in LEDGER.
+        setProperty("IOGLBundleName", "GLEngine");
+        setProperty("IOAccelIndex", (uint64_t)0, 32);
+
+        IOLog("VMVirtIOFramebuffer::start() - 3D transport offered; functional_3d=%d (properties reflect rendering state, not transport)\n",
+              functional_3d ? 1 : 0);
     } else {
-        // DISABLE ALL hardware acceleration for non-3D devices
+        // No transport — no 3D claims at all.
         setProperty("IOAcceleratorFamily", kOSBooleanFalse);
         setProperty("IOGraphicsAccelerator", kOSBooleanFalse);
         setProperty("IODisplayAccelerated", kOSBooleanFalse);
         setProperty("IOAccelerator3D", kOSBooleanFalse);
-        
-        IOLog("VMVirtIOFramebuffer::start() - Hardware acceleration disabled (no 3D support)\n");
+
+        IOLog("VMVirtIOFramebuffer::start() - 3D transport not offered (no virgl capsets)\n");
     }
     
     // DISABLE AGDC: Tell WindowServer we DON'T support AGDC to prevent initialization failures
