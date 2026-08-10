@@ -215,18 +215,17 @@ Silicon targeting x86_64-apple-macos10.6 using:
 
 - 10.6 SDK at `/Applications/Xcode.app/.../MacOSX10.6.sdk`
 - libcxx 5.0.1 from `leopard-webkit-build/dist/libcxx/`
+- llvm-ar from Homebrew LLVM for correct Mach-O archive format
 - meson cross file at `cross-compat/mesa-cross-10.6.txt`
 
-Meson cross-configure succeeds (1 patch: rt library guard for darwin).
-All 146 compile targets compile (9 source patches + 4 cross-compat
-files). Static libraries link. First dynamic link attempt fails on
-archive format (tooling mismatch — fix: use `llvm-ar` from the same
-LLVM as clang 21, which handles Mach-O members and accepts GNU-style
-flags). Static symbol resolution test (nm diff of all 96 compiled
-objects against 10.6 SDK libSystem + libcxx + compat): **1 real
-platform gap** (`open_memstream`, macOS 10.13+, trivial shim). 10.6's
-libSystem resolves essentially every symbol Mesa's virgl build
-references.
+**146/146 targets compiled and linked.** Build produces 11 static
+libraries (including `libvirgl.a` — the virgl Gallium driver — and
+`libvirglvtest.a` — the vtest winsys) plus 3 dynamic dispatch
+libraries (`libglapi.0.dylib`, `libGLESv1_CM.1.dylib`,
+`libGLESv2.2.dylib`). No `libGL.dylib` — expected, since GLX/EGL/GBM
+are disabled and there is no CGL binding layer. The static libraries
+are the complete Mesa implementation; they need a final link against
+a CGL shim to produce a loadable GL library.
 
 **TLS gate behavioral risk:** the `u_thread.h` patch
 (`__THREAD_INITIAL_EXEC` gated on macOS >= 10.7) is a **correctness
