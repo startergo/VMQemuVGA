@@ -218,6 +218,14 @@ Silicon targeting x86_64-apple-macos10.6 using:
 - llvm-ar from Homebrew LLVM for correct Mach-O archive format
 - meson cross file at `cross-compat/mesa-cross-10.6.txt`
 
+**Build note:** the 913-target figure (with `-Dosmesa=true
+-Dgallium-drivers=virgl,softpipe`) and the earlier 146-target figure
+(virgl-only, no OSMesa) are different configurations, not a regression
+or miscount. The 913-target build adds softpipe, OSMesa frontend,
+OSMesa target, NIR compiler, GLSL compiler, Gallium auxiliary, and
+their generated headers — all of which are prerequisites for a shared
+library that pulls in the full driver stack.
+
 **146/146 targets compiled and linked.** Build produces 11 static
 libraries (including `libvirgl.a` — the virgl Gallium driver — and
 `libvirglvtest.a` — the vtest winsys) plus 3 dynamic dispatch
@@ -279,6 +287,18 @@ not "3D works." Two unknowns remain: the link (archive format fix is a
 meson tooling issue, not a platform gap; symbol resolution is clean with
 1 trivial gap) and the CGL shim (the other half of the userspace stack,
 independent of whether Mesa compiles).
+
+**Next step: OSMesa+softpipe render test in the guest.** The 19 MB
+libOSMesa.8.dylib links clean but hasn't been loaded by 10.6.8's dyld.
+Given this project's track record ("links clean" has meant "doesn't
+work" twice), the cheapest validation is: scp the dylib to the guest,
+run an OSMesa program with `GALLIUM_DRIVER=softpipe`, render a
+known-color clear to a memory buffer, verify the pixels. Needs no host
+server, no socket plumbing, no virglrenderer. Answers: does dyld load
+it, does the TLS gate survive a running process, does the GL stack
+produce correct output. Then virpipe against virgl_test_server for the
+virgl-specific path (note: vtest uses a UNIX domain socket — guest
+can't reach host without virtio-serial/vsock forwarding or TCP mode).
 
 ### Seam decision — Mesa + virgl, GLPlugin/ superseded — 2026-08-09
 
