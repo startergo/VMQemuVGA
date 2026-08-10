@@ -178,27 +178,14 @@ what a CGL shim for the Mesa direction needs. Tree kept per project
 "superseded, not deleted" rule; banner-annotated at
 `GLPlugin/SUPERSEDED.md`.
 
-### Open — kext still publishes IOAccelerator3D = Yes — 2026-08-09
+### ~~Open — kext still publishes IOAccelerator3D = Yes~~ — FIXED 2026-08-09 (fb669ac)
 
-Same `crsr = 1` failure class at the kext property level, surfaced via
-the GLPlugin review. `IOAccelerator3D = kOSBooleanTrue` is set in
-multiple places:
-
-- `FB/VMVirtIOFramebuffer.cpp:356`
-- `FB/VMVirtIOGPU.cpp:415`, `:453`
-- `FB/VMQemuVGA.cpp:1012`, `:1068`
-
-Latent today because CGL's discovery path is broken (per the notes
-above), so nothing currently consumes the property — but the right
-state until something actually renders is `kOSBooleanFalse`. If CGL
-discovery is ever fixed (or any consumer reads the property directly),
-apps requesting `kCGLPFAAccelerated` would get a context that renders
-nothing instead of falling back to the working software renderer.
-
-Same fix pattern as the helper `ctx_id` zeroing — known-broken claim
-left in place because nothing currently consumes it. Per the project
-pattern: make it correct proactively, don't wait for the consumer to
-inherit a silent failure.
+Surfaced 2026-08-09 via the GLPlugin review as the live-code instance of
+the `crsr = 1` pattern. **Fixed in `fb669ac`** by introducing
+`VMVirtIOGPU::m_3d_functional` (single flag, false by default) and
+deriving every IOAccelerator3D / model / "3D Acceleration" publication
+from it. See "Bogus IORegistry properties to retire during the merge"
+above for the full list of sites touched and remaining category siblings.
 
 ---
 
@@ -615,16 +602,32 @@ Do not start this merge without asking.
   - ~~`VRAM,totalMB`, `VRAM,totalsize`, `IOAccelMemorySize`~~ — **FIXED
     2026-08-09:** now publish actual allocation size from the buffer.
     ~~`ATY,memsize`~~ — **removed** (ATI-specific key on a virtio device).
-  - `IOAccelerator3D = Yes` alongside `IOGraphicsAccelerator = No` and
-    `IODisplayAccelerated = No` — claims 3D the current path cannot deliver.
+  - ~~`IOAccelerator3D = Yes` alongside `IOGraphicsAccelerator = No` and
+    `IODisplayAccelerated = No`~~ — **FIXED 2026-08-09 (`fb669ac`):** all
+    three now derive from `VMVirtIOGPU::m_3d_functional` (const false
+    until Mesa + CGL shim lands). The transport-vs-rendering distinction
+    is explicit: `supports3D()` reports transport, `is3DFunctional()`
+    reports rendering. Single flag, single accessor, every site publishes
+    from it -- eventual flip is one line.
+  - ~~`model = "VirtIO GPU 3D"` and variants (`"VirtIO GPU 3D (Hardware
+    Accelerated)"`, `"VirtIO GPU (Hardware 3D Acceleration)"`)~~ —
+    **FIXED 2026-08-09 (`fb669ac`):** also derived from `m_3d_functional`;
+    publish `"VirtIO GPU"` until rendering works.
+  - ~~`"3D Acceleration" = "Enabled"` on the QXL/SVGA path~~ — **FIXED
+    2026-08-09 (`fb669ac`):** QXL has no 3D transport at all; hardcoded
+    `"Disabled"` plus `IOAccelerator3D = kOSBooleanFalse` with a comment
+    explaining why QXL doesn't share the flag.
   - `IOGLBundleName = "GLEngine"` on the framebuffer node vs.
     `"VMVirtIOGLEngine"` on the `VMQemuVGAAccelerator` child — inconsistent.
+    **Still open.** GLPlugin is superseded; the inconsistency is a
+    separate cleanup.
   - `IOMetalBundleName = ""`, `IOGLESBundleName = ""` — empty / vestigial.
-    (Metal does not exist on 10.6 per CLAUDE.md.)
-  - `model = "VirtIO GPU 3D"` — same overclaim as `IOAccelerator3D`.
-  - `class-code = <00000300>` on the framebuffer node — the "Override
-    class-code for System Profiler" hack publishing a falsified `0x0300`
-    (VGA-compat) on a device whose nub honestly reports `0x0380`.
+    (Metal does not exist on 10.6 per CLAUDE.md.) **Still open.**
+  - ~~`class-code = <00000300>` on the framebuffer node~~ — **FIXED earlier:**
+    the "Override class-code for System Profiler" hack publishing a
+    falsified `0x0300` (VGA-compat) on a device whose nub honestly reports
+    `0x0380` was removed; it published on the framebuffer node but System
+    Profiler reads the PCI nub, so the hack never had any effect.
 
 ---
 

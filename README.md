@@ -163,21 +163,28 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
   on this configuration.
 - **Apple Remote Desktop** was reported to break at a 60 Hz refresh rate in an
   earlier build. The refresh is now ~15 Hz and this has not been re-tested.
-- **`IOAccelerator3D = Yes` overclaim.** Published in multiple places
-  (`FB/VMVirtIOFramebuffer.cpp:356`, `FB/VMVirtIOGPU.cpp:415`/`:453`,
-  `FB/VMQemuVGA.cpp:1012`/`:1068`). Same failure class as a hardware-cursor
-  gate that claims `crsr=1`: advertise a capability the system can't
-  deliver, and consumers requesting `kCGLPFAAccelerated` would get a
-  context that renders nothing instead of falling back to the working
-  software renderer. Latent today because CGL's discovery path is broken
-  on both 10.6 and 10.15 (see `notes/SNOW_LEOPARD_CGL_ARCHITECTURE_FINDINGS.md`),
-  so nothing consumes the property — but the right state until something
-  actually renders is `kOSBooleanFalse`. Tracked in [`LEDGER.md`](LEDGER.md).
-- **Other misleading IORegistry properties.** `model = "VirtIO GPU 3D"`
-  overclaims; VRAM figures now publish the actual allocation size;
-  `ATY,memsize` removed; class-code override hack removed (it published
-  on the framebuffer node but System Profiler reads the PCI nub — the
-  hack never had any effect).
+- **`IOGLBundleName` inconsistency.** The framebuffer node publishes
+  `"GLEngine"` while the `VMQemuVGAAccelerator` child publishes
+  `"VMVirtIOGLEngine"`. GLPlugin is superseded (see
+  [`GLPlugin/SUPERSEDED.md`](GLPlugin/SUPERSEDED.md)); neither bundle
+  delivers working GL today. Separate cleanup, tracked in [`LEDGER.md`](LEDGER.md).
+- **Empty vestigial bundle-name properties.** `IOMetalBundleName = ""`
+  and `IOGLESBundleName = ""` are published empty. Metal does not exist
+  on 10.6 per CLAUDE.md. Separate cleanup, tracked in [`LEDGER.md`](LEDGER.md).
+- **~~`IOAccelerator3D = Yes` overclaim~~ — FIXED 2026-08-09 (`fb669ac`).**
+  Was published in five places (`FB/VMVirtIOFramebuffer.cpp:356`,
+  `FB/VMVirtIOGPU.cpp:415`, `FB/VMQemuVGA.cpp:1012`/`:1068`, plus the
+  already-correct False branch). Same `crsr=1` failure class — advertise
+  a capability the system can't deliver. Now derived from
+  `VMVirtIOGPU::m_3d_functional` (const false until Mesa + CGL shim
+  lands) via `is3DFunctional()`. Model strings (`"VirtIO GPU 3D"` and
+  variants) and `"3D Acceleration" = "Enabled"` also derive from the
+  flag; QXL-path sites hardcoded False with a comment. Single flag,
+  single flip when Mesa lands.
+- **Other retired IORegistry properties.** VRAM figures publish the
+  actual allocation size; `ATY,memsize` removed; class-code override
+  hack removed (it published on the framebuffer node but System Profiler
+  reads the PCI nub — the hack never had any effect).
   Do not treat IORegistry as a capability report.
 - **No EDID on any variant.** `readDDCBlock` fails on virtio-gpu-gl-pci,
   virtio-ramfb-gl, and virtio-vga-gl. Display preferences still offers the
