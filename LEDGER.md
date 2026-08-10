@@ -230,13 +230,31 @@ a CGL shim to produce a loadable GL library.
 **Real link test: zero platform gaps.** Force-loaded the virgl driver
 + vtest winsys + common into the OSMesa shared library target to test
 symbol resolution against 10.6's libSystem + libcxx 5.0.1 + compat
-shims. 8 undefined symbols remain, ALL Mesa-internal (DRI config
-parser from xmlconfig.c, excluded by shader-cache=disabled; video
-buffer helpers from gallium/auxiliary/vl/, not linked into OSMesa).
+shims. **libOSMesa.8.dylib linked: 19 MB, zero undefined symbols.**
 Every external symbol — C++ runtime (libc++ + libc++abi), NIR, GLSL
 compiler, Gallium auxiliary, zlib, pthreads, math — resolves against
 10.6 libSystem. **The link test question is answered: 10.6's platform
 is compatible with Mesa's virgl build.**
+
+Eight Mesa-internal symbols required stubs (not platform gaps):
+
+**DRI config (3):** `driParseConfigFiles`, `driQueryOption{b,i}`.
+Earlier attribution "excluded by shader-cache=disabled" was wrong.
+Actual cause: xmlconfig.c was never compiled despite
+`-Dxmlconfig=enabled` — meson's feature resolution for expat fails in
+cross-compilation mode (pkg-config can't find expat in the 10.6
+sysroot). Stubbed with safe defaults (no drirc.d on target; driconf
+defaults are correct behavior, not fake success). NOT abort — these
+are on the driver init path.
+
+**Video buffer (5):** `vl_video_buffer_{create,destroy,
+get_associated_data,is_format_supported,set_associated_data}`.
+Earlier attribution "not linked into OSMesa target" was wrong. Actual
+cause: `video-codecs=[]` disables the entire `src/gallium/auxiliary/vl/`
+subsystem. `virgl_video.c` references vl functions unconditionally;
+`virgl_context.c` references functions from `virgl_video.c`, so the
+file can't be removed. Stubbed with abort() (unreachable video path on
+this target — video decode irrelevant for Snow Leopard 3D).
 
 DRM stub provenance: extracted from startergo/Mesa-VirGL fork's
 `.github/workflows/macos.yml` at commits 1577651647d and 8681e0ec7d9.
