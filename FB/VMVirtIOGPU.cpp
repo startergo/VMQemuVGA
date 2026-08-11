@@ -1869,14 +1869,19 @@ bool CLASS::setupControlVirtQueue()
     __sync_synchronize();
 
     // 12. Pre-allocate command and response buffers (physically contiguous).
-    // m_cmd_buf stays at 256 — virtio-gpu commands are small (ctrl_hdr + small payload).
-    // m_resp_buf must hold variable-size responses: GET_CAPSET_INFO (~32 B) is small, but
-    // GET_CAPSET returns the full virgl_caps blob (v1 ~800 B, v2 >1 KB), so 256 truncated
-    // every capset query. 4 KB covers both with headroom.
+    // m_cmd_buf must hold ATTACH_BACKING with many scatter-list entries:
+    //   sizeof(hdr) + nr_entries × sizeof(mem_entry) = 8 + N × 12
+    // A 256×256 BGRA resource (128 KB) produces 32 pages → 392-byte command.
+    // A 1024×1024 resource (4 MB) → 1024 pages → 12 KB command.
+    // 4 KB covers resources up to ~340 pages (1.3 MB) — sufficient for
+    // OSMesa rendering targets. For larger resources, the overflow check
+    // in submitCommand returns kIOReturnNoMemory rather than corrupting.
+    // (Previous size was 256 — caused silent heap overflow + device
+    // confusion when Mesa's winsys attached backing for a 128 KB resource.)
     m_cmd_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task,
         kIODirectionOutIn | kIOMemoryPhysicallyContiguous,
-        256, 0x00000000FFFFFFFFULL);
+        4096, 0x00000000FFFFFFFFULL);
     m_resp_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task,
         kIODirectionOutIn | kIOMemoryPhysicallyContiguous,
@@ -1956,8 +1961,13 @@ uint16_t CLASS::vringFreeDepth() const
 IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
                               virtio_gpu_ctrl_hdr* resp, size_t resp_size)
 {
-    // Parameter validation
-    if (!cmd || cmd_size < sizeof(virtio_gpu_ctrl_hdr) || cmd_size > 256) {
+    // Parameter validation.
+    // cmd_size limit matches m_cmd_buf's capacity (4096, set at init). The
+    // previous limit of 256 silently rejected ATTACH_BACKING commands with
+    // many scatter-list entries (32+ pages → 392+ bytes), which is the
+    // normal case for Mesa's 256×256 BGRA resources. The in-buffer overflow
+    // check below catches anything that somehow exceeds the buffer.
+    if (!cmd || cmd_size < sizeof(virtio_gpu_ctrl_hdr) || cmd_size > 4096) {
         return kIOReturnBadArgument;
     }
 
@@ -2009,8 +2019,24 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
               m_submit_count, cmd_desc, resp_desc, m_vq_free_head, vringFreeDepth());
     }
 
-    // 2. Copy command data to physically contiguous buffer
+    // 2. Copy command data to physically contiguous buffer.
+    // Defensive: if cmd_size exceeds m_cmd_buf capacity, return error
+    // rather than overflowing. ATTACH_BACKING with many scatter-list
+    // entries is the main case where this matters.
     void* cmd_buf_va = m_cmd_buf->getBytesNoCopy();
+    IOByteCount cmd_buf_cap = m_cmd_buf->getLength();
+    if (cmd_size > (size_t)cmd_buf_cap) {
+        IOLog("VMVirtIOGPU::submitCommand: cmd_size %zu > cmd_buf capacity %llu "
+              "(likely ATTACH_BACKING with many segments) — returning NoMemory\n",
+              cmd_size, (uint64_t)cmd_buf_cap);
+        // Return descriptors to free-list
+        m_vq_free_next[resp_desc] = m_vq_free_head;
+        m_vq_free_head = resp_desc;
+        m_vq_free_next[cmd_desc] = m_vq_free_head;
+        m_vq_free_head = cmd_desc;
+        IOLockUnlock(m_vq_lock);
+        return kIOReturnNoMemory;
+    }
     memcpy(cmd_buf_va, cmd, cmd_size);
 
     // Get physical addresses

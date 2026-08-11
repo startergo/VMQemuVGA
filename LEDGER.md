@@ -20,6 +20,67 @@ Last updated: 2026-08-10
 
 ---
 
+## Increment C — Mesa-driven virgl glClear + glReadPixels — VERIFIED — 2026-08-10
+
+Mesa's virgl Gallium driver, through virgl_iokit_winsys (Mesa-VirGL
+commit c703f8fb910), produces byte-exact clears on 10.6 via UTM's
+embedded virglrenderer. The full 3D stack works end-to-end for the
+first time:
+
+Application → OSMesa → Gallium → virgl driver → virgl_iokit_winsys →
+VMVirtIOGPUUserClient (0x6000-0x6009) → virtio-gpu PCI → QEMU →
+virglrenderer → ANGLE → Metal → GPU
+
+### Test
+
+`cgl-shim/killtest/virgl_clear_test.c` — literally the same source as
+`osmesa_softpipe_test.c`. The only variable is `GALLIUM_DRIVER` env var.
+Run on slqemu 2026-08-10 02:17 EDT with `DYLD_LIBRARY_PATH=/tmp`:
+
+```
+GALLIUM_DRIVER=softpipe → PASS (reference, both clears byte-exact)
+GALLIUM_DRIVER=virgl    → PASS (milestone, both clears byte-exact)
+```
+
+Both clears returned identical results — the bisect tool works exactly
+as designed (LEDGER: bisect principle).
+
+### Bug found during Increment C (cmd_buf overflow)
+
+`submitCommand` had **two** 256-byte limits on command size:
+
+1. `m_cmd_buf` allocated at 256 bytes (line 1876). A 256×256 BGRA
+   resource produces 32 scatter-list entries → 392-byte ATTACH_BACKING
+   command. `memcpy` into the 256-byte buffer silently overflowed,
+   corrupting heap memory and producing a garbled command that the
+   device couldn't process. **Fixed: 256 → 4096** (covers resources
+   up to ~340 pages = 1.3 MB).
+
+2. `submitCommand`'s parameter validation at line 1965 rejected
+   `cmd_size > 256` with `kIOReturnBadArgument`. Even after the
+   buffer was enlarged, this gate silently rejected the command
+   before it reached the virtqueue. **Fixed: 256 → 4096**, matching
+   the buffer capacity. Added a defensive overflow check before the
+   `memcpy` that returns `kIOReturnNoMemory` rather than corrupting.
+
+The probe_winsys_selectors_test (Increment A) didn't catch this
+because its 64×64 resource produced only 5 segments (68-byte command,
+well within 256). Mesa's 256×256 resource produces 30+ segments
+(392-byte command, over 256). The probe's resource size was chosen
+for minimal allocation, not for exercising the scatter-list capacity
+limit — a known gap in the probe's coverage that the first real
+Mesa workload exposed.
+
+### What this closes
+
+This is the structural milestone. Everything downstream — cgl-shim
+(CGL entry-point interception), presentation (OSMesa buffer → NSView
+backing store), real applications (Gecko, WebKit) — is plumbing on
+top of proven primitives. The 3D acceleration path from guest OpenGL
+calls to host GPU pixels is verified end-to-end.
+
+---
+
 ## virgl_iokit_winsys selectors (Increment A) — VERIFIED — 2026-08-10
 
 The winsys selectors (0x6000-0x6009) work end-to-end. `probe/probe_winsys_selectors_test`
