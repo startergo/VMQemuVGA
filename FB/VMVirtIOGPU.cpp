@@ -6257,7 +6257,13 @@ bool VMVirtIOGPUUserClient::initWithTask(task_t owningTask, void* securityToken,
     m_client_type = type;
     m_accelerator = nullptr;
     m_gpu_device = nullptr;
-    
+
+    // ATTACH_BACKING probe state — empty until Phase 1.
+    m_probe_descriptor = nullptr;
+    m_probe_resource_id = 0;
+    m_probe_ctx_id = 0;
+    m_probe_in_progress = false;
+
     // Initialize surface and context management with proper memory safety
     m_surfaces = OSArray::withCapacity(64);
     m_contexts = OSArray::withCapacity(16);
@@ -6374,18 +6380,27 @@ void VMVirtIOGPUUserClient::stop(IOService* provider)
 void VMVirtIOGPUUserClient::free()
 {
     IOLog("VMVirtIOGPUUserClient::free()\n");
-    
+
+    // Release any held probe descriptor — client died with probe in progress.
+    // Must run before m_gpu_device is cleared (in stop) so the host-side
+    // cleanup commands can still be sent. See LEDGER.md:911.
+    probeAttachBackingUserCleanup();
+
     // SAFETY: Use safe release to prevent double-free
     OSSafeReleaseNULL(m_surfaces);
     OSSafeReleaseNULL(m_contexts);
-    
+
     IOUserClient::free();
 }
 
 IOReturn VMVirtIOGPUUserClient::clientClose()
 {
     IOLog("VMVirtIOGPUUserClient::clientClose()\n");
-    
+
+    // Release any held probe descriptor — client is closing (may have died).
+    // Idempotent: probeAttachBackingUserCleanup() checks m_probe_in_progress.
+    probeAttachBackingUserCleanup();
+
     // Clean up resources when client closes
     if (m_surfaces) {
         m_surfaces->flushCollection();
@@ -6393,7 +6408,7 @@ IOReturn VMVirtIOGPUUserClient::clientClose()
     if (m_contexts) {
         m_contexts->flushCollection();
     }
-    
+
     return kIOReturnSuccess;
 }
 
@@ -6783,7 +6798,28 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferFromHost3D\n");
             return kIOReturnBadArgument;
-            
+
+        case 0x5000: { // probeAttachBackingUser — userspace-memory ATTACH_BACKING proof
+            IOLog("VMVirtIOGPUUserClient: probeAttachBackingUser selector=0x5000\n");
+            if (args->scalarInputCount >= 5 && args->scalarInput) {
+                uint32_t phase    = (uint32_t)args->scalarInput[0];
+                // Pack addr and len as lo|hi to avoid platform-dependent uint64_t
+                // marshalling through the scalar array. The 10.6 IOUserClient
+                // scalar-input mechanism is well-defined for 32-bit entries;
+                // packing explicitly avoids any ambiguity.
+                uint32_t addr_lo  = (uint32_t)args->scalarInput[1];
+                uint32_t addr_hi  = (uint32_t)args->scalarInput[2];
+                uint32_t len_lo   = (uint32_t)args->scalarInput[3];
+                uint32_t len_hi   = (uint32_t)args->scalarInput[4];
+                uint64_t addr = ((uint64_t)addr_hi << 32) | addr_lo;
+                uint64_t len  = ((uint64_t)len_hi  << 32) | len_lo;
+                return probeAttachBackingUser(phase, addr, len);
+            }
+            IOLog("VMVirtIOGPUUserClient: Invalid parameters for probeAttachBackingUser "
+                  "(need 5 scalars: phase, addr_lo, addr_hi, len_lo, len_hi)\n");
+            return kIOReturnBadArgument;
+        }
+
         default:
             IOLog("VMVirtIOGPUUserClient: Unsupported method selector %u - returning unsupported\n", selector);
             // CRITICAL: Return kIOReturnUnsupported for unknown selectors
@@ -7106,6 +7142,486 @@ uint32_t VMVirtIOGPUUserClient::getVirglCapability(uint32_t cap)
         default:
             return 0;
     }
+}
+
+// ============================================================================
+// probeAttachBackingUser — userspace-memory ATTACH_BACKING proof
+//
+// Verifies the one structural unknown before the IOKit winsys can be built on
+// top of the proven 3D transport (LEDGER.md:769): does
+// IOMemoryDescriptor::withAddressRange + persistent prepare() work on 10.6 for
+// userspace malloc'd memory? If yes, the entire winsys is bookkeeping on top
+// of proven transport. If no, the model needs kext-allocated backing via
+// clientMemoryForType / IOConnectMapMemory — and we want to know that now,
+// with the reason known, rather than guess it from a winsys that mysteriously
+// returns wrong bytes.
+//
+// *** Why this inlines ATTACH_BACKING instead of calling attachBacking() ***
+// VMVirtIOGPU::attachBacking() at line 7303 calls backing_memory->complete()
+// at line 7403 right after the attach command. That's correct for the
+// display path's IOBufferMemoryDescriptor (permanent kernel allocation;
+// physical addresses don't relocate) but WRONG for userspace malloc'd
+// memory — once complete() unwires the descriptor, the pages can be paged
+// out or relocated, and the host's stored scatter-list addresses become
+// stale. Mesa's pattern (CPU writes to buf between transfers) requires the
+// descriptor to stay prepared across the whole resource lifetime
+// (LEDGER.md:799 constraint 3). The probe deliberately inlines the attach
+// and skips complete() until Phase 2 teardown — zero blast radius on the
+// working display path. The duplicated segment walk is flagged as
+// TEMPORARY and consolidates with the winsys's own attach helper later.
+//
+// *** Predictions pre-registered (LEDGER.md:825) ***
+// PASS: nr_entries >= 2 on the unaligned 16384-byte buffer, every dword
+//       matches the position-dependent pattern after Phase 2.
+// FAIL nr_entries==1: allocator handed contiguous memory by luck, or the
+//       segment walk is wrong — pattern check alone can't distinguish.
+//       Per-segment (addr, length) log disambiguates.
+// FAIL 0xcdcdcdcd in every dword: host wrote nothing. Either scatter list
+//       wrong or withAddressRange didn't actually wire. Check prepare()
+//       return value (logged).
+// FAIL partial corruption (some dwords right, others wrong): pages moved
+//       between Phase 1 and Phase 2; persistent wiring isn't holding.
+//       Points at clientMemoryForType/IOConnectMapMemory pivot.
+// ============================================================================
+IOReturn VMVirtIOGPUUserClient::probeAttachBackingUser(uint32_t phase, uint64_t addr, uint64_t len)
+{
+    // Sentinel IDs — must not collide with display (0x1), WebGL canvas (0xFFFC),
+    // or probeTransport3D's sentinels (0xFFFB/0xFFFA). See probeTransport3D:3717.
+    const uint32_t PROBE_CTX  = 0xFFF9;
+    const uint32_t PROBE_RES  = 0xFFF8;
+    const uint32_t PROBE_W    = 64;
+    const uint32_t PROBE_H    = 64;
+    const uint32_t PROBE_FMT  = VIRGL_FORMAT_R8G8B8A8_UNORM;  // 67
+    const uint64_t PROBE_BUF_SIZE = (uint64_t)PROBE_W * PROBE_H * 4;  // 16384 bytes
+
+    if (!m_gpu_device) {
+        IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL — no GPU device\n");
+        return kIOReturnNotReady;
+    }
+
+    if (phase == 1) {
+        // ===== Phase 1: setup + attach + transfer_to =====
+        if (m_probe_in_progress) {
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL phase 1 — probe already in "
+                  "progress (ctx=0x%x res=0x%x desc=%p). Call phase 2 first.\n",
+                  m_probe_ctx_id, m_probe_resource_id, m_probe_descriptor);
+            return kIOReturnBusy;
+        }
+        if (len != PROBE_BUF_SIZE) {
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL phase 1 — len=%llu expected=%llu\n",
+                  len, PROBE_BUF_SIZE);
+            return kIOReturnBadArgument;
+        }
+        if (addr == 0) {
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL phase 1 — addr=0\n");
+            return kIOReturnBadArgument;
+        }
+
+        IOLog("VMVirtIOGPUUserClient::probeAttachBacking: PHASE 1 START task=%p "
+              "addr=0x%llx len=%llu\n", m_owning_task, addr, len);
+
+        IOReturn ret = kIOReturnSuccess;
+        IOMemoryDescriptor* desc = nullptr;
+        bool ctx_created = false;
+        bool resource_created = false;
+
+        // A. CTX_CREATE
+        {
+            struct virtio_gpu_ctx_create cmd = {};
+            m_gpu_device->initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_CREATE, PROBE_CTX, false);
+            cmd.nlen = 0;
+            cmd.context_init = 0;
+            struct virtio_gpu_ctrl_hdr resp = {};
+            ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL A — CTX_CREATE ret=0x%x\n", ret);
+                return ret;
+            }
+            ctx_created = true;
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase A ok — CTX_CREATE ctx=0x%x\n",
+                  PROBE_CTX);
+        }
+
+        // B. RESOURCE_CREATE_3D (inline; ctx_id is set explicitly to match
+        // probeTransport3D's pattern — the createResource3D helper zeroes it.)
+        {
+            struct virtio_gpu_resource_create_3d cmd = {};
+            cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
+            cmd.hdr.flags = 0;
+            cmd.hdr.fence_id = 0;
+            cmd.hdr.ctx_id = PROBE_CTX;
+            cmd.resource_id = PROBE_RES;
+            cmd.target = VIRGL_TARGET_2D;
+            cmd.format = PROBE_FMT;
+            cmd.bind = VIRGL_BIND_RENDER_TARGET;
+            cmd.width = PROBE_W;
+            cmd.height = PROBE_H;
+            cmd.depth = 1;
+            cmd.array_size = 1;
+            cmd.last_level = 0;
+            cmd.nr_samples = 0;
+            cmd.flags = 0;
+            cmd.padding = 0;
+
+            struct virtio_gpu_ctrl_hdr resp = {};
+            ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL B — RESOURCE_CREATE_3D "
+                      "ret=0x%x resp=0x%x\n", ret, resp.type);
+                goto phase1_cleanup;
+            }
+            resource_created = true;
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase B ok — RESOURCE_CREATE_3D "
+                  "res=0x%x (resp is a real signal)\n", PROBE_RES);
+        }
+
+        // C. CTX_ATTACH_RESOURCE — non-fatal if it fails; virgl may not strictly
+        // require it (mirrors probeTransport3D:3833).
+        {
+            struct virtio_gpu_ctx_resource cmd = {};
+            m_gpu_device->initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
+                                                  PROBE_CTX, false);
+            cmd.resource_id = PROBE_RES;
+            cmd.padding = 0;
+            struct virtio_gpu_ctrl_hdr resp = {};
+            ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: WARN C — CTX_ATTACH_RESOURCE "
+                      "ret=0x%x resp=0x%x (continuing)\n", ret, resp.type);
+            } else {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase C ok — CTX_ATTACH_RESOURCE "
+                      "resp=0x%x\n", resp.type);
+            }
+        }
+
+        // D. withAddressRange + prepare() + inline ATTACH_BACKING (NO complete).
+        //
+        // Constraint 1 from LEDGER.md:785 — use m_owning_task captured at
+        // initWithTask, NOT current_task(). The dispatch is direct switch/case
+        // (no command gate) so current_task() would currently be correct, but
+        // m_owning_task is correct regardless of dispatch routing and costs
+        // nothing. Future-proofs against a command-gate migration silently
+        // breaking the probe.
+        desc = IOMemoryDescriptor::withAddressRange(
+            addr, len, kIODirectionInOut, m_owning_task);
+        if (!desc) {
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL D — withAddressRange "
+                  "returned NULL (task=%p addr=0x%llx len=%llu)\n",
+                  m_owning_task, addr, len);
+            ret = kIOReturnNoMemory;
+            goto phase1_cleanup;
+        }
+        {
+            IOReturn prep_ret = desc->prepare(kIODirectionInOut);
+            if (prep_ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL D — prepare() ret=0x%x "
+                      "(this is the load-bearing check — without prepare, getPhysicalSegment "
+                      "may return invalid addresses)\n", prep_ret);
+                desc->release();
+                ret = prep_ret;
+                goto phase1_cleanup;
+            }
+        }
+
+        // Walk segments. First pass counts, second pass fills entries AND logs
+        // per-segment (addr, length). Per-segment logging is requested
+        // explicitly (LEDGER.md:835) so an unaligned malloc producing
+        // nr_entries==1 is visible — pattern check alone can't distinguish
+        // "allocator handed contiguous memory by luck" from "the walk is
+        // broken", but the per-segment addrs can.
+        {
+            uint32_t nr_entries = 0;
+            IOByteCount total_length = 0;
+            {
+                IOByteCount off = 0;
+                IOByteCount seg_len = 0;
+                while (desc->getPhysicalSegment(off, &seg_len, kIOMemoryMapperNone) != 0) {
+                    nr_entries++;
+                    total_length += seg_len;
+                    off += seg_len;
+                    if (seg_len == 0) break;  // defensive
+                }
+            }
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase D — walked %u segments, "
+                  "%llu bytes (descriptor length %llu)\n",
+                  nr_entries, (uint64_t)total_length, (uint64_t)desc->getLength());
+
+            if (nr_entries == 0 || total_length != desc->getLength()) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL D — walk mismatch "
+                      "walked=%llu expected=%llu entries=%u\n",
+                      (uint64_t)total_length, (uint64_t)desc->getLength(), nr_entries);
+                desc->complete(kIODirectionInOut);
+                desc->release();
+                ret = kIOReturnNoMemory;
+                goto phase1_cleanup;
+            }
+
+            if (nr_entries == 1) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: WARN D — nr_entries=1 on what "
+                      "should be an unaligned 16 KB buffer. Either the allocator handed a "
+                      "contiguous page-aligned region by luck, or the segment walk is wrong. "
+                      "Per-segment addr below should disambiguate:\n");
+            }
+
+            // Build ATTACH_BACKING command.
+            size_t cmd_size = sizeof(virtio_gpu_resource_attach_backing)
+                            + (size_t)nr_entries * sizeof(virtio_gpu_mem_entry);
+            uint8_t* cmdbuf = (uint8_t*)IOMalloc(cmd_size);
+            if (!cmdbuf) {
+                desc->complete(kIODirectionInOut);
+                desc->release();
+                ret = kIOReturnNoMemory;
+                goto phase1_cleanup;
+            }
+
+            virtio_gpu_resource_attach_backing* attach_cmd = (virtio_gpu_resource_attach_backing*)cmdbuf;
+            attach_cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
+            attach_cmd->hdr.flags = 0;
+            attach_cmd->hdr.fence_id = 0;
+            attach_cmd->hdr.ctx_id = 0;
+            attach_cmd->resource_id = PROBE_RES;
+            attach_cmd->nr_entries = nr_entries;
+
+            virtio_gpu_mem_entry* entries =
+                (virtio_gpu_mem_entry*)(cmdbuf + sizeof(virtio_gpu_resource_attach_backing));
+            {
+                IOByteCount off = 0;
+                for (uint32_t i = 0; i < nr_entries; i++) {
+                    IOByteCount seg_len = 0;
+                    IOPhysicalAddress seg_addr = desc->getPhysicalSegment(off, &seg_len, kIOMemoryMapperNone);
+                    entries[i].addr = seg_addr;
+                    entries[i].length = (uint32_t)seg_len;
+                    entries[i].padding = 0;
+                    if (i < 16) {
+                        IOLog("VMVirtIOGPUUserClient::probeAttachBacking:   seg[%u] "
+                              "addr=0x%llx len=%u\n",
+                              i, (uint64_t)seg_addr, (uint32_t)seg_len);
+                    } else if (i == 16) {
+                        IOLog("VMVirtIOGPUUserClient::probeAttachBacking:   ... "
+                              "(further segments suppressed)\n");
+                    }
+                    off += seg_len;
+                }
+            }
+
+            struct virtio_gpu_ctrl_hdr resp = {};
+            ret = m_gpu_device->sendDisplayCommand(&attach_cmd->hdr, cmd_size, &resp, sizeof(resp));
+            IOFree(cmdbuf, cmd_size);
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL D — ATTACH_BACKING "
+                      "ret=0x%x resp=0x%x\n", ret, resp.type);
+                desc->complete(kIODirectionInOut);
+                desc->release();
+                goto phase1_cleanup;
+            }
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase D ok — ATTACH_BACKING "
+                  "resp=0x%x (real signal)\n", resp.type);
+        }
+
+        // E. TRANSFER_TO_HOST_3D — push userspace buffer contents to host.
+        {
+            struct virtio_gpu_transfer_to_host_3d cmd = {};
+            cmd.hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D;
+            cmd.hdr.flags = 0;
+            cmd.hdr.fence_id = 0;
+            cmd.hdr.ctx_id = PROBE_CTX;
+            cmd.resource_id = PROBE_RES;
+            cmd.level = 0;
+            cmd.offset = 0;
+            cmd.stride = 0;        // host computes from format + width
+            cmd.layer_stride = 0;  // host computes
+            cmd.box.x = 0; cmd.box.y = 0; cmd.box.z = 0;
+            cmd.box.w = PROBE_W; cmd.box.h = PROBE_H; cmd.box.d = 1;
+
+            struct virtio_gpu_ctrl_hdr resp = {};
+            ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL E — TRANSFER_TO_HOST_3D "
+                      "ret=0x%x resp=0x%x\n", ret, resp.type);
+                desc->complete(kIODirectionInOut);
+                desc->release();
+                goto phase1_cleanup;
+            }
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase E ok — TRANSFER_TO_HOST_3D "
+                  "resp=0x%x\n", resp.type);
+        }
+
+        // Store probe state. The descriptor stays prepared across the Phase 1
+        // -> Phase 2 return — this is the load-bearing test for "can userspace
+        // memory stay wired across multiple external method calls."
+        m_probe_descriptor = desc;
+        m_probe_resource_id = PROBE_RES;
+        m_probe_ctx_id = PROBE_CTX;
+        m_probe_in_progress = true;
+
+        IOLog("VMVirtIOGPUUserClient::probeAttachBacking: PHASE 1 OK — descriptor %p held "
+              "prepared across calls. Userspace: zero buf, then call phase 2.\n",
+              desc);
+        return kIOReturnSuccess;
+
+    phase1_cleanup:
+        // Tear down everything created so far on Phase 1 failure. Best-effort —
+        // errors in cleanup commands are logged but not propagated.
+        if (resource_created) {
+            struct virtio_gpu_resource_unref ucmd = {};
+            ucmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
+            ucmd.hdr.flags = 0;
+            ucmd.hdr.fence_id = 0;
+            ucmd.hdr.ctx_id = 0;
+            ucmd.resource_id = PROBE_RES;
+            ucmd.padding = 0;
+            struct virtio_gpu_ctrl_hdr uresp = {};
+            m_gpu_device->sendDisplayCommand(&ucmd.hdr, sizeof(ucmd), &uresp, sizeof(uresp));
+        }
+        if (ctx_created) {
+            struct virtio_gpu_ctx_destroy dcmd = {};
+            m_gpu_device->initializeCommandHeader(&dcmd.hdr, VIRTIO_GPU_CMD_CTX_DESTROY,
+                                                  PROBE_CTX, false);
+            struct virtio_gpu_ctrl_hdr dresp = {};
+            m_gpu_device->sendDisplayCommand(&dcmd.hdr, sizeof(dcmd), &dresp, sizeof(dresp));
+        }
+        return ret;
+    }
+    else if (phase == 2) {
+        // ===== Phase 2: transfer_from + teardown =====
+        if (!m_probe_in_progress || !m_probe_descriptor) {
+            IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL phase 2 — no probe in "
+                  "progress (in_progress=%d desc=%p)\n",
+                  m_probe_in_progress ? 1 : 0, m_probe_descriptor);
+            return kIOReturnNotReady;
+        }
+
+        IOLog("VMVirtIOGPUUserClient::probeAttachBacking: PHASE 2 START "
+              "(ctx=0x%x res=0x%x desc=%p)\n",
+              m_probe_ctx_id, m_probe_resource_id, m_probe_descriptor);
+
+        // TRANSFER_FROM_HOST_3D — host writes back through the still-wired
+        // scatter list into the userspace buffer. Uses the same wire struct
+        // as TRANSFER_TO_HOST_3D (virtio_gpu.h:243).
+        IOReturn xfer_ret;
+        {
+            struct virtio_gpu_transfer_to_host_3d cmd = {};
+            cmd.hdr.type = VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D;
+            cmd.hdr.flags = 0;
+            cmd.hdr.fence_id = 0;
+            cmd.hdr.ctx_id = m_probe_ctx_id;
+            cmd.resource_id = m_probe_resource_id;
+            cmd.level = 0;
+            cmd.offset = 0;
+            cmd.stride = 0;
+            cmd.layer_stride = 0;
+            cmd.box.x = 0; cmd.box.y = 0; cmd.box.z = 0;
+            cmd.box.w = PROBE_W; cmd.box.h = PROBE_H; cmd.box.d = 1;
+
+            struct virtio_gpu_ctrl_hdr resp = {};
+            xfer_ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+            if (xfer_ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL phase 2 — "
+                      "TRANSFER_FROM_HOST_3D ret=0x%x resp=0x%x\n", xfer_ret, resp.type);
+            } else {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase 2 TRANSFER_FROM_HOST_3D "
+                      "resp=0x%x (real signal — but byte correctness is verified in userspace)\n",
+                      resp.type);
+            }
+        }
+
+        // Release the descriptor regardless of TRANSFER result. The bytes
+        // already landed (or didn't); the teardown must run.
+        m_probe_descriptor->complete(kIODirectionInOut);
+        m_probe_descriptor->release();
+        m_probe_descriptor = nullptr;
+        m_probe_in_progress = false;
+
+        // Best-effort host-side cleanup. Errors are logged but don't affect
+        // the probe verdict — the bytes are already in userspace by this point.
+        {
+            struct virtio_gpu_resource_unref ucmd = {};
+            ucmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
+            ucmd.hdr.flags = 0;
+            ucmd.hdr.fence_id = 0;
+            ucmd.hdr.ctx_id = 0;
+            ucmd.resource_id = m_probe_resource_id;
+            ucmd.padding = 0;
+            struct virtio_gpu_ctrl_hdr uresp = {};
+            IOReturn uret = m_gpu_device->sendDisplayCommand(&ucmd.hdr, sizeof(ucmd),
+                                                              &uresp, sizeof(uresp));
+            if (uret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase 2 cleanup — "
+                      "RESOURCE_UNREF ret=0x%x (non-fatal)\n", uret);
+            }
+
+            struct virtio_gpu_ctx_destroy dcmd = {};
+            m_gpu_device->initializeCommandHeader(&dcmd.hdr, VIRTIO_GPU_CMD_CTX_DESTROY,
+                                                  m_probe_ctx_id, false);
+            struct virtio_gpu_ctrl_hdr dresp = {};
+            IOReturn dret = m_gpu_device->sendDisplayCommand(&dcmd.hdr, sizeof(dcmd),
+                                                              &dresp, sizeof(dresp));
+            if (dret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPUUserClient::probeAttachBacking: phase 2 cleanup — "
+                      "CTX_DESTROY ret=0x%x (non-fatal)\n", dret);
+            }
+
+            m_probe_resource_id = 0;
+            m_probe_ctx_id = 0;
+        }
+
+        IOLog("VMVirtIOGPUUserClient::probeAttachBacking: PHASE 2 OK — descriptor unwired, "
+              "resources freed. Userspace: read every dword and verify.\n");
+        return xfer_ret;
+    }
+
+    IOLog("VMVirtIOGPUUserClient::probeAttachBacking: FAIL — bad phase %u (expected 1 or 2)\n",
+          phase);
+    return kIOReturnBadArgument;
+}
+
+// -----------------------------------------------------------------------------
+// probeAttachBackingUserCleanup — release held descriptor if userspace dies
+// between Phase 1 and Phase 2.
+//
+// Called from clientClose and free. Idempotent (checks m_probe_in_progress).
+// Without this, a killed test process leaks wired pages in a dead task's
+// address space — silent wired-memory growth that would only surface later
+// as a mysterious shortage.
+// -----------------------------------------------------------------------------
+void VMVirtIOGPUUserClient::probeAttachBackingUserCleanup()
+{
+    if (!m_probe_in_progress || !m_probe_descriptor) {
+        return;
+    }
+
+    IOLog("VMVirtIOGPUUserClient::probeAttachBackingUserCleanup: releasing descriptor %p "
+          "(ctx=0x%x res=0x%x) — client died with probe in progress\n",
+          m_probe_descriptor, m_probe_ctx_id, m_probe_resource_id);
+
+    m_probe_descriptor->complete(kIODirectionInOut);
+    m_probe_descriptor->release();
+    m_probe_descriptor = nullptr;
+    m_probe_in_progress = false;
+
+    // Best-effort host-side cleanup. Skip TRANSFER_FROM_HOST_3D — the userspace
+    // process is gone, the buffer may be unmapped, and we don't care about the
+    // bytes anymore.
+    if (m_gpu_device) {
+        struct virtio_gpu_resource_unref ucmd = {};
+        ucmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
+        ucmd.hdr.flags = 0;
+        ucmd.hdr.fence_id = 0;
+        ucmd.hdr.ctx_id = 0;
+        ucmd.resource_id = m_probe_resource_id;
+        ucmd.padding = 0;
+        struct virtio_gpu_ctrl_hdr uresp = {};
+        m_gpu_device->sendDisplayCommand(&ucmd.hdr, sizeof(ucmd), &uresp, sizeof(uresp));
+
+        struct virtio_gpu_ctx_destroy dcmd = {};
+        m_gpu_device->initializeCommandHeader(&dcmd.hdr, VIRTIO_GPU_CMD_CTX_DESTROY,
+                                              m_probe_ctx_id, false);
+        struct virtio_gpu_ctrl_hdr dresp = {};
+        m_gpu_device->sendDisplayCommand(&dcmd.hdr, sizeof(dcmd), &dresp, sizeof(dresp));
+    }
+
+    m_probe_resource_id = 0;
+    m_probe_ctx_id = 0;
 }
 
 // Transfer framebuffer content to host resource

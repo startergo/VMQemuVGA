@@ -497,9 +497,31 @@ private:
     OSArray* m_contexts;
     UInt32 m_next_surface_id;
     UInt32 m_next_context_id;
-    
+
+    // ------------------------------------------------------------------
+    // ATTACH_BACKING userspace-memory probe state.
+    //
+    // One slot per client — the probe is single-instance by design
+    // (LEDGER.md:814 "a single small buffer in a quiet guest succeeds
+    // whether or not the wiring is correct, because nothing is putting
+    // pressure on those pages"). Concurrency would test something the
+    // probe doesn't claim to test.
+    //
+    // The descriptor is created in Phase 1, held PREPARED across the
+    // Phase 1 -> Phase 2 return, and completed/released in Phase 2.
+    // If the client dies in between, probeAttachBackingUserCleanup()
+    // (called from clientClose and free) releases it — otherwise a
+    // killed test process leaks wired pages in a dead task's address
+    // space. See LEDGER.md:911 (the "userspace dies between phases"
+    // correction).
+    // ------------------------------------------------------------------
+    IOMemoryDescriptor* m_probe_descriptor;
+    uint32_t m_probe_resource_id;
+    uint32_t m_probe_ctx_id;
+    bool m_probe_in_progress;
+
 public:
-    virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type, 
+    virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
                             OSDictionary* properties) APPLE_KEXT_OVERRIDE;
     virtual bool start(IOService* provider) APPLE_KEXT_OVERRIDE;
     virtual void stop(IOService* provider) APPLE_KEXT_OVERRIDE;
@@ -537,6 +559,36 @@ public:
     IOReturn createVirglContext(uint32_t contextId);
     IOReturn attachVirglResource(uint32_t contextId, uint32_t resourceId);
     uint32_t getVirglCapability(uint32_t cap);
+
+    // ------------------------------------------------------------------
+    // ATTACH_BACKING-with-userspace-memory probe (selector 0x5000).
+    //
+    // Tests whether IOMemoryDescriptor::withAddressRange + persistent
+    // prepare() works on 10.6 for userspace malloc'd memory. This is
+    // the one structural unknown before the IOKit winsys can be built
+    // on top of the proven 3D transport (LEDGER.md:769).
+    //
+    // Phase 1: CTX_CREATE -> RESOURCE_CREATE_3D -> CTX_ATTACH_RESOURCE
+    //          -> withAddressRange(m_owning_task, addr, len) -> prepare()
+    //          -> inline ATTACH_BACKING (NO complete; the existing
+    //          VMVirtIOGPU::attachBacking at line 7303 calls complete()
+    //          which would unwire the descriptor and let userspace
+    //          pages relocate — wrong for Mesa's write-between-transfers
+    //          pattern, see LEDGER.md:799 constraint 3)
+    //          -> TRANSFER_TO_HOST_3D. Descriptor stored on probe state.
+    // Phase 2: TRANSFER_FROM_HOST_3D (host writes back through the
+    //          still-wired scatter list) -> complete() -> release
+    //          descriptor -> RESOURCE_UNREF -> CTX_DESTROY.
+    //
+    // Userspace verifies: position-dependent pattern before Phase 1,
+    // zero buf between phases, read every dword after Phase 2 — a wrong
+    // dword names its index and points at the failing scatter-list
+    // entry. The per-segment (addr, length) log during Phase 1's walk
+    // disambiguates nr_entries==1 on an unaligned buffer (lucky
+    // contiguous alloc vs broken walk — pattern check alone can't tell).
+    // ------------------------------------------------------------------
+    IOReturn probeAttachBackingUser(uint32_t phase, uint64_t addr, uint64_t len);
+    void probeAttachBackingUserCleanup();
 };
 
 #endif /* __VMVirtIOGPU_H__ */

@@ -20,6 +20,175 @@ Last updated: 2026-08-10
 
 ---
 
+## ATTACH_BACKING-with-userspace-memory probe — VERIFIED — 2026-08-10
+
+The one structural unknown before the IOKit winsys (LEDGER.md:769) is
+closed. `IOMemoryDescriptor::withAddressRange` + persistent `prepare()`
+works on 10.6 for userspace `malloc`'d memory. Scatter list is correct,
+host reads/writes through it correctly, and the descriptor stays wired
+across two separate external-method calls. **Winsys = bookkeeping on
+proven transport.**
+
+### Test
+
+`probe/probe_attach_backing_test.c`, cross-compiled for
+`x86_64-apple-macos10.6`. Opens `VMQemuVGAAccelerator` (NOT
+`VMVirtIOGPUAccelerator` — see "Service-name finding" below) with
+IOServiceOpen type=4, calls selector 0x5000 twice:
+
+- **Phase 1:** kext does CTX_CREATE → RESOURCE_CREATE_3D →
+  CTX_ATTACH_RESOURCE → `withAddressRange(addr, len, kIODirectionInOut,
+  m_owning_task)` → `prepare()` → inline ATTACH_BACKING (no complete —
+  see "Constraint 3 amendment") → TRANSFER_TO_HOST_3D. Descriptor held
+  prepared across the call return.
+- **Phase 2:** TRANSFER_FROM_HOST_3D (host writes through the still-wired
+  scatter list) → `complete()` → release descriptor → RESOURCE_UNREF →
+  CTX_DESTROY.
+
+Userspace fills `((uint32_t*)buf)[i] = i ^ 0xA5A5A5A5` before Phase 1,
+zeroes buf to `0xCD` between phases, verifies every dword after Phase 2.
+
+### Result (raw values from the run, 22:55 EDT)
+
+- **Userspace:** `base=0x10082a800`, `buf=0x10082a811` (offset 17 from
+  malloc base — non-page-aligned, non-dword-aligned), `len=16384`, 4096
+  dwords.
+- **Kext captured task:** `0xffffff800cc8d780` (matches `m_owning_task`
+  captured at initWithTask, NOT `current_task()` — constraint 1
+  satisfied).
+- **Walked 5 segments totalling 16384 bytes** (matches descriptor
+  `getLength()` exactly — no walk mismatch):
+  - `seg[0] addr=0x64662811 len=2031` — partial first page (offset 17
+    into page 0x64662000, ends at 0x64663000; 0x64663000-0x64662811 = 0x7EF = 2031 ✓)
+  - `seg[1] addr=0x52c63000 len=4096` — full page
+  - `seg[2] addr=0x653e4000 len=4096` — full page
+  - `seg[3] addr=0x64fe5000 len=4096` — full page
+  - `seg[4] addr=0x65c66000 len=2065` — partial last page (16384 - 2031 - 4096×3 = 2065 ✓)
+- **Response codes (all real signals):**
+  - CTX_CREATE: `0x1100`
+  - RESOURCE_CREATE_3D: `0x1100`
+  - CTX_ATTACH_RESOURCE: `0x1100`
+  - ATTACH_BACKING: `0x1100`
+  - TRANSFER_TO_HOST_3D: `0x1100`
+  - TRANSFER_FROM_HOST_3D: `0x1100`
+- **Userspace readback:** **4096/4096 dwords match `i ^ 0xA5A5A5A5`**.
+  Zero mismatches. No `0xCDCDCDCD` (host wrote zero bytes) and no partial
+  corruption (pages moved between phases).
+
+The 5-segment scatter list is the *real* case — `malloc(16 KB + 128)`
+with offset-17 probe deliberately produces a partial first page, three
+discontiguous full pages, and a partial last page. This is exactly the
+shape Mesa's `align_malloc(size, 64)` will produce in the winsys. A
+single-segment result would have tested only the easy case.
+
+### Constraint 3 amendment — verified
+
+`VMVirtIOGPU::attachBacking()` at `VMVirtIOGPU.cpp:7303` calls
+`backing_memory->complete()` at line 7403 right after ATTACH_BACKING.
+This is correct for the display path's `IOBufferMemoryDescriptor`
+(permanent kernel allocation; physical addresses don't relocate) but
+**wrong for userspace `malloc`'d memory** — once `complete()` unwires
+the descriptor, the pages can be paged out or relocated, and the host's
+stored scatter-list addresses become stale. Mesa's pattern (CPU writes
+to buf between transfers) requires the descriptor to stay prepared
+across the whole resource lifetime (LEDGER.md:799 constraint 3).
+
+The probe deliberately inlines the attach logic and skips `complete()`
+until Phase 2 teardown. Zero blast radius on the working display path.
+The duplicated segment walk is flagged as TEMPORARY in code comments —
+the winsys will have its own attach helper that doesn't complete, at
+which point both should consolidate. **Do not consolidate before the
+winsys shape is known** — refactoring attachBacking now expands blast
+radius for no benefit, and whether the winsys wants attach/complete
+split or paired with resource lifetime is an open design question that
+consolidation would pre-empt.
+
+### What the probe also proved (stronger than the pre-registered claim)
+
+The pre-registered PASS criterion was "every dword matches the pattern
+after Phase 2." The probe exercised more than that. The
+`memset(buf, 0xCD)` between Phase 1 and Phase 2 is a **guest CPU write
+into the prepared descriptor's pages**, followed by Phase 2's host
+write-back through the same scatter list — which is exactly Mesa's
+usage pattern (CPU writes vertex/texture data into the resource between
+transfers, host reads/writes through the scatter list during
+TRANSFER_TO/FROM_HOST_3D). So the probe tested guest-write-then-host-
+write over persistent wiring, not just attach-and-read. That was the
+part expected to remain unproven (LEDGER.md:814 "known limits") and
+it held. The "single small buffer in a quiet guest" caveat still
+applies to memory *pressure* (many live resources, sustained stress),
+but the basic CPU-write-during-prepared pattern is now proven.
+
+### What this closes
+
+1. `withAddressRange` works on 10.6 for userspace memory using the
+   `m_owning_task` captured at `initWithTask` (constraint 1 ✓).
+2. `prepare()` produces valid physical addresses for the scatter list;
+   host reads/writes through them correctly.
+3. The descriptor stays prepared across multiple external method calls —
+   persistent wiring holds (constraint 3 ✓).
+4. The 3D transport proven by `probeTransport3D` (LEDGER.md:202)
+   extends to userspace-driven ATTACH_BACKING + transfers, not just the
+   kext-internal kernel-memory path.
+5. The IOKit winsys can use **vtest model**: `malloc` backing in
+   userspace → `withAddressRange` per resource → `prepare` at attach →
+   `complete` at resource teardown. No `clientMemoryForType` /
+   `IOConnectMapMemory` / kext-allocated backing needed.
+
+### What this does NOT close (known limits)
+
+- **Wiring under memory pressure.** A single 16 KB buffer in a quiet
+  guest succeeds whether or not the wiring is correct in a stronger
+  sense, because nothing is putting pressure on those pages. The probe
+  establishes the mechanism; it does NOT prove the wiring holds for the
+  resource's lifetime under sustained memory pressure. Confirming the
+  latter needs many live resources or a memory-pressure test, which is
+  a property of the finished winsys, not something to chase now
+  (LEDGER.md:814).
+- **Fences.** Probe uses synchronous submission. The winsys's
+  `resource_wait` / `resource_is_busy` are trivial today only because
+  `submit_cmd` polls synchronously — when fences become real, these
+  vtable entries stop being trivial (LEDGER.md:109).
+
+### Service-name finding
+
+`IOServiceMatching("VMVirtIOGPUAccelerator")` returns NULL on this
+configuration — the published service is the **base class**
+`VMQemuVGAAccelerator` (visible in ioreg with id 0x1000002b8).
+`VMVirtIOGPUAccelerator` exists in code (VMVirtIOGPU.cpp:5948) and
+calls `registerService()` at line 6054, but registers 0 instances on
+this boot. The base class's `newUserClient` at
+`VMQemuVGAAccelerator.cpp:344` handles type=4 and returns
+`VMVirtIOGPUUserClient` — that's the path the probe uses.
+
+### Boot-stall false alarm
+
+After install, the guest appeared stuck at
+`VMVirtIOFramebuffer::start() - Initialization complete`. Cause was
+slow boot from the no-caches development configuration (rules: "Running
+with the caches deleted is a perfectly good development configuration
+— the kernel loads kexts individually from /S/L/E. Boot is slower"),
+not a kext regression. The next reboot reached `enableController` and
+ran all three probes (`probeResourceTracking`, `probeResourceRecreate`,
+`probeTransport3D`) — all PASS. Pre-existing probes unaffected by the
+new selector.
+
+### Artifacts on disk
+
+- `FB/VMVirtIOGPU.h` — added 4 fields + 2 method decls to
+  `VMVirtIOGPUUserClient`.
+- `FB/VMVirtIOGPU.cpp` — `initWithTask`/`clientClose`/`free` updated;
+  new `case 0x5000` in `externalMethod`; `probeAttachBackingUser` +
+  `probeAttachBackingUserCleanup` implemented.
+- `probe/probe_attach_backing_test.c` — userspace test binary.
+- `probe/install_and_reboot.sh` — guest-side install script.
+
+The probe selector is harmless to leave in-tree — only fires on
+explicit selector 0x5000 from userspace. Useful as a future regression
+check for the winsys foundation.
+
+---
+
 ## Mesa softpipe verified on 10.6 + IOKit winsys scope — 2026-08-10
 
 ### Softpipe render test — VERIFIED (byte-exact, negative-control-confirmed)
