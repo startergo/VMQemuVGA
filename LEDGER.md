@@ -16,7 +16,107 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
+
+---
+
+## Session summary — 2026-08-10/11
+
+### Arc
+
+Starting state: 3D transport proven (probeTransport3D), softpipe verified
+on 10.6, winsys scope research-complete, ATTACH_BACKING probe pre-registered
+but not run.
+
+Ending state: **full 3D stack verified end-to-end.** Mesa-driven `glClear` +
+`glReadPixels` through virgl_iokit_winsys returns byte-exact pixels on 10.6
+via UTM's embedded virglrenderer. The path from guest GL call to host GPU
+pixels is proven.
+
+### What was built (in order)
+
+| Increment | What | Repo | Commit | Verified how |
+|---|---|---|---|---|
+| ATTACH_BACKING probe | Selector 0x5000: two-phase userspace-memory ATTACH_BACKING proof | VMQemuVGA | `0455ac9` | 4096/4096 dwords match position-dependent pattern, 5-segment scatter list, wiring held across guest write between transfers |
+| Pre-registrations | Bisect principle, wrong-colour-vs-nothing, get_caps-must-be-real, submit_cmd-stays-sync, cmd-buffers-by-SUBMIT_3D | VMQemuVGA | `c5ebd2e` | Written before implementation, as required by ground rules |
+| Increment A | 10 kext selectors (0x6000-0x6009): ctx create/destroy, resource create, attach/detach backing, unref, capset info/get, submit, ctx-attach-resource | VMQemuVGA | `6d9a278` | probe_winsys_selectors_test: CTX_CREATE→RESOURCE_CREATE_3D→ATTACH_BACKING→CTX_ATTACH_RESOURCE→CREATE_OBJECT+SET_FB+CLEAR+NOP→TRANSFER_FROM_HOST_3D, both clear colours byte-exact (0xff996633 and 0xff6633cc) |
+| Caveats | 0x1100 diff-target is conditional (silent rejection only); CTX_ATTACH_RESOURCE unconditional in first slice, watch at volume | VMQemuVGA | `9671427` | — |
+| Increment B | virgl_iokit_winsys: 4 files in Mesa-VirGL src/gallium/winsys/virgl/iokit/, 25-entry vtable, inline_sw_helper.h "virgl" driver name, meson wiring | Mesa-VirGL | `c703f8fb910` | libOSMesa.8.dylib links clean (19.9 MB), virgl_iokit_winsys_wrap symbol present |
+| Increment C | cmd_buf/cmd_size limit fix (256→4096); Mesa-driven clear+readback milestone | VMQemuVGA | `63bfd45` | GALLIUM_DRIVER=softpipe PASS + GALLIUM_DRIVER=virgl PASS, same binary, same dylib, identical byte-exact results |
+| Architecture doc | Traps generalised, status table updated, next milestone noted | VMQemuVGA | `ddb795a` | — |
+
+### Bugs found and fixed during the session
+
+1. **VIRGL_OBJECT_SURFACE = 9 (wrong) → 8 (correct).** Enum counts from
+   NULL=0: NULL, BLEND, RASTERIZER, DSA, SHADER, VERTEX_ELEMENTS,
+   SAMPLER_VIEW, SAMPLER_STATE, SURFACE=8. Probe binary inlined 9.
+   Host returned "Illegal command buffer 329985" (= VIRGL_CMD0(1,9,5)).
+   Host-side only; kext saw 0x1100.
+
+2. **VIRGL_CMD0 macro bit shifts wrong.** Real: `((cmd)|(obj)<<8|(len)<<16)`.
+   Probe had obj<<16, len<<24 (off by 8 bits). Same symptom.
+
+3. **attachVirglResource (selector 0x3003) is a stub.** "For now, just log
+   success" — never sends CTX_ATTACH_RESOURCE. virglrenderer requires it
+   before SET_FRAMEBUFFER_STATE. Added 0x6009 ctxAttachResource that
+   actually sends the command.
+
+4. **submitVirglCommandsEx used withAddress (alias) instead of withBytes (copy).**
+   Switched to IOBufferMemoryDescriptor::withBytes to match probeTransport3D's
+   proven path at VMVirtIOGPU.cpp:3866.
+
+5. **submitCommand cmd_buf 256-byte limit.** Two separate 256-byte gates:
+   the buffer allocation (m_cmd_buf = 256) AND the parameter validation
+   (`cmd_size > 256 → kIOReturnBadArgument`). Mesa's 256×256 BGRA resource
+   produces 30+ scatter-list entries → 392+ byte ATTACH_BACKING command.
+   Both gates silently rejected it. Probe's 64×64 resource (5 entries, 68
+   bytes) never hit either gate. Fixed: both → 4096, plus defensive
+   overflow check before memcpy.
+
+### Durable rules extracted
+
+1. **0x1100 means "QEMU parsed it", never "host accepted it."** Three known
+   instances: SUBMIT_3D, VIRTIO_GPU_FILL_CMD size mismatches,
+   RESOURCE_CREATE_3D (QEMU discards virgl_renderer_resource_create's
+   EINVAL). Generalised from the older "SUBMIT_3D always returns 0x1100"
+   note. See LEDGER Increment A section + architecture doc traps.
+
+2. **cmd_buf/cmd_size limits are the same family as 0x1100 traps.** A
+   buffer-size limit that silently rejects commands produces "success
+   code but wrong outcome" — same shape, same difficulty to diagnose.
+   The defensive overflow check now returns kIOReturnNoMemory rather
+   than corrupting.
+
+3. **The probe's resource size determines what it tests.** A 64×64
+   resource (5 scatter-list entries, 68-byte command) tests the basic
+   mechanism. A 256×256 resource (30+ entries, 392-byte command) tests
+   the capacity limit. Probe design should deliberately exercise the
+   real-world case, not just the minimal case.
+
+### What the clear proves and does not prove
+
+**Proves:** context creation, resource creation with userspace backing,
+surface object creation, framebuffer binding, command submission, and
+both transfer directions (TO_HOST and FROM_HOST).
+
+**Does not prove:** shader compilation (GLSL → TGSI → GLSL → Metal —
+three hops, entirely untested), vertex buffers (transfer_put with real
+vertex data), draw calls (DRAW_VBO through submit_cmd).
+
+### Next milestone
+
+**Triangle, not cgl-shim.** A triangle is the first thing that exercises
+the shader compilation chain end to end, needs a second resource written
+via transfer_put, and puts real DRAW_VBO commands through submit_cmd.
+Softpipe stays the reference — a wrong triangle bisects the same way a
+wrong clear would. If shaders survive that, the guest GL stack is
+genuinely proven and the shim becomes plumbing.
+
+### Unexplained residuals
+
+None active. The "stuck at boot" after the first kext install was a
+false alarm — slow boot from the no-caches development configuration,
+not a kext regression (LEDGER: boot-stall false alarm).
 
 ---
 
