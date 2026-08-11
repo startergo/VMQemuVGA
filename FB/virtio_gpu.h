@@ -258,6 +258,8 @@ struct virtio_gpu_transfer_to_host_3d {
 // unrepresentable for the 3D transfer path.
 typedef char vgpu_box_size_check[(sizeof(struct virtio_gpu_box) == 24) ? 1 : -1];
 typedef char vgpu_tf3d_size_check[(sizeof(struct virtio_gpu_transfer_to_host_3d) == 72) ? 1 : -1];
+// (Other winsys-path size assertions live at the end of the file — they
+// reference structs declared below this point.)
 
 /* Memory backing */
 struct virtio_gpu_mem_entry {
@@ -416,5 +418,18 @@ struct virtio_gpu_resource_unmap_blob {
 
 /* Context initialization with capset support */
 #define VIRTIO_GPU_CONTEXT_INIT_CAPSET_ID_MASK 0x000000ff
+
+// Winsys-path size assertions (added 2026-08-10 for virgl_iokit_winsys
+// selectors). Same class of bug as box-vs-rect — a wrong-sized struct
+// silently corrupts the command stream and produces "Illegal command
+// buffer" on the host side, which QEMU propagates back as 0x1100 (so
+// the kext can't see it). Lives at EOF because the structs are declared
+// throughout this file.
+typedef char vgpu_rc3d_size_check[(sizeof(struct virtio_gpu_resource_create_3d) == 72) ? 1 : -1];
+typedef char vgpu_ctx_create_size_check[(sizeof(struct virtio_gpu_ctx_create) == 96) ? 1 : -1];
+typedef char vgpu_ctx_destroy_size_check[(sizeof(struct virtio_gpu_ctx_destroy) == 24) ? 1 : -1];
+typedef char vgpu_ctx_resource_size_check[(sizeof(struct virtio_gpu_ctx_resource) == 32) ? 1 : -1];
+typedef char vgpu_get_capset_info_size_check[(sizeof(struct virtio_gpu_get_capset_info) == 32) ? 1 : -1];
+typedef char vgpu_get_capset_size_check[(sizeof(struct virtio_gpu_get_capset) == 32) ? 1 : -1];
 
 #endif /* __VIRTIO_GPU_H__ */

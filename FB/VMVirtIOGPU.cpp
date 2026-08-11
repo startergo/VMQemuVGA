@@ -90,6 +90,9 @@ bool CLASS::init(OSDictionary* properties)
     }
     m_contexts = OSArray::withCapacity(16);
     m_next_resource_id = 1;
+    // Separate counter for winsys-driven allocations (selector 0x6002).
+    // See partition comment in VMVirtIOGPU.h — never rebase m_next_resource_id.
+    m_next_user_resource_id = 0x100;
     m_next_context_id = 1;
     m_display_resource_id = 0;  // No display resource initially
     m_fence_id = 0;            // VirtIO 1.2: Initialize fence counter
@@ -6264,6 +6267,12 @@ bool VMVirtIOGPUUserClient::initWithTask(task_t owningTask, void* securityToken,
     m_probe_ctx_id = 0;
     m_probe_in_progress = false;
 
+    // Per-client backing-descriptor table for 0x6003/0x6004 — all slots free.
+    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
+        m_user_backings[i].resource_id = 0;
+        m_user_backings[i].desc = nullptr;
+    }
+
     // Initialize surface and context management with proper memory safety
     m_surfaces = OSArray::withCapacity(64);
     m_contexts = OSArray::withCapacity(16);
@@ -6386,6 +6395,9 @@ void VMVirtIOGPUUserClient::free()
     // cleanup commands can still be sent. See LEDGER.md:911.
     probeAttachBackingUserCleanup();
 
+    // Release any held winsys backing descriptors (same pattern).
+    removeAllUserBackings();
+
     // SAFETY: Use safe release to prevent double-free
     OSSafeReleaseNULL(m_surfaces);
     OSSafeReleaseNULL(m_contexts);
@@ -6400,6 +6412,11 @@ IOReturn VMVirtIOGPUUserClient::clientClose()
     // Release any held probe descriptor — client is closing (may have died).
     // Idempotent: probeAttachBackingUserCleanup() checks m_probe_in_progress.
     probeAttachBackingUserCleanup();
+
+    // Release any held winsys backing descriptors (selectors 0x6003/0x6004).
+    // Same leak-prevention pattern as the probe cleanup — a killed test
+    // process would otherwise leak wired pages in a dead task's address space.
+    removeAllUserBackings();
 
     // Clean up resources when client closes
     if (m_surfaces) {
@@ -6786,6 +6803,18 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             IOLog("VMVirtIOGPUUserClient: TransferFromHost3D selector=0x3009\n");
             if (args->scalarInputCount >= 8 && args->scalarInput && m_gpu_device) {
                 uint32_t ctx_id = (args->scalarInputCount >= 9) ? (uint32_t)args->scalarInput[8] : 0;
+                // Log what goes on the wire. Stride/layer_stride/offset are
+                // hardcoded to 0 in transferFromHost3D at line 7183-7185
+                // (host computes from format+width). A wrong host-side stride
+                // produces a plausible-looking partial readback rather than
+                // an error — exactly the failure mode hardest to read from a
+                // colour check.
+                IOLog("VMVirtIOGPUUserClient: 0x3009 wire: res=%u ctx=%u "
+                      "box=(%u,%u,%u, %ux%ux%u) stride=0 layer_stride=0 offset=0\n",
+                      (uint32_t)args->scalarInput[0], ctx_id,
+                      (uint32_t)args->scalarInput[2], (uint32_t)args->scalarInput[3],
+                      (uint32_t)args->scalarInput[4], (uint32_t)args->scalarInput[5],
+                      (uint32_t)args->scalarInput[6], (uint32_t)args->scalarInput[7]);
                 return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                         (uint32_t)args->scalarInput[1],  // level
                                                         (uint32_t)args->scalarInput[2],  // x
@@ -6817,6 +6846,156 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for probeAttachBackingUser "
                   "(need 5 scalars: phase, addr_lo, addr_hi, len_lo, len_hi)\n");
+            return kIOReturnBadArgument;
+        }
+
+        // ====================================================================
+        // virgl_iokit_winsys selectors (0x6000 range).
+        //
+        // Per-operation reusable selectors that the winsys calls in
+        // arbitrary order. Kext owns the resource_id and context_id
+        // allocators. Resource backing descriptors tracked in
+        // m_user_backings[] for persistent wiring across calls.
+        // ====================================================================
+
+        case 0x6000: { // createVirglContextEx — kext allocates ctx_id
+            IOLog("VMVirtIOGPUUserClient: createVirglContextEx selector=0x6000\n");
+            if (args->scalarOutputCount >= 1 && args->scalarOutput) {
+                uint32_t ctx_id = 0;
+                IOReturn ret = createVirglContextEx(&ctx_id);
+                if (ret == kIOReturnSuccess) {
+                    args->scalarOutput[0] = ctx_id;
+                }
+                return ret;
+            }
+            IOLog("VMVirtIOGPUUserClient: Invalid parameters for createVirglContextEx\n");
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6001: { // destroyVirglContextEx
+            IOLog("VMVirtIOGPUUserClient: destroyVirglContextEx selector=0x6001\n");
+            if (args->scalarInputCount >= 1 && args->scalarInput) {
+                return destroyVirglContextEx((uint32_t)args->scalarInput[0]);
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6002: { // createResource3DEx — kext allocates resource_id
+            IOLog("VMVirtIOGPUUserClient: createResource3DEx selector=0x6002\n");
+            if (args->scalarInputCount >= 11 && args->scalarInput &&
+                args->scalarOutputCount >= 1 && args->scalarOutput) {
+                uint32_t resource_id = 0;
+                IOReturn ret = createResource3DEx(
+                    (uint32_t)args->scalarInput[0],   // ctx_id (probeTransport3D sets hdr.ctx_id explicitly — "critical")
+                    (uint32_t)args->scalarInput[1],   // target
+                    (uint32_t)args->scalarInput[2],   // format
+                    (uint32_t)args->scalarInput[3],   // bind
+                    (uint32_t)args->scalarInput[4],   // width
+                    (uint32_t)args->scalarInput[5],   // height
+                    (uint32_t)args->scalarInput[6],   // depth
+                    (uint32_t)args->scalarInput[7],   // array_size
+                    (uint32_t)args->scalarInput[8],   // last_level
+                    (uint32_t)args->scalarInput[9],   // nr_samples
+                    (uint32_t)args->scalarInput[10],  // flags
+                    &resource_id);
+                if (ret == kIOReturnSuccess) {
+                    args->scalarOutput[0] = resource_id;
+                }
+                return ret;
+            }
+            IOLog("VMVirtIOGPUUserClient: Invalid parameters for createResource3DEx "
+                  "(need 11 scalars in: ctx_id,target,format,bind,w,h,d,arr,last,nr,flags; 1 scalar out)\n");
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6003: { // attachBackingUser
+            IOLog("VMVirtIOGPUUserClient: attachBackingUser selector=0x6003\n");
+            if (args->scalarInputCount >= 5 && args->scalarInput) {
+                uint32_t resource_id = (uint32_t)args->scalarInput[0];
+                uint64_t addr = ((uint64_t)(uint32_t)args->scalarInput[2] << 32)
+                              | (uint32_t)args->scalarInput[1];
+                uint64_t len  = ((uint64_t)(uint32_t)args->scalarInput[4] << 32)
+                              | (uint32_t)args->scalarInput[3];
+                return attachBackingUser(resource_id, addr, len);
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6004: { // detachBackingUser
+            IOLog("VMVirtIOGPUUserClient: detachBackingUser selector=0x6004\n");
+            if (args->scalarInputCount >= 1 && args->scalarInput) {
+                return detachBackingUser((uint32_t)args->scalarInput[0]);
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6005: { // resourceUnref
+            IOLog("VMVirtIOGPUUserClient: resourceUnref selector=0x6005\n");
+            if (args->scalarInputCount >= 1 && args->scalarInput) {
+                return resourceUnref((uint32_t)args->scalarInput[0]);
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6006: { // getCapsetInfo
+            IOLog("VMVirtIOGPUUserClient: getCapsetInfo selector=0x6006\n");
+            if (args->scalarInputCount >= 1 &&
+                args->scalarOutputCount >= 3 && args->scalarOutput) {
+                uint32_t id = 0, version = 0, size = 0;
+                IOReturn ret = getCapsetInfo((uint32_t)args->scalarInput[0],
+                                             &id, &version, &size);
+                if (ret == kIOReturnSuccess) {
+                    args->scalarOutput[0] = id;
+                    args->scalarOutput[1] = version;
+                    args->scalarOutput[2] = size;
+                }
+                return ret;
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6007: { // getCapset
+            IOLog("VMVirtIOGPUUserClient: getCapset selector=0x6007\n");
+            if (args->scalarInputCount >= 2 && args->scalarInput &&
+                args->structureOutput && args->structureOutputSize > 0) {
+                uint32_t blob_size = 0;
+                IOReturn ret = getCapset((uint32_t)args->scalarInput[0],
+                                         (uint32_t)args->scalarInput[1],
+                                         args->structureOutput,
+                                         (uint32_t)args->structureOutputSize,
+                                         &blob_size);
+                if (ret == kIOReturnSuccess) {
+                    args->structureOutputSize = blob_size;
+                }
+                return ret;
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6008: { // submitVirglCommandsEx — like 0x3000 but takes ctx_id
+            IOLog("VMVirtIOGPUUserClient: submitVirglCommandsEx selector=0x6008\n");
+            // structureInput (not structureInputDescriptor) — IOKit copies the
+            // bytes into kernel memory; we wrap them with withAddress. Matches
+            // the existing 0x3000 path at line 6659+7162.
+            if (args->scalarInputCount >= 1 && args->scalarInput &&
+                args->structureInput && args->structureInputSize > 0) {
+                return submitVirglCommandsEx((uint32_t)args->scalarInput[0],
+                                              args->structureInput,
+                                              (uint32_t)args->structureInputSize);
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x6009: { // ctxAttachResource — bind resource to context (NOT a stub)
+            IOLog("VMVirtIOGPUUserClient: ctxAttachResource selector=0x6009\n");
+            // The legacy 0x3003 attachVirglResource is a stub ("just log
+            // success" at line 7286) — it never sends CTX_ATTACH_RESOURCE.
+            // virglrenderer requires the binding before SET_FRAMEBUFFER_STATE
+            // can reference a surface built on this resource.
+            if (args->scalarInputCount >= 2 && args->scalarInput) {
+                return ctxAttachResource((uint32_t)args->scalarInput[0],
+                                          (uint32_t)args->scalarInput[1]);
+            }
             return kIOReturnBadArgument;
         }
 
@@ -7622,6 +7801,603 @@ void VMVirtIOGPUUserClient::probeAttachBackingUserCleanup()
 
     m_probe_resource_id = 0;
     m_probe_ctx_id = 0;
+}
+
+// =============================================================================
+// virgl_iokit_winsys selectors (0x6000 range).
+//
+// Per-operation reusable selectors that the winsys calls in arbitrary order.
+// Kext owns the resource_id and context_id allocators — winsys never picks
+// IDs, receives them via scalar output. Resource backing descriptors tracked
+// in m_user_backings[] for persistent wiring across calls.
+//
+// *** Constraint 3 amendment (LEDGER.md:799) ***
+// attachBackingUser inlines the segment walk from VMVirtIOGPU::attachBacking
+// at line 7303 but does NOT call complete() — that's correct for kernel
+// memory (display path) but wrong for userspace malloc'd memory. Pages can
+// move after complete(); the host's stored scatter-list addresses become
+// stale. Descriptor is completed in detachBackingUser instead.
+// =============================================================================
+
+// ---- Per-client backing-descriptor table helpers ------------------------------
+
+IOMemoryDescriptor* VMVirtIOGPUUserClient::findUserBacking(uint32_t resource_id)
+{
+    if (resource_id == 0) return nullptr;
+    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
+        if (m_user_backings[i].resource_id == resource_id) {
+            return m_user_backings[i].desc;
+        }
+    }
+    return nullptr;
+}
+
+bool VMVirtIOGPUUserClient::addUserBacking(uint32_t resource_id, IOMemoryDescriptor* desc)
+{
+    if (resource_id == 0 || !desc) return false;
+    // Reject duplicate — caller must detach before re-attaching.
+    if (findUserBacking(resource_id) != nullptr) return false;
+    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
+        if (m_user_backings[i].resource_id == 0) {
+            m_user_backings[i].resource_id = resource_id;
+            m_user_backings[i].desc = desc;
+            return true;
+        }
+    }
+    return false;  // table full
+}
+
+void VMVirtIOGPUUserClient::removeUserBacking(uint32_t resource_id)
+{
+    if (resource_id == 0) return;
+    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
+        if (m_user_backings[i].resource_id == resource_id) {
+            if (m_user_backings[i].desc) {
+                m_user_backings[i].desc->complete(kIODirectionInOut);
+                m_user_backings[i].desc->release();
+            }
+            m_user_backings[i].resource_id = 0;
+            m_user_backings[i].desc = nullptr;
+            return;
+        }
+    }
+}
+
+void VMVirtIOGPUUserClient::removeAllUserBackings()
+{
+    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
+        if (m_user_backings[i].resource_id != 0 && m_user_backings[i].desc) {
+            IOLog("VMVirtIOGPUUserClient: removeAllUserBackings releasing "
+                  "descriptor %p for resource=0x%x (client died)\n",
+                  m_user_backings[i].desc, m_user_backings[i].resource_id);
+            m_user_backings[i].desc->complete(kIODirectionInOut);
+            m_user_backings[i].desc->release();
+        }
+        m_user_backings[i].resource_id = 0;
+        m_user_backings[i].desc = nullptr;
+    }
+}
+
+// ---- 0x6000 createVirglContextEx ----------------------------------------------
+//
+// Kext allocates the ctx_id (mirrors DRM model — virtio-gpu allows client-
+// chosen IDs but production winsys don't expose that because the device's
+// resource space is global). Uses m_next_context_id which is shared with
+// the existing CTX_CREATE path; not partitioned further because contexts
+// are low-volume and existing usage is well below any reasonable range.
+IOReturn VMVirtIOGPUUserClient::createVirglContextEx(uint32_t* out_ctx_id)
+{
+    if (!m_gpu_device || !out_ctx_id) return kIOReturnBadArgument;
+
+    // Pick a fresh ctx_id well clear of the kext's eager-init ctx_id=2
+    // (initializeWebGLAcceleration) and probe sentinels (0xFFFB-0xFFFF).
+    static uint32_t s_next_user_ctx_id = 0x100;  // per-process not needed; one guest
+    uint32_t ctx_id = s_next_user_ctx_id++;
+
+    struct virtio_gpu_ctx_create cmd = {};
+    m_gpu_device->initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_CREATE,
+                                          ctx_id, false);
+    cmd.nlen = 0;
+    cmd.context_init = 0;
+
+    struct virtio_gpu_ctrl_hdr resp = {};
+    // Same diagnostic caveat as createResource3DEx: QEMU propagates 0x1100
+    // back to the guest even if virglrenderer rejected the context creation.
+    // Hex dump lets us compare against probeTransport3D's working bytes.
+    IOLog("VMVirtIOGPUUserClient::createVirglContextEx: wire bytes (sizeof=%zu):",
+          sizeof(cmd));
+    {
+        const uint32_t* dwords = (const uint32_t*)&cmd;
+        unsigned n_dump = sizeof(cmd) / 4;
+        if (n_dump > 8) n_dump = 8;  // ctx_create is large (debug_name[64])
+        for (unsigned i = 0; i < n_dump; i++) {
+            IOLog(" [%u]=0x%08x", i, dwords[i]);
+        }
+    }
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     &resp, sizeof(resp));
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPUUserClient::createVirglContextEx: FAIL CTX_CREATE "
+              "ctx=0x%x ret=0x%x resp=0x%x\n", ctx_id, ret, resp.type);
+        return ret;
+    }
+    IOLog("VMVirtIOGPUUserClient::createVirglContextEx: ok ctx=0x%x "
+          "resp=0x%x\n", ctx_id, resp.type);
+    *out_ctx_id = ctx_id;
+    return kIOReturnSuccess;
+}
+
+// ---- 0x6001 destroyVirglContextEx --------------------------------------------
+IOReturn VMVirtIOGPUUserClient::destroyVirglContextEx(uint32_t ctx_id)
+{
+    if (!m_gpu_device) return kIOReturnNotReady;
+
+    struct virtio_gpu_ctx_destroy cmd = {};
+    m_gpu_device->initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_DESTROY,
+                                          ctx_id, false);
+    struct virtio_gpu_ctrl_hdr resp = {};
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     &resp, sizeof(resp));
+    IOLog("VMVirtIOGPUUserClient::destroyVirglContextEx: ctx=0x%x ret=0x%x "
+          "resp=0x%x\n", ctx_id, ret, resp.type);
+    return ret;
+}
+
+// ---- 0x6002 createResource3DEx -----------------------------------------------
+//
+// Kext allocates resource_id from m_next_user_resource_id (starts at 0x100,
+// separate counter from the display path's m_next_resource_id — see partition
+// comment near the field declaration).
+IOReturn VMVirtIOGPUUserClient::createResource3DEx(
+    uint32_t ctx_id, uint32_t target, uint32_t format, uint32_t bind,
+    uint32_t width, uint32_t height, uint32_t depth,
+    uint32_t array_size, uint32_t last_level, uint32_t nr_samples,
+    uint32_t flags, uint32_t* out_resource_id)
+{
+    if (!m_gpu_device || !out_resource_id) return kIOReturnBadArgument;
+
+    uint32_t resource_id = m_gpu_device->allocateUserResourceId();
+
+    struct virtio_gpu_resource_create_3d cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    // probeTransport3D sets hdr.ctx_id explicitly (line 3772 comment:
+    // "critical — set explicitly"). The virgl decoder keys resource
+    // accounting on this. Pass the caller's ctx_id, not 0.
+    cmd.hdr.ctx_id = ctx_id;
+    cmd.resource_id = resource_id;
+    cmd.target = target;
+    cmd.format = format;
+    cmd.bind = bind;
+    cmd.width = width;
+    cmd.height = height;
+    cmd.depth = depth;
+    cmd.array_size = array_size;
+    cmd.last_level = last_level;
+    cmd.nr_samples = nr_samples;
+    cmd.flags = flags;
+    cmd.padding = 0;
+
+    struct virtio_gpu_ctrl_hdr resp = {};
+    // CRITICAL DIAGNOSTIC: RESOURCE_CREATE_3D can be rejected by virglrenderer
+    // (returning 0x1205 = ERR_INVALID_PARAMETER) while QEMU still responds
+    // 0x1100 to the guest — same unconditional-success trap as SUBMIT_3D.
+    // Without this hex dump we can't see what bytes the host actually got.
+    IOLog("VMVirtIOGPUUserClient::createResource3DEx: wire bytes (sizeof=%zu):",
+          sizeof(cmd));
+    {
+        const uint32_t* dwords = (const uint32_t*)&cmd;
+        unsigned n_dump = sizeof(cmd) / 4;
+        for (unsigned i = 0; i < n_dump; i++) {
+            IOLog(" [%u]=0x%08x", i, dwords[i]);
+        }
+    }
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     &resp, sizeof(resp));
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPUUserClient::createResource3DEx: FAIL res=0x%x "
+              "ret=0x%x resp=0x%x\n", resource_id, ret, resp.type);
+        return ret;
+    }
+    // NOTE: resp=0x1100 here DOES NOT MEAN the host accepted the create.
+    // virglrenderer may have rejected it (returns EINVAL internally) while
+    // QEMU still pushes 0x1100 back to the guest. Only the host debug log
+    // tells us if it actually worked.
+    IOLog("VMVirtIOGPUUserClient::createResource3DEx: ok res=0x%x "
+          "fmt=%u bind=0x%x %ux%ux%u arr=%u resp=0x%x\n",
+          resource_id, format, bind, width, height, depth, array_size,
+          resp.type);
+    *out_resource_id = resource_id;
+    return kIOReturnSuccess;
+}
+
+// ---- 0x6003 attachBackingUser ------------------------------------------------
+//
+// Inline ATTACH_BACKING with persistent wiring. Mirrors the 0x5000 probe's
+// attach path exactly, minus the probe's hardcoded sentinel IDs. Descriptor
+// stored in m_user_backings[resource_id]; complete() deferred to
+// detachBackingUser (0x6004) or resourceUnref (0x6005).
+IOReturn VMVirtIOGPUUserClient::attachBackingUser(uint32_t resource_id,
+                                                   uint64_t addr, uint64_t len)
+{
+    if (!m_gpu_device) return kIOReturnNotReady;
+    if (resource_id == 0 || addr == 0 || len == 0) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: bad args res=0x%x "
+              "addr=0x%llx len=%llu\n", resource_id, addr, len);
+        return kIOReturnBadArgument;
+    }
+    if (findUserBacking(resource_id) != nullptr) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: res=0x%x already has "
+              "backing attached — detach first\n", resource_id);
+        return kIOReturnBusy;
+    }
+
+    IOLog("VMVirtIOGPUUserClient::attachBackingUser: res=0x%x task=%p "
+          "addr=0x%llx len=%llu\n", resource_id, m_owning_task, addr, len);
+
+    // Constraint 1: use m_owning_task captured at initWithTask, NOT
+    // current_task(). See LEDGER.md:785.
+    IOMemoryDescriptor* desc = IOMemoryDescriptor::withAddressRange(
+        addr, len, kIODirectionInOut, m_owning_task);
+    if (!desc) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: FAIL withAddressRange "
+              "returned NULL\n");
+        return kIOReturnNoMemory;
+    }
+
+    IOReturn prep_ret = desc->prepare(kIODirectionInOut);
+    if (prep_ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: FAIL prepare ret=0x%x\n",
+              prep_ret);
+        desc->release();
+        return prep_ret;
+    }
+
+    // Walk segments. First pass counts; second pass fills entries AND logs
+    // per-segment (addr, length) — same diagnostic the 0x5000 probe logs.
+    uint32_t nr_entries = 0;
+    IOByteCount total_length = 0;
+    {
+        IOByteCount off = 0;
+        IOByteCount seg_len = 0;
+        while (desc->getPhysicalSegment(off, &seg_len, kIOMemoryMapperNone) != 0) {
+            nr_entries++;
+            total_length += seg_len;
+            off += seg_len;
+            if (seg_len == 0) break;
+        }
+    }
+    IOLog("VMVirtIOGPUUserClient::attachBackingUser: res=0x%x walked %u "
+          "segments, %llu bytes (descriptor length %llu)\n",
+          resource_id, nr_entries, (uint64_t)total_length,
+          (uint64_t)desc->getLength());
+
+    if (nr_entries == 0 || total_length != desc->getLength()) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: FAIL walk mismatch\n");
+        desc->complete(kIODirectionInOut);
+        desc->release();
+        return kIOReturnNoMemory;
+    }
+    if (nr_entries == 1) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: WARN nr_entries=1 — "
+              "allocator handed contiguous memory by luck, or walk is broken. "
+              "Per-segment addr below should disambiguate.\n");
+    }
+
+    // Build ATTACH_BACKING command.
+    size_t cmd_size = sizeof(virtio_gpu_resource_attach_backing)
+                    + (size_t)nr_entries * sizeof(virtio_gpu_mem_entry);
+    uint8_t* cmdbuf = (uint8_t*)IOMalloc(cmd_size);
+    if (!cmdbuf) {
+        desc->complete(kIODirectionInOut);
+        desc->release();
+        return kIOReturnNoMemory;
+    }
+    virtio_gpu_resource_attach_backing* attach_cmd =
+        (virtio_gpu_resource_attach_backing*)cmdbuf;
+    attach_cmd->hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
+    attach_cmd->hdr.flags = 0;
+    attach_cmd->hdr.fence_id = 0;
+    attach_cmd->hdr.ctx_id = 0;
+    attach_cmd->resource_id = resource_id;
+    attach_cmd->nr_entries = nr_entries;
+
+    virtio_gpu_mem_entry* entries =
+        (virtio_gpu_mem_entry*)(cmdbuf + sizeof(virtio_gpu_resource_attach_backing));
+    {
+        IOByteCount off = 0;
+        for (uint32_t i = 0; i < nr_entries; i++) {
+            IOByteCount seg_len = 0;
+            IOPhysicalAddress seg_addr = desc->getPhysicalSegment(off, &seg_len,
+                                                                   kIOMemoryMapperNone);
+            entries[i].addr = seg_addr;
+            entries[i].length = (uint32_t)seg_len;
+            entries[i].padding = 0;
+            if (i < 16) {
+                IOLog("VMVirtIOGPUUserClient::attachBackingUser:   seg[%u] "
+                      "addr=0x%llx len=%u\n", i, (uint64_t)seg_addr,
+                      (uint32_t)seg_len);
+            } else if (i == 16) {
+                IOLog("VMVirtIOGPUUserClient::attachBackingUser:   ... "
+                      "(further segments suppressed)\n");
+            }
+            off += seg_len;
+        }
+    }
+
+    struct virtio_gpu_ctrl_hdr resp = {};
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&attach_cmd->hdr, cmd_size,
+                                                     &resp, sizeof(resp));
+    IOFree(cmdbuf, cmd_size);
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: FAIL ATTACH_BACKING "
+              "ret=0x%x resp=0x%x\n", ret, resp.type);
+        desc->complete(kIODirectionInOut);
+        desc->release();
+        return ret;
+    }
+
+    // Store descriptor for later transfer/submit calls. NOT completed here.
+    if (!addUserBacking(resource_id, desc)) {
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: FAIL backing table "
+              "full (%d entries)\n", MAX_USER_BACKINGS);
+        desc->complete(kIODirectionInOut);
+        desc->release();
+        return kIOReturnNoResources;
+    }
+
+    IOLog("VMVirtIOGPUUserClient::attachBackingUser: ok res=0x%x descriptor "
+          "%p held prepared across calls\n", resource_id, desc);
+    return kIOReturnSuccess;
+}
+
+// ---- 0x6004 detachBackingUser ------------------------------------------------
+IOReturn VMVirtIOGPUUserClient::detachBackingUser(uint32_t resource_id)
+{
+    if (!m_gpu_device) return kIOReturnNotReady;
+
+    // RESOURCE_DETACH_BACKING is optional — UNREF will drop backing too.
+    // But explicit detach lets the winsys reuse the resource with new
+    // backing. Send DETACH_BACKING, then complete+release the descriptor.
+    struct virtio_gpu_resource_detach_backing cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    cmd.hdr.ctx_id = 0;
+    cmd.resource_id = resource_id;
+    cmd.padding = 0;
+
+    struct virtio_gpu_ctrl_hdr resp = {};
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     &resp, sizeof(resp));
+    IOLog("VMVirtIOGPUUserClient::detachBackingUser: res=0x%x DETACH_BACKING "
+          "ret=0x%x resp=0x%x\n", resource_id, ret, resp.type);
+
+    // Release descriptor regardless of DETACH result (UNREF will drop it
+    // host-side if DETACH failed).
+    removeUserBacking(resource_id);
+    return ret;
+}
+
+// ---- 0x6005 resourceUnref ----------------------------------------------------
+IOReturn VMVirtIOGPUUserClient::resourceUnref(uint32_t resource_id)
+{
+    if (!m_gpu_device) return kIOReturnNotReady;
+    if (resource_id == 0) return kIOReturnBadArgument;
+
+    // Defensive: if a backing descriptor is still held (winsys forgot to
+    // detach), release it before UNREF destroys the host-side resource.
+    if (findUserBacking(resource_id) != nullptr) {
+        IOLog("VMVirtIOGPUUserClient::resourceUnref: res=0x%x still has "
+              "backing held — releasing defensively\n", resource_id);
+        removeUserBacking(resource_id);
+    }
+
+    struct virtio_gpu_resource_unref cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    cmd.hdr.ctx_id = 0;
+    cmd.resource_id = resource_id;
+    cmd.padding = 0;
+
+    struct virtio_gpu_ctrl_hdr resp = {};
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     &resp, sizeof(resp));
+    IOLog("VMVirtIOGPUUserClient::resourceUnref: res=0x%x ret=0x%x "
+          "resp=0x%x\n", resource_id, ret, resp.type);
+    return ret;
+}
+
+// ---- 0x6006 getCapsetInfo ----------------------------------------------------
+//
+// Real GET_CAPSET_INFO — Mesa parses the capset blob's CONTENTS to decide
+// GL version/features, so a hardcoded shortcut here would produce failures
+// far from the cause.
+IOReturn VMVirtIOGPUUserClient::getCapsetInfo(uint32_t capset_index,
+                                               uint32_t* out_id,
+                                               uint32_t* out_version,
+                                               uint32_t* out_size)
+{
+    if (!m_gpu_device || !out_id || !out_version || !out_size) {
+        return kIOReturnBadArgument;
+    }
+
+    struct virtio_gpu_get_capset_info cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET_INFO;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    cmd.hdr.ctx_id = 0;
+    cmd.capset_index = capset_index;
+    cmd.padding = 0;
+
+    struct virtio_gpu_resp_capset_info resp = {};
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     &resp.hdr, sizeof(resp));
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPUUserClient::getCapsetInfo: FAIL index=%u ret=0x%x\n",
+              capset_index, ret);
+        return ret;
+    }
+    IOLog("VMVirtIOGPUUserClient::getCapsetInfo: index=%u -> id=%u "
+          "version=%u size=%u\n", capset_index, resp.capset_id,
+          resp.capset_max_version, resp.capset_max_size);
+    *out_id = resp.capset_id;
+    *out_version = resp.capset_max_version;
+    *out_size = resp.capset_max_size;
+    return kIOReturnSuccess;
+}
+
+// ---- 0x6007 getCapset --------------------------------------------------------
+IOReturn VMVirtIOGPUUserClient::getCapset(uint32_t capset_id, uint32_t version,
+                                           void* out_blob, uint32_t blob_capacity,
+                                           uint32_t* out_blob_size)
+{
+    if (!m_gpu_device || !out_blob || !out_blob_size || blob_capacity == 0) {
+        return kIOReturnBadArgument;
+    }
+
+    struct virtio_gpu_get_capset cmd = {};
+    cmd.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
+    cmd.hdr.flags = 0;
+    cmd.hdr.fence_id = 0;
+    cmd.hdr.ctx_id = 0;
+    cmd.capset_id = capset_id;
+    cmd.capset_version = version;
+
+    // Response buffer: header + up to 2048 bytes of capset blob. VIRGL2's
+    // 1408-byte capset is the largest we expect; 2048 gives headroom.
+    const uint32_t RESPONSE_CAP = 2048 + sizeof(virtio_gpu_ctrl_hdr);
+    uint8_t response_buf[RESPONSE_CAP];
+    memset(response_buf, 0, sizeof(response_buf));
+
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     (virtio_gpu_ctrl_hdr*)response_buf,
+                                                     sizeof(response_buf));
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPUUserClient::getCapset: FAIL id=%u ver=%u ret=0x%x\n",
+              capset_id, version, ret);
+        return ret;
+    }
+
+    // The host writes the capset blob immediately after the response header.
+    // Bytes written = response size - header size.
+    // (sendDisplayCommand returns the device's actual response length in
+    // its resp_size parameter, but we work with what fits in our buffer.)
+    uint32_t blob_size = sizeof(response_buf) - sizeof(virtio_gpu_ctrl_hdr);
+    if (blob_size > blob_capacity) blob_size = blob_capacity;
+    memcpy(out_blob, response_buf + sizeof(virtio_gpu_ctrl_hdr), blob_size);
+    *out_blob_size = blob_size;
+
+    IOLog("VMVirtIOGPUUserClient::getCapset: id=%u ver=%u -> %u bytes "
+          "(first 16: %02x %02x %02x %02x %02x %02x %02x %02x "
+          "%02x %02x %02x %02x %02x %02x %02x %02x)\n",
+          capset_id, version, blob_size,
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 0],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 1],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 2],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 3],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 4],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 5],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 6],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 7],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 8],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 9],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 10],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 11],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 12],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 13],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 14],
+          response_buf[sizeof(virtio_gpu_ctrl_hdr) + 15]);
+    return kIOReturnSuccess;
+}
+
+// ---- 0x6008 submitVirglCommandsEx -------------------------------------------
+//
+// Like the existing 0x3000 submitVirglCommands but takes ctx_id as a scalar
+// input. The existing 0x3000 hardcodes ctx_id=1 in executeCommands which
+// doesn't work for the winsys (which has its own kext-allocated ctx_id).
+//
+// Mirrors submitVirglCommands at line 7162: wrap the caller's bytes in an
+// IOMemoryDescriptor via withAddress, call executeCommands(ctx_id, …),
+// release the descriptor.
+IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
+                                                       const void* commands,
+                                                       uint32_t size)
+{
+    if (!m_gpu_device) return kIOReturnNotReady;
+    if (!commands || size == 0) return kIOReturnBadArgument;
+    if (!m_gpu_device->supports3D()) return kIOReturnUnsupported;
+    if (size > 1024 * 1024) return kIOReturnBadArgument;  // 1 MB safety cap
+
+    // probeTransport3D uses IOBufferMemoryDescriptor::withBytes (line 3866)
+    // which COPIES bytes into a fresh kernel buffer. The existing 0x3000
+    // submitVirglCommands uses IOMemoryDescriptor::withAddress (line 7184)
+    // which aliases the caller's pointer — but 0x3000 has never been
+    // exercised end-to-end. Match probeTransport3D's proven path.
+    IOBufferMemoryDescriptor* cmd_desc = IOBufferMemoryDescriptor::withBytes(
+        commands, size, kIODirectionOut);
+    if (!cmd_desc) {
+        IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: withBytes FAIL\n");
+        return kIOReturnNoMemory;
+    }
+
+    // Hex dump the first 80 bytes (20 dwords) so the exact bytes on the wire
+    // can be diffed against what probeTransport3D sends. SUBMIT_3D returns
+    // 0x1100 unconditionally — the only way to know if virglrenderer actually
+    // decoded the commands is to compare bytes here with what the host log
+    // shows it received, AND to check the host log for decode errors.
+    {
+        const uint32_t* dwords = (const uint32_t*)commands;
+        unsigned n_dump = size / 4; if (n_dump > 20) n_dump = 20;
+        IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
+              "first %u dwords:", ctx_id, size, n_dump);
+        for (unsigned i = 0; i < n_dump; i++) {
+            IOLog(" [%u]=0x%08x", i, dwords[i]);
+        }
+    }
+
+    IOReturn ret = m_gpu_device->executeCommands(ctx_id, cmd_desc);
+    cmd_desc->release();
+
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
+              "executeCommands FAIL ret=0x%x\n", ctx_id, size, ret);
+    } else {
+        IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u ok\n",
+              ctx_id, size);
+    }
+    return ret;
+}
+
+// ---- 0x6009 ctxAttachResource ------------------------------------------------
+//
+// Send VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE. Binds a resource to a context —
+// virglrenderer requires this before SET_FRAMEBUFFER_STATE can reference a
+// surface built on the resource.
+//
+// *** NOT the legacy 0x3003 path ***
+// The existing 0x3003 attachVirglResource at line 7276 is a stub ("For now,
+// just log success") — it never sends the command. This selector actually
+// sends it. Same wire format probeTransport3D uses at line 3823-3841.
+IOReturn VMVirtIOGPUUserClient::ctxAttachResource(uint32_t ctx_id,
+                                                   uint32_t resource_id)
+{
+    if (!m_gpu_device) return kIOReturnNotReady;
+
+    struct virtio_gpu_ctx_resource cmd = {};
+    m_gpu_device->initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
+                                          ctx_id, false);
+    cmd.resource_id = resource_id;
+    cmd.padding = 0;
+
+    struct virtio_gpu_ctrl_hdr resp = {};
+    IOReturn ret = m_gpu_device->sendDisplayCommand(&cmd.hdr, sizeof(cmd),
+                                                     &resp, sizeof(resp));
+    IOLog("VMVirtIOGPUUserClient::ctxAttachResource: ctx=0x%x res=0x%x "
+          "ret=0x%x resp=0x%x\n", ctx_id, resource_id, ret, resp.type);
+    return ret;
 }
 
 // Transfer framebuffer content to host resource

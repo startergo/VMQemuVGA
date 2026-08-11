@@ -200,6 +200,21 @@ private:
     gpu_resource m_resource_pool[64];
     uint32_t m_resource_count;
     uint32_t m_next_resource_id;
+    // ------------------------------------------------------------------
+    // Resource-id allocator partition (do NOT rebase m_next_resource_id
+    // — display path, WebGL eager init, and several other allocations
+    // at lines 3138/3299/4665/5337/5356/5692/5706 consume it; rebasing
+    // changes IDs the display path already hands out).
+    //
+    //   m_next_resource_id     (starts at 1) — display path + kext-internal
+    //   m_next_user_resource_id (starts at 0x100) — winsys-driven only
+    //                                                  (selector 0x6002)
+    //   0xFFF8-0xFFFF           — probe sentinels (probeTransport3D,
+    //                              probeAttachBackingUser). Hardcoded,
+    //                              never allocated.
+    // Two counters never overlap by construction.
+    // ------------------------------------------------------------------
+    uint32_t m_next_user_resource_id;
     uint32_t m_display_resource_id;  // Resource ID for primary display
     
     // 3D context management
@@ -293,6 +308,12 @@ public:
     // trustworthy signal is the byte readback; SUBMIT_3D responses are
     // unconditional 0x1100 and prove nothing about virgl decode success.
     void probeTransport3D();
+
+    // Allocate a resource_id from the winsys-driven counter (m_next_user_resource_id).
+    // Used by VMVirtIOGPUUserClient::createResource3DEx (selector 0x6002).
+    // Separate counter from m_next_resource_id (display path) per the
+    // partition comment near that field's declaration.
+    uint32_t allocateUserResourceId() { return m_next_user_resource_id++; }
 
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;
@@ -520,6 +541,35 @@ private:
     uint32_t m_probe_ctx_id;
     bool m_probe_in_progress;
 
+    // ------------------------------------------------------------------
+    // Per-client backing-descriptor table for selector 0x6003
+    // (attachBackingUser) and 0x6004 (detachBackingUser).
+    //
+    // Each attach_backing_user call wires a userspace buffer into an
+    // IOMemoryDescriptor and stores it here indexed by resource_id, so
+    // later transfer_put/transfer_get/submit_cmd can rely on the wiring
+    // holding (constraint 3 from LEDGER.md:799 — prepare at attach,
+    // complete at detach/teardown, NOT after each transfer).
+    //
+    // OSArray is forbidden per CLAUDE.md (C struct in OSArray panics
+    // through garbage vtables), so this is a fixed-size typed pool with
+    // tombstone semantics (resource_id == 0 → free slot).
+    //
+    // removeAllUserBackings (called from clientClose/free) iterates and
+    // completes+releases any held descriptors — defensive against
+    // "userspace dies with resources attached" leaking wired pages.
+    // ------------------------------------------------------------------
+    #define MAX_USER_BACKINGS 64
+    struct user_backing_entry {
+        uint32_t resource_id;       // 0 = free slot
+        IOMemoryDescriptor* desc;
+    };
+    user_backing_entry m_user_backings[MAX_USER_BACKINGS];
+    IOMemoryDescriptor* findUserBacking(uint32_t resource_id);
+    bool addUserBacking(uint32_t resource_id, IOMemoryDescriptor* desc);
+    void removeUserBacking(uint32_t resource_id);   // complete + release + zero slot
+    void removeAllUserBackings();                    // for clientClose/free
+
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
                             OSDictionary* properties) APPLE_KEXT_OVERRIDE;
@@ -589,6 +639,44 @@ public:
     // ------------------------------------------------------------------
     IOReturn probeAttachBackingUser(uint32_t phase, uint64_t addr, uint64_t len);
     void probeAttachBackingUserCleanup();
+
+    // ------------------------------------------------------------------
+    // virgl_iokit_winsys selectors (0x6000 range, September 2026).
+    //
+    // Reusable per-operation selectors that the winsys calls in
+    // arbitrary order — unlike the 0x5000 probe which fires both phases
+    // of a fixed sequence with hardcoded sentinel IDs (0xFFF9/0xFFF8).
+    // Kext owns the resource_id and context_id allocators
+    // (m_next_user_resource_id, m_next_context_id) — winsys never picks
+    // IDs, receives them via scalar output. See partition comment near
+    // m_next_user_resource_id field above.
+    //
+    // Resource backing descriptors are tracked in m_user_backings[] so
+    // transfer_put/transfer_get/submit_cmd can rely on wiring holding
+    // across calls (constraint 3, LEDGER.md:799).
+    // ------------------------------------------------------------------
+    IOReturn createVirglContextEx(uint32_t* out_ctx_id);     // 0x6000
+    IOReturn destroyVirglContextEx(uint32_t ctx_id);          // 0x6001
+    IOReturn createResource3DEx(uint32_t ctx_id,             // 0x6002
+                                uint32_t target, uint32_t format,
+                                uint32_t bind, uint32_t width, uint32_t height,
+                                uint32_t depth, uint32_t array_size,
+                                uint32_t last_level, uint32_t nr_samples,
+                                uint32_t flags, uint32_t* out_resource_id);
+    IOReturn attachBackingUser(uint32_t resource_id,         // 0x6003
+                               uint64_t addr, uint64_t len);
+    IOReturn detachBackingUser(uint32_t resource_id);        // 0x6004
+    IOReturn resourceUnref(uint32_t resource_id);            // 0x6005
+    IOReturn getCapsetInfo(uint32_t capset_index,            // 0x6006
+                           uint32_t* out_id, uint32_t* out_version,
+                           uint32_t* out_size);
+    IOReturn getCapset(uint32_t capset_id, uint32_t version, // 0x6007
+                       void* out_blob, uint32_t blob_capacity,
+                       uint32_t* out_blob_size);
+    IOReturn submitVirglCommandsEx(uint32_t ctx_id,          // 0x6008
+                                    const void* commands, uint32_t size);
+    IOReturn ctxAttachResource(uint32_t ctx_id,              // 0x6009
+                                uint32_t resource_id);
 };
 
 #endif /* __VMVirtIOGPU_H__ */

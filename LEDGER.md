@@ -20,6 +20,154 @@ Last updated: 2026-08-10
 
 ---
 
+## virgl_iokit_winsys selectors (Increment A) — VERIFIED — 2026-08-10
+
+The winsys selectors (0x6000-0x6009) work end-to-end. `probe/probe_winsys_selectors_test`
+on the SL guest drives CTX_CREATE → RESOURCE_CREATE_3D → ATTACH_BACKING_USER →
+CTX_ATTACH_RESOURCE → SUBMIT_3D (CREATE_OBJECT + SET_FB + CLEAR + NOP) →
+TRANSFER_FROM_HOST_3D, with no Mesa in the loop. Both clear colors return
+byte-exact:
+
+| Round | glClearColor (RGBA)       | Expected packed RGBA | Got (per dword) | Result |
+|-------|---------------------------|----------------------|-----------------|--------|
+| 0     | (0.20, 0.40, 0.60, 1.00) | 0xff996633           | 0xff996633 ×4096| PASS   |
+| 1     | (0.80, 0.20, 0.40, 1.00) | 0xff6633cc           | 0xff6633cc ×4096| PASS   |
+
+Reproducible across two consecutive runs (ctx_id=0x100, then 0x101 — both
+PASS). The unaligned malloc produced 5 segments per the ATTACH_BACKING
+probe's pattern; nr_entries ≥ 2 exit criterion met.
+
+### Bugs found during Increment A (recorded so they don't recur)
+
+1. **VIRGL_OBJECT_SURFACE = 9 (wrong) → 8 (correct).** The virgl_object_type
+   enum counts from `VIRGL_OBJECT_NULL=0`: NULL, BLEND, RASTERIZER, DSA,
+   SHADER, VERTEX_ELEMENTS, SAMPLER_VIEW, SAMPLER_STATE, **SURFACE=8**.
+   The probe binary inlined a wrong value; the kext's `FB/virgl_protocol.h`
+   had it right. virglrenderer returned `Illegal command buffer 329985`
+   (= `VIRGL_CMD0(1, 9, 5)` = CREATE_OBJECT with obj=QUERY instead of
+   SURFACE) — host-side only; kext saw `0x1100`.
+
+2. **VIRGL_CMD0 macro bits.** Real macro is `((cmd) | ((obj) << 8) |
+   ((len) << 16))`. The probe binary had obj<<16 and len<<24 (off by 8
+   bits). Same symptom: `Illegal command buffer` from the host.
+
+3. **Existing `attachVirglResource` (selector 0x3003) is a stub.** "For
+   now, just log success" — never sends CTX_ATTACH_RESOURCE. virglrenderer
+   requires CTX_ATTACH_RESOURCE before SET_FRAMEBUFFER_STATE can reference
+   a surface built on the resource. Added new selector 0x6009
+   (`ctxAttachResource`) that actually sends the command.
+
+4. **submitVirglCommandsEx descriptor construction.** Original version used
+   `IOMemoryDescriptor::withAddress` (alias userspace pointer through
+   structureInput). Switched to `IOBufferMemoryDescriptor::withBytes`
+   (copy bytes into fresh kernel buffer) to match probeTransport3D's
+   proven pattern at `VMVirtIOGPU.cpp:3866`.
+
+### General rule: 0x1100 means "QEMU parsed it", never "host accepted it"
+
+Three known instances of QEMU returning `VIRTIO_GPU_RESP_OK_NODATA` (0x1100)
+to the guest regardless of host-side outcome:
+
+- **SUBMIT_3D** — `qemu/hw/display/virtio-gpu-virgl.c` `virgl_cmd_submit_3d`
+  hands the buffer to `virgl_renderer_submit_cmd` and unconditionally
+  responds 0x1100. Decode errors go to the host log only.
+- **VIRTIO_GPU_FILL_CMD size mismatches** — host logs `command size
+  incorrect N vs M` via `qemu_log_mask(LOG_GUEST_ERROR)`, returns OK_NODATA
+  without ever calling virglrenderer. The box-vs-rect bug hid here.
+- **RESOURCE_CREATE_3D** — `virgl_renderer_resource_create_3d` returns
+  `EINVAL` on bad params; QEMU's `virgl_cmd_resource_create_3d` discards
+  the return value and responds 0x1100 anyway.
+
+The rule is stronger than any individual case: **on virgl-backed commands,
+0x1100 means QEMU successfully parsed the wire command and routed it to
+virglrenderer. It says nothing about whether virglrenderer accepted it.
+Only readback proves acceptance.** The kext cannot rely on response codes
+alone — the UTM host debug log (`<VM>.utm/Data/debug.log`) is a REQUIRED
+artifact for diagnosing any virgl-backed command failure, not a fallback.
+
+This rule subsumes the older "SUBMIT_3D always returns 0x1100" note that
+lived in the architecture doc. Both the architecture doc and any new kext
+code that handles virgl-backed commands should reference this rule rather
+than enumerating individual commands.
+
+### Kext allocator partition (refined)
+
+Three-way partition as planned:
+- `m_next_resource_id` (existing, starts at 1) — display path, WebGL eager
+  init, kext-internal allocations. Untouched.
+- `m_next_user_resource_id` (new, starts at 0x100) — winsys-driven
+  allocations via selector 0x6002 only.
+- 0xFFF8-0xFFFF — probe sentinels. Hardcoded, never allocated.
+
+Context IDs use a function-local static counter in `createVirglContextEx`
+(starts at 0x100). For first-slice single-process use this is fine;
+multi-process would need the counter moved to a per-device field. Wrap
+check: 0x100 → 0xFFF8 gives ~65k contexts before sentinel collision.
+Sufficient for the first slice; flagged as finished-winsys concern.
+
+### Wire bytes (from kext hex dump, 2026-08-10 01:15:34 EDT, ctx=0x100)
+
+**CTX_CREATE** (sizeof=96, hdr + nlen + context_init + debug_name[64]):
+```
+[0]=0x00000200  [1]=0x00000002  [2]=0x00000000  [3]=0x00000000
+[4]=0x00000100  [5]=0x00000000  [6]=0x00000000  [7]=0x00000000
+```
+(type=CTX_CREATE, ctx_id=0x100 at dword[4], nlen=0, context_init=0)
+
+**RESOURCE_CREATE_3D** (sizeof=72, full struct):
+```
+[0]=0x00000204  [1]=0x00000000  [2]=0x00000000  [3]=0x00000000
+[4]=0x00000100  [5]=0x00000000  [6]=0x00000100  [7]=0x00000002
+[8]=0x00000043  [9]=0x00000002 [10]=0x00000040 [11]=0x00000040
+[12]=0x00000001 [13]=0x00000001 [14]=0x00000000 [15]=0x00000000
+[16]=0x00000000 [17]=0x00000000
+```
+(type=RESOURCE_CREATE_3D, hdr.ctx_id=0x100 at dword[4], resource_id=0x100
+at dword[6], target=2, format=67, bind=2, w=64, h=64, **depth=1 at
+dword[12], array_size=1 at dword[13]**, last_level/nr_samples/flags/padding
+all 0)
+
+**SUBMIT_3D payload** (20 dwords, ctx=0x100, color1):
+```
+[0]=0x00050801  [1]=0x00000001  [2]=0x00000100  [3]=0x00000043
+[4]=0x00000000  [5]=0x00000000  [6]=0x00030005  [7]=0x00000001
+[8]=0x00000000  [9]=0x00000001 [10]=0x00080007 [11]=0x00000004
+[12]=0x3e4ccccd [13]=0x3ecccccd [14]=0x3f19999a [15]=0x3f800000
+[16]=0x00000000 [17]=0x00000000 [18]=0x00000000 [19]=0x00000000
+```
+(CREATE_OBJECT(SURFACE, handle=1, res=0x100, fmt=67) + SET_FB(cbuf=1) +
+CLEAR(0x04, RGBA=0.20/0.40/0.60/1.00) + NOP)
+
+### Artifacts on disk
+
+- `FB/VMVirtIOGPU.h` — added `user_backing_entry` struct, `MAX_USER_BACKINGS=64`
+  array on `VMVirtIOGPUUserClient`, `m_next_user_resource_id` field on
+  `VMVirtIOGPU`, `allocateUserResourceId()` accessor, 10 new method
+  declarations (createVirglContextEx … ctxAttachResource).
+- `FB/VMVirtIOGPU.cpp` — 10 new selector implementations (0x6000-0x6009)
+  + dispatch cases, per-client backing table helpers (findUserBacking,
+  addUserBacking, removeUserBacking, removeAllUserBackings), 0x3009
+  diagnostic logging, CTX_CREATE and RESOURCE_CREATE_3D hex dumps
+  (gated behind the same IOLog discipline — should quiet down once
+  Increment B is exercised, can be removed then).
+- `FB/virtio_gpu.h` — added 6 compile-time size assertions at EOF
+  (resource_create_3d, ctx_create, ctx_destroy, ctx_resource,
+  get_capset_info, get_capset). Same class of bug as box-vs-rect; makes
+  struct-size drift unrepresentable.
+- `probe/probe_winsys_selectors_test.c` — userspace driver for all 10
+  selectors.
+
+### Exit criterion for Increment A — MET
+
+- Both clear colors return byte-exact (4096/4096 dwords each round) ✓
+- `nr_entries ≥ 2` for the unaligned 16 KB malloc (got 5) ✓
+- Host debug log shows no virglrenderer errors for the passing runs ✓
+- Reproducible across two consecutive runs ✓
+
+Increment B (Mesa winsys implementation) can start.
+
+---
+
 ## ATTACH_BACKING-with-userspace-memory probe — VERIFIED — 2026-08-10
 
 The one structural unknown before the IOKit winsys (LEDGER.md:769) is
