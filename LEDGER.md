@@ -95,20 +95,19 @@ pixels is proven.
 
 ### What the clear proves and does not prove
 
-**Proves (clear + triangle together):** context creation, resource
-creation with userspace backing, surface object creation, framebuffer
-binding, command submission, both transfer directions (TO_HOST and
-FROM_HOST), shader compilation (GLSL → TGSI → GLSL → Metal — three
-hops, all verified), vertex buffers (transfer_put with real vertex
-data), DRAW_VBO, vertex element state.
+**Proves (clear + plain triangle + textured triangle together):**
+context creation, resource creation with userspace backing, surface
+object creation, framebuffer binding, command submission, both transfer
+directions (TO_HOST and FROM_HOST), shader compilation (GLSL → TGSI →
+GLSL → Metal — three hops, all verified), vertex buffers (transfer_put
+with real vertex data), DRAW_VBO, vertex element state, **texture
+creation (SAMPLER_VIEW bind), texture data upload (transfer_put with
+pixel data), sampler state objects, GLSL texture2D() sampling, UV
+interpolation, multiple concurrent resources (color RT + VBO + texture
+= 3 live).**
 
 **Does not prove (known coverage gaps — volume problems, not
 structural):**
-- **Textures and sampler state.** No texture binding, no sampling, no
-  sampler objects. The triangle uses a hardcoded fragment colour.
-- **Multiple resources live at once.** The triangle uses one color
-  target + one VBO. Real workloads have many live resources
-  simultaneously.
 - **Resource reuse across frames.** Resources are created and
   destroyed in one shot. The resource cache (which vtest has but iokit
   skips — LEDGER: deferred) and resource_reference refcounting are
@@ -116,7 +115,7 @@ structural):**
 - **ID allocator + backing table stress.** The 64-entry
   `m_user_backings[]` table and the `m_next_user_resource_id` counter
   (starting at 0x100, wrap at 0xFFF8 = ~65k resources) have only been
-  exercised with 1-2 resources at a time. The project's pattern is
+  exercised with 3 concurrent resources. The project's pattern is
   that first-time-at-volume reveals always-broken-but-never-reached
   defects — these are candidates.
 
