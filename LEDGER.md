@@ -127,21 +127,39 @@ both softpipe and virgl (Mesa-VirGL commit e314f2a75a5). Shaders
 DRAW_VBO all verified end-to-end. The guest GL stack is genuinely
 proven. **The cgl-shim is now plumbing.**
 
-### CGL shim — BUILT, presentation path OPEN — 2026-08-11
+### CGL shim — VERIFIED — RED WINDOW on 10.6 guest — 2026-08-11
 
-Shim dylib compiles and loads on 10.6. Nine NSOpenGLContext swizzles
-install at `+load`. Four `_CGL*` interpose entries processed by dyld.
+Shim dylib compiles, loads, and produces visible rendered output on
+the 10.6 guest's display. The window shows the correct clear colour
+RGBA(204,51,51,255) = (0.8, 0.2, 0.2, 1.0).
 
-**Verified working:**
-- Swizzles install, context creates via swizzled `initWithFormat:`
-- GL calls reach Mesa: kext log shows `submitVirglCommandsEx` during
-  the smoke test (confirmed by slower framerate — ~7 fps with virgl
-  readback vs ~22 fps without).
-- Buffer pixels verified correct after readback: RGBA(204,51,51,255)
-  = the clear colour (0.8, 0.2, 0.2, 1.0).
-- `flushBuffer` swizzle fires: double-buffer swap, OSMesaMakeCurrent
-  re-bind, dispatch_async to main thread.
-- Coalescing flag (`present_pending`) prevents unbounded queue growth.
+**Full path (verified visually):**
+```
+glClear (Mesa) → glFinish + glReadPixels (force readback) →
+buffer swap + OSMesaMakeCurrent rebind →
+performSelectorOnMainThread setNeedsDisplay: →
+NSView drawRect: (swizzled) → NSBitmapImageRep drawInRect →
+visible pixels on screen
+```
+
+**Presentation mechanism (settled after five approaches):**
+- `dispatch_async` + `NSBitmapImageRep drawInRect` → no visible output
+- `lockFocus` / `unlockFocus` → deadlock
+- `CGImageRef` + `CGContextDrawImage` → no visible output
+- `CALayer` (`setWantsLayer:YES`) → hangs AppKit (called before view
+  is in a window)
+- **`performSelectorOnMainThread` + `setNeedsDisplay:` + `drawRect:`
+  swizzle** → **WORKS.** Runs in NSDefaultRunLoopMode where the
+  view's graphics context is valid.
+
+CGS surface hypothesis disproven: the original `initWithFormat:`
+creates a real CGL context, but drawRect output composites correctly.
+No surface occlusion.
+
+**Performance:** ~22 fps with softpipe, ~7 fps with virgl +
+full-framebuffer readback (glReadPixels forces TRANSFER_FROM_HOST_3D
+per frame — expected cost under TCG). Fence-based async would
+eliminate the synchronous readback.
 
 **OPEN — the presentation mechanism (CGS surface hypothesis):**
 NSBitmapImageRep `drawInRect` from `dispatch_async` does not produce
