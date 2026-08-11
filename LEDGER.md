@@ -105,12 +105,11 @@ vertex data), draw calls (DRAW_VBO through submit_cmd).
 
 ### Next milestone
 
-**Triangle, not cgl-shim.** A triangle is the first thing that exercises
-the shader compilation chain end to end, needs a second resource written
-via transfer_put, and puts real DRAW_VBO commands through submit_cmd.
-Softpipe stays the reference — a wrong triangle bisects the same way a
-wrong clear would. If shaders survive that, the guest GL stack is
-genuinely proven and the shim becomes plumbing.
+**~~Triangle, not cgl-shim.~~ DONE — 2026-08-11.** Triangle PASS on
+both softpipe and virgl (Mesa-VirGL commit e314f2a75a5). Shaders
+(GLSL → TGSI → GLSL → Metal), vertex buffers (transfer_put), and
+DRAW_VBO all verified end-to-end. The guest GL stack is genuinely
+proven. **The cgl-shim is now plumbing.**
 
 ### Unexplained residuals
 
