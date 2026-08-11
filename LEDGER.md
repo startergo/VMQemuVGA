@@ -143,20 +143,32 @@ install at `+load`. Four `_CGL*` interpose entries processed by dyld.
   re-bind, dispatch_async to main thread.
 - Coalescing flag (`present_pending`) prevents unbounded queue growth.
 
-**OPEN — the presentation mechanism:**
+**OPEN — the presentation mechanism (CGS surface hypothesis):**
 NSBitmapImageRep `drawInRect` from `dispatch_async` does not produce
 visible output on 10.6. Buffer has correct pixels but view stays
-white. Tried: `NSCompositeCopy`, `setCurrentContext`, `lockFocus`
-(deadlocks), `[window flushWindow]`.
+white. Root cause hypothesis: AppKit's original
+`-initWithFormat:shareContext:` (which the shim calls through to)
+creates a real CGL context. The window server then binds an empty GL
+surface (via `_CGSAddSurface` / `_CGSBindSurface` / `_CGSFlushSurface`
+through the `__NS_CGL*` wrappers) that sits on top of whatever
+CoreGraphics draws. The surface is empty because Mesa renders into
+the OSMesa buffer, not into the CGL context — but the surface still
+occludes the view's CoreGraphics content.
 
-**Next approach:** Swizzle the view's `drawRect:` to read from
-`present_buf` directly. The system calls `drawRect:` during the
-display cycle on the main thread in NSDefaultRunLoopMode — the
-correct context. Store `present_buf` on the view via associated
-object, `setNeedsDisplay:YES` triggers `drawRect:`.
+**Pre-registration for the drawRect: test:**
+- If drawRect: fires but window stays white → CGS surface confirmed.
+  Fix: stop calling through to the original on `-initWithFormat:` and
+  `-setView:`. A shim context should never touch AppKit's GL machinery.
+- If drawRect: never fires → view not marked dirty. Check that
+  setNeedsDisplay: reaches the right view on the main thread.
 
-**Guest state:** left unresponsive after accumulated GUI test
-processes. Needs a clean reboot before the next session.
+**CALayer fallback (avoids drawRect: and CGS surfaces entirely):**
+`[view setWantsLayer:YES]`, assign CGImageRef to `layer.contents`
+inside CATransaction. Core Animation exists on 10.6, is thread-safe
+for property assignment, and composites through the same path the
+window server already uses — no ordering conflict with a surface.
+
+**Guest state:** rebooted and ready for the next session.
 
 Commits: Mesa-VirGL 96d1a68dfb9, c16f5cb2fee, 52f4d10f00c,
 ed48a60101c.
