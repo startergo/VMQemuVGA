@@ -90,6 +90,16 @@ lived in the architecture doc. Both the architecture doc and any new kext
 code that handles virgl-backed commands should reference this rule rather
 than enumerating individual commands.
 
+**Caveat for Increment B (recorded so the wire bytes aren't misused):**
+the working RESOURCE_CREATE_3D bytes captured below are a diff target
+*only* for the silent-rejection failure mode — where the winsys sends
+the command, sees 0x1100, but the resource was never created (and the
+next CREATE_OBJECT fails with "Illegal resource" in the host log). If
+Mesa's `resource_create` fails loudly instead (returns NULL before
+sending, or `get_caps` rejects a format/binding combination), the wire
+bytes aren't the place to look — the Mesa-side error is. Diff the bytes
+when the symptom matches Increment A's; otherwise start at Mesa.
+
 ### Kext allocator partition (refined)
 
 Three-way partition as planned:
@@ -104,6 +114,27 @@ Context IDs use a function-local static counter in `createVirglContextEx`
 multi-process would need the counter moved to a per-device field. Wrap
 check: 0x100 → 0xFFF8 gives ~65k contexts before sentinel collision.
 Sufficient for the first slice; flagged as finished-winsys concern.
+
+### CTX_ATTACH_RESOURCE — unconditional in the first slice, watch at volume
+
+Increment A proved CTX_ATTACH_RESOURCE is **required** before
+SET_FRAMEBUFFER_STATE can reference a surface built on a resource
+(selector 0x6009 sends it for real; the legacy 0x3003 is a stub).
+The winsys's `resource_create` should call 0x6009 unconditionally for
+the first slice — the cost is one extra selector call per resource,
+and Mesa's resource creation flow doesn't know whether a resource will
+be context-attached when `resource_create` runs.
+
+**Watch point for real Mesa workloads:** Mesa creates resources that
+never get context-attached (staging buffers, texture-only resources
+that get sampled but not rendered to). Attaching every resource to
+the context unconditionally is correct for a single render target;
+whether virglrenderer cares about extraneous attachments at volume
+is unknown. If it does, gate the call: attach conditionally based on
+`bind` flags (e.g., `VIRGL_BIND_RENDER_TARGET` → attach; sampler-only
+→ skip), or attach lazily on first `emit_res` into a command buffer.
+The winsys's `resource_create` is where to make that decision once
+real workloads reveal whether it matters.
 
 ### Wire bytes (from kext hex dump, 2026-08-10 01:15:34 EDT, ctx=0x100)
 
