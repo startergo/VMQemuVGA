@@ -95,13 +95,30 @@ pixels is proven.
 
 ### What the clear proves and does not prove
 
-**Proves:** context creation, resource creation with userspace backing,
-surface object creation, framebuffer binding, command submission, and
-both transfer directions (TO_HOST and FROM_HOST).
+**Proves (clear + triangle together):** context creation, resource
+creation with userspace backing, surface object creation, framebuffer
+binding, command submission, both transfer directions (TO_HOST and
+FROM_HOST), shader compilation (GLSL → TGSI → GLSL → Metal — three
+hops, all verified), vertex buffers (transfer_put with real vertex
+data), DRAW_VBO, vertex element state.
 
-**Does not prove:** shader compilation (GLSL → TGSI → GLSL → Metal —
-three hops, entirely untested), vertex buffers (transfer_put with real
-vertex data), draw calls (DRAW_VBO through submit_cmd).
+**Does not prove (known coverage gaps — volume problems, not
+structural):**
+- **Textures and sampler state.** No texture binding, no sampling, no
+  sampler objects. The triangle uses a hardcoded fragment colour.
+- **Multiple resources live at once.** The triangle uses one color
+  target + one VBO. Real workloads have many live resources
+  simultaneously.
+- **Resource reuse across frames.** Resources are created and
+  destroyed in one shot. The resource cache (which vtest has but iokit
+  skips — LEDGER: deferred) and resource_reference refcounting are
+  untested under sustained use.
+- **ID allocator + backing table stress.** The 64-entry
+  `m_user_backings[]` table and the `m_next_user_resource_id` counter
+  (starting at 0x100, wrap at 0xFFF8 = ~65k resources) have only been
+  exercised with 1-2 resources at a time. The project's pattern is
+  that first-time-at-volume reveals always-broken-but-never-reached
+  defects — these are candidates.
 
 ### Next milestone
 
@@ -110,6 +127,17 @@ both softpipe and virgl (Mesa-VirGL commit e314f2a75a5). Shaders
 (GLSL → TGSI → GLSL → Metal), vertex buffers (transfer_put), and
 DRAW_VBO all verified end-to-end. The guest GL stack is genuinely
 proven. **The cgl-shim is now plumbing.**
+
+### CGL shim note (for when the hard part is done and this gets lost)
+
+`-flushBuffer` arrives on Gecko's compositor thread, so presentation
+must marshal to the main thread before touching the NSView. That's the
+piece of the shim with real design content; the six swizzled
+NSOpenGLContext methods are mechanical. If presentation is done
+directly from the compositor thread without marshalling, the result is
+a race on the view's backing store — correct pixels, intermittent
+tearing or blank frames, hard to reproduce. Pre-registered here so
+the first implementation doesn't skip it.
 
 ### Unexplained residuals
 
