@@ -156,40 +156,32 @@ CGS surface hypothesis disproven: the original `initWithFormat:`
 creates a real CGL context, but drawRect output composites correctly.
 No surface occlusion.
 
-**Performance:** ~22 fps with softpipe, ~7 fps with virgl +
-full-framebuffer readback (glReadPixels forces TRANSFER_FROM_HOST_3D
-per frame — expected cost under TCG). Fence-based async would
-eliminate the synchronous readback.
+**Performance:** ~10 fps with softpipe, ~10 fps with virgl at 800×600
+(both include full-framebuffer readback via glReadPixels — expected
+cost under TCG). Fence-based async would eliminate the synchronous
+readback.
 
-**OPEN — the presentation mechanism (CGS surface hypothesis):**
-NSBitmapImageRep `drawInRect` from `dispatch_async` does not produce
-visible output on 10.6. Buffer has correct pixels but view stays
-white. Root cause hypothesis: AppKit's original
-`-initWithFormat:shareContext:` (which the shim calls through to)
-creates a real CGL context. The window server then binds an empty GL
-surface (via `_CGSAddSurface` / `_CGSBindSurface` / `_CGSFlushSurface`
-through the `__NS_CGL*` wrappers) that sits on top of whatever
-CoreGraphics draws. The surface is empty because Mesa renders into
-the OSMesa buffer, not into the CGL context — but the surface still
-occludes the view's CoreGraphics content.
+**Killtest via NSOpenGLContext — VERIFIED VISUALLY — 2026-08-11:**
+Rotating triangle through the full NSOpenGLContext → shim → Mesa →
+virgl → host GPU → drawRect path. 100 frames sustained at ~9-10 fps,
+zero errors. User confirmed visible animated triangle on the guest's
+display. Exercises: repeated `-flushBuffer` with swap-and-rebind per
+frame, `glReadPixels` readback per frame, coalescing path, drawRect
+presentation at 800×600 (469-page scatter list through the per-call
+allocation path in submitCommand).
 
-**Pre-registration for the drawRect: test:**
-- If drawRect: fires but window stays white → CGS surface confirmed.
-  Fix: stop calling through to the original on `-initWithFormat:` and
-  `-setView:`. A shim context should never touch AppKit's GL machinery.
-- If drawRect: never fires → view not marked dirty. Check that
-  setNeedsDisplay: reaches the right view on the main thread.
+**Still untested (next):**
+- Resize under load: bounds-check in flushBuffer reallocates, but
+  nobody has resized the window during animation.
+- Multi-context: registry supports 16 contexts, but only one has
+  ever been live at a time.
+- `CGLEnable` through the interpose layer: shim_CGLEnable no-ops
+  for shim tokens, but no application has called it.
 
-**CALayer fallback (avoids drawRect: and CGS surfaces entirely):**
-`[view setWantsLayer:YES]`, assign CGImageRef to `layer.contents`
-inside CATransaction. Core Animation exists on 10.6, is thread-safe
-for property assignment, and composites through the same path the
-window server already uses — no ordering conflict with a surface.
-
-**Guest state:** rebooted and ready for the next session.
-
-Commits: Mesa-VirGL 96d1a68dfb9, c16f5cb2fee, 52f4d10f00c,
-ed48a60101c.
+Commits: Mesa-VirGL 96d1a68dfb9 (shim), c16f5cb2fee (coalescing),
+52f4d10f00c (drawInRect + smoke test), ef2f57470df (drawRect swizzle —
+RED WINDOW), 3fa2461daa8 (killtest_shim). VMQemuVGA fb27c32 (per-call
+allocation for large ATTACH_BACKING).
 
 ### Unexplained residuals
 
