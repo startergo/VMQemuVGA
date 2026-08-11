@@ -16,9 +16,9 @@ GUEST — macOS 10.6.8 x86_64 (UTM VM)
 └───────────┬───────────────────────────┬──────────────────────────────────┘
             │ ObjC swizzle              │ __DATA,__interpose
 ┌───────────▼───────────────────────────▼──────────────────────────────────┐
-│  cgl-shim            NOT BUILT                                           │
-│  6 NSOpenGLContext methods + public _CGL* entry points                   │
-│  presentation: OSMesa buffer ─► main thread ─► NSView backing store      │
+│  cgl-shim            VERIFIED — red window on 10.6 guest                  │
+│  9 NSOpenGLContext swizzles + 4 _CGL* interposes + NSView drawRect swizzle│
+│  presentation: OSMesa buffer → setNeedsDisplay → drawRect → NSBitmapImageRep│
 └───────────┬──────────────────────────────────────────────────────────────┘
             │ OSMesaCreateContextExt / OSMesaMakeCurrent
 ┌───────────▼──────────────────────────────────────────────────────────────┐
@@ -28,7 +28,7 @@ GUEST — macOS 10.6.8 x86_64 (UTM VM)
 │    │     GLSL ──► NIR ──► TGSI                                           │
 │    └─ Gallium  (pipe_screen / pipe_context / pipe_resource)              │
 │            │                                    │                        │
-│      GALLIUM_DRIVER=softpipe             GALLIUM_DRIVER=virpipe          │
+│      GALLIUM_DRIVER=softpipe             GALLIUM_DRIVER=virgl            │
 │            │ (reference renderer)               │                        │
 │            ▼                                    ▼                        │
 │      CPU rasteriser                    virgl driver                      │
@@ -129,17 +129,14 @@ Consequences:
 
 **On virgl-backed commands, `0x1100` means "QEMU parsed it", never "host accepted it."**
 Three known instances: SUBMIT_3D (decode errors go to host log only),
-VIRTIO_GPU_FILL_CMD size mismatches (LOG_GUEST_ERROR, OK_NODATA returned),
-RESOURCE_CREATE_3D (QEMU discards virgl_renderer_resource_create's EINVAL).
+VIRTIO_GPU_FILL_CMD size mismatches (the wrong struct size is silently
+accepted — this hid the `virtio_gpu_box` (24 B) vs `virtio_gpu_rect`
+(16 B) bug for a session), RESOURCE_CREATE_3D (QEMU discards
+virgl_renderer_resource_create's EINVAL).
 Only readback proves acceptance. The UTM host debug log
 (`<VM>.utm/Data/debug.log`) is a required artifact for any virgl-backed
 command failure. See LEDGER.md for the full rule with the conditional
 diff-target caveat.
-
-**`VIRTIO_GPU_FILL_CMD` size-checks and returns early**, while the response loop
-still pushes `0x1100`. A wrong-sized command is indistinguishable from success
-without the host log. This is what hid the `virtio_gpu_box` (24 B) vs
-`virtio_gpu_rect` (16 B) bug.
 
 **The kext's command buffer has a size limit.** `submitCommand` copies each
 command into a pre-allocated physically-contiguous buffer (`m_cmd_buf`,
@@ -162,6 +159,38 @@ which must be enabled in VM settings.
 on whether the VM runs `gl=es` or `gl=core`, so that setting is a variable to
 control in experiments.
 
+**Drawing into a view on 10.6 must happen inside `drawRect:`.** Five
+presentation approaches were tried before finding the one that works:
+
+1. `dispatch_async(main_queue)` + `NSBitmapImageRep drawInRect` —
+   **no visible output.** dispatch_async runs in a mode where the
+   view's graphics context is not set up for drawing. No error, no
+   exception, just nothing on screen.
+2. `lockFocus` / `unlockFocus` — **deadlock.** AppKit re-enters the
+   run loop inside lockFocus on 10.6.
+3. `CGImageRef` + `CGContextDrawImage` (via `graphicsPort`) —
+   **no visible output.** Same graphics-context issue as #1.
+4. `CALayer` (`setWantsLayer:YES` + `layer.contents`) — **hangs
+   AppKit** when called from `-setView:` before the view is in a
+   window. Core Animation requires a window-hosted layer hierarchy.
+   This failure is call-site-specific, not a fundamental limitation
+   of layer-backed presentation — it may work if set up lazily after
+   the view enters a window.
+5. **`performSelectorOnMainThread:setNeedsDisplay:` + `drawRect:`
+   swizzle** — **works.** `performSelectorOnMainThread` runs in
+   `NSDefaultRunLoopMode`, where the view's display cycle provides
+   a valid graphics context. The swizzled `drawRect:` reads
+   `present_buf` from the view's associated object and draws via
+   `NSBitmapImageRep drawInRect`. This is the killtest's exact
+   pattern — timer callback → drawInRect — generalised to any view.
+
+The rule: **on 10.6, view drawing must happen inside the view's own
+display cycle, not from an arbitrary main-thread block.** The
+graphics context is only valid within `drawRect:` (or
+`lockFocus`/`unlockFocus`, but that deadlocks from
+`dispatch_async`). `performSelectorOnMainThread` + `setNeedsDisplay:`
+is the mechanism that enters the display cycle from another thread.
+
 ---
 
 ## Status
@@ -171,7 +200,8 @@ control in experiments.
 | virtio-gpu transport (kext) | **verified** — clear → readback byte-exact, negative-control confirmed |
 | `ATTACH_BACKING` with userspace memory | **verified** — unaligned 16 KB malloc, 5-segment scatter list (partial page, 3 full, partial page), 4096/4096 dwords correct, wiring held across the guest write between transfers |
 | `virgl_iokit_winsys` | **verified** — Mesa-driven `glClear`+`glReadPixels` byte-exact via virgl, softpipe reference identical (Mesa-VirGL commit c703f8fb910) |
-| Mesa + Gallium + virgl driver (guest) | **built and runtime-verified** via softpipe + virgl |
-| `cgl-shim` | not built; interception surface settled |
+| Mesa + Gallium + virgl driver (guest) | **built and runtime-verified** via softpipe + virgl (clear, triangle, textured triangle, shaders+textures+sampler state) |
+| `cgl-shim` | **verified — red window on 10.6 guest.** 9 NSOpenGLContext swizzles + 4 `_CGL*` interposes + `drawRect:` presentation. GL calls reach Mesa via `DYLD_LIBRARY_PATH`; visible pixels via `performSelectorOnMainThread` → `setNeedsDisplay:` → `drawRect:` swizzle. |
 | virglrenderer / ANGLE (host) | stock UTM, unmodified |
-| Next milestone | **triangle** — exercises shaders (GLSL→TGSI→GLSL→Metal), vertex buffers (`transfer_put`), and `DRAW_VBO`. A clear proves context+resource+backing+submit+transfer; it does not touch the shader compilation chain. Softpipe stays the reference. |
+| What the shim proves | A clear with a working presentation path through NSOpenGLContext. Does not yet cover: multiple concurrent contexts, resize under load, `CGLEnable` through the interpose layer, sustained frames with coalescing drops, or a real application. |
+| Next milestone | **killtest via NSOpenGLContext** — rotating triangle through the shim rather than direct OSMesa. Exercises repeated `-flushBuffer`, swap-and-rebind per frame, coalescing, and the full presentation route. Gecko becomes a reasonable target after that holds. |
