@@ -189,6 +189,73 @@ check for the winsys foundation.
 
 ---
 
+## Winsys pre-registrations — 2026-08-10
+
+Recorded before the winsys work starts, so the first results get read
+correctly rather than re-derived under time pressure. None of these
+are verified yet — they are pre-registered predictions and design
+constraints, the same discipline as the ATTACH_BACKING probe.
+
+**Bisect tool is what softpipe bought — state as principle, not step.**
+The softpipe validation (LEDGER.md:184) was worth doing standalone
+*because softpipe is the bisect tool*, not because softpipe is the
+goal. A wrong result from `GALLIUM_DRIVER=virgl` with softpipe correct
+IN THE SAME BINARY means the guest GL stack is fine and the fault is
+in the winsys or the host. Three candidates (guest GL / winsys /
+host) reduced to one with one env-var flip. Lead with this framing in
+any winsys bug investigation; don't treat it as a one-time check.
+
+**Most-likely first Mesa-driven result: clear returns wrong colour,
+not nothing.** Pre-registered because "wrong colour" reads like a
+worse failure than "nothing" but is actually more informative:
+- **Wrong colour** = the command reached virglrenderer and executed;
+  the encoding is off. Guest-side diagnosis possible.
+- **Nothing at all** (buffer stays at the initial fill) = the command
+  buffer never got there, or was rejected during decode. Invisible
+  from the guest — requires the UTM host debug log (per the build
+  rules, only written when *Debug Log* is enabled in the VM settings).
+
+Different diagnoses, different next steps. Reading the first result
+correctly depends on having this bifurcation written down in advance.
+
+**`get_caps` must hit a real `GET_CAPSET`, not return known sizes.**
+The capset sizes are known (VIRGL=308, VIRGL2=1408) but Mesa reads
+the **contents** of the blob to decide which GL version and feature
+set to expose. A wrong or truncated capset produces failures far from
+their cause — wrong GLSL version, missing texture formats, silent
+feature downgrades. Probe `probeTransport3D`'s `GET_CAPSET` path is
+already proven (LEDGER.md:107), so the mechanism works; the winsys
+must use that path, not hardcode a known-size shortcut.
+
+**`submit_cmd` stays synchronous; fence stubs depend on that.** The
+fence vtable stubs (`cs_create_fence = NULL`,
+`fence_server_sync = NULL`, `supports_fences = 0` — LEDGER.md:122)
+are only valid *because `submit_cmd` polls synchronously today*. That
+dependency is recorded in the vtable scope notes but is easy to
+forget once the vtable is filled in. If `submit_cmd` later gains
+async/fence support, the fence stubs become a real bug rather than a
+safe shortcut — re-evaluate them as a group at that point, not
+individually. The synchronous-poll property is a property of the
+transport, not of the vtable (LEDGER.md:109).
+
+**Command buffers travel by SUBMIT_3D, not ATTACH_BACKING.** The
+existing `sSubmit3DCommands` selector at `VMQemuVGA3DUserClient.cpp:39`
+accepts the buffer as `structureInputDescriptor` — IOKit auto-creates
+the descriptor from userspace memory per-call. So `cmd_buf_create`
+really is `malloc` and the winsys's `emit_res` is patching a resource
+handle into the malloc'd buffer; no attach-backing dance for command
+streams. Only pixel/texture/render-target resources need the attach
+path the ATTACH_BACKING probe just proved.
+
+**Next milestone stated precisely.** Same clear-and-readback shape as
+`probeTransport3D` (LEDGER.md:202) and the ATTACH_BACKING probe, but
+with `virgl_iokit_winsys` as the source of commands instead of the
+kext. `GALLIUM_DRIVER=virgl` + `glClear` + `glReadPixels` returning
+the right colour. With softpipe as the in-binary reference, a wrong
+result immediately bisects (see bisect-tool principle above).
+
+---
+
 ## Mesa softpipe verified on 10.6 + IOKit winsys scope — 2026-08-10
 
 ### Softpipe render test — VERIFIED (byte-exact, negative-control-confirmed)
