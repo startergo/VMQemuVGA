@@ -1875,9 +1875,17 @@ bool CLASS::setupControlVirtQueue()
     // A 1024×1024 resource (4 MB) → 1024 pages → 12 KB command.
     // 4 KB covers resources up to ~340 pages (1.3 MB) — sufficient for
     // OSMesa rendering targets. For larger resources, the overflow check
-    // in submitCommand returns kIOReturnNoMemory rather than corrupting.
-    // (Previous size was 256 — caused silent heap overflow + device
-    // confusion when Mesa's winsys attached backing for a 128 KB resource.)
+    // Static buffer for common commands (everything except large
+    // ATTACH_BACKING). ATTACH_BACKING with many scatter-list entries
+    // can exceed this — submitCommand allocates a temporary buffer
+    // per call for those (once per resource creation, not per frame).
+    // (Previous size was 256 — caused silent heap overflow when
+    // Mesa's winsys attached backing for a 128 KB resource.)
+    //
+    // Entry size is 16 bytes (virtio_gpu_mem_entry: le64 addr +
+    // le32 length + le32 padding), NOT 12. Capacity at 4096 bytes:
+    //   (4096 - 32) / 16 = 253 entries = ~1 MB of backing.
+    // Resources larger than ~1 MB hit the per-call allocation path.
     m_cmd_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
         kernel_task,
         kIODirectionOutIn | kIOMemoryPhysicallyContiguous,
@@ -1967,7 +1975,10 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     // many scatter-list entries (32+ pages → 392+ bytes), which is the
     // normal case for Mesa's 256×256 BGRA resources. The in-buffer overflow
     // check below catches anything that somehow exceeds the buffer.
-    if (!cmd || cmd_size < sizeof(virtio_gpu_ctrl_hdr) || cmd_size > 4096) {
+    // No hard size limit — ATTACH_BACKING commands can be large (16 bytes
+    // per scatter-list entry × thousands of pages). submitCommand handles
+    // overflow from m_cmd_buf by allocating a temporary buffer per call.
+    if (!cmd || cmd_size < sizeof(virtio_gpu_ctrl_hdr)) {
         return kIOReturnBadArgument;
     }
 
@@ -2020,16 +2031,51 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     }
 
     // 2. Copy command data to physically contiguous buffer.
-    // Defensive: if cmd_size exceeds m_cmd_buf capacity, return error
-    // rather than overflowing. ATTACH_BACKING with many scatter-list
-    // entries is the main case where this matters.
-    void* cmd_buf_va = m_cmd_buf->getBytesNoCopy();
+    // Fast path: m_cmd_buf (static, pre-prepared) for common commands.
+    // Slow path: ATTACH_BACKING with many scatter-list entries can exceed
+    // m_cmd_buf. Allocate a temporary IOBufferMemoryDescriptor for that
+    // one call, free it after the poll completes. This is once per
+    // resource creation, not per frame — the allocation cost is negligible.
+    IOBufferMemoryDescriptor *temp_cmd_buf = nullptr;
+    void *cmd_buf_va;
+    IOPhysicalAddress cmd_phys;
     IOByteCount cmd_buf_cap = m_cmd_buf->getLength();
-    if (cmd_size > (size_t)cmd_buf_cap) {
-        IOLog("VMVirtIOGPU::submitCommand: cmd_size %zu > cmd_buf capacity %llu "
-              "(likely ATTACH_BACKING with many segments) — returning NoMemory\n",
-              cmd_size, (uint64_t)cmd_buf_cap);
-        // Return descriptors to free-list
+
+    if (cmd_size <= (size_t)cmd_buf_cap) {
+        // Fast path: static buffer
+        cmd_buf_va = m_cmd_buf->getBytesNoCopy();
+        memcpy(cmd_buf_va, cmd, cmd_size);
+        IOByteCount seg_len = 0;
+        cmd_phys = m_cmd_buf->getPhysicalSegment(0, &seg_len);
+    } else {
+        // Slow path: per-call allocation for large ATTACH_BACKING.
+        // virtio_gpu_mem_entry is 16 bytes (le64 addr + le32 length +
+        // le32 padding). A 1920×1080 RGBA target (8.3 MB = 2025 pages)
+        // needs ~32 KB; a 3840×2160 target needs ~130 KB.
+        temp_cmd_buf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task,
+            kIODirectionOutIn | kIOMemoryPhysicallyContiguous,
+            cmd_size, 0x00000000FFFFFFFFULL);
+        if (!temp_cmd_buf) {
+            IOLog("VMVirtIOGPU::submitCommand: temp cmd_buf alloc failed "
+                  "for cmd_size %zu\n", cmd_size);
+            m_vq_free_next[resp_desc] = m_vq_free_head;
+            m_vq_free_head = resp_desc;
+            m_vq_free_next[cmd_desc] = m_vq_free_head;
+            m_vq_free_head = cmd_desc;
+            IOLockUnlock(m_vq_lock);
+            return kIOReturnNoMemory;
+        }
+        temp_cmd_buf->prepare();
+        cmd_buf_va = temp_cmd_buf->getBytesNoCopy();
+        memcpy(cmd_buf_va, cmd, cmd_size);
+        IOByteCount seg_len = 0;
+        cmd_phys = temp_cmd_buf->getPhysicalSegment(0, &seg_len);
+    }
+
+    if (!cmd_phys) {
+        IOLog("VMVirtIOGPU::submitCommand: failed to get cmd physical address\n");
+        if (temp_cmd_buf) { temp_cmd_buf->complete(); temp_cmd_buf->release(); }
         m_vq_free_next[resp_desc] = m_vq_free_head;
         m_vq_free_head = resp_desc;
         m_vq_free_next[cmd_desc] = m_vq_free_head;
@@ -2037,13 +2083,13 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
         IOLockUnlock(m_vq_lock);
         return kIOReturnNoMemory;
     }
-    memcpy(cmd_buf_va, cmd, cmd_size);
 
-    // Get physical addresses
-    IOPhysicalAddress cmd_phys = 0, resp_phys = 0;
-    IOByteCount seg_len = 0;
-    cmd_phys = m_cmd_buf->getPhysicalSegment(0, &seg_len);
-    resp_phys = m_resp_buf->getPhysicalSegment(0, &seg_len);
+    // Get response buffer physical address (always static)
+    IOPhysicalAddress resp_phys = 0;
+    {
+        IOByteCount seg_len = 0;
+        resp_phys = m_resp_buf->getPhysicalSegment(0, &seg_len);
+    }
 
     if (!cmd_phys || !resp_phys) {
         IOLog("VMVirtIOGPU::submitCommand: failed to get physical addresses\n");
@@ -2201,6 +2247,12 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     }
 
     IOLockUnlock(m_vq_lock);
+
+    // Free the temporary command buffer if we allocated one (large ATTACH_BACKING).
+    if (temp_cmd_buf) {
+        temp_cmd_buf->complete();
+        temp_cmd_buf->release();
+    }
 
     // 12. Return status based on response type
     if (!resp)
