@@ -832,6 +832,21 @@ software problem. The transport proof is the load-bearing gate.
   — more IOKit plumbing, but already-wired kernel memory, no per-resource
   wiring pressure).
 
+  **Diagnostic logging (pre-registered):** log `nr_entries` and
+  per-segment `(addr, length)` from the scatter-list walk. An unaligned
+  `malloc` should produce several segments with a partial first page.
+  If `nr_entries == 1` on an unaligned buffer, either the allocator
+  handed something page-aligned and contiguous by luck, or the segment
+  walk is wrong — both make a pass meaningless and neither is visible
+  from the pattern check alone.
+
+  **Expected failure mode for wiring problems:** not an error code, but
+  wrong bytes. `prepare()` failing returns a status you can check;
+  pages moving underneath a correct-looking descriptor doesn't. A clean
+  `nr_entries` plus a correct pattern is the pass. Partial corruption
+  (some segments correct, others stale or zeroed) points at wiring, not
+  at the protocol — the protocol is proven by `probeTransport3D`.
+
 - **Hardware cursor — OPEN, unresolved whether GL scanout is the cause.**
   Queue 1 transport proven (used ring advances, PROBE PASS). Guest-side
   setup verified correct (64x64 BGRA, alpha=0xFF, scanout_id=0,
