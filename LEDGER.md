@@ -127,16 +127,39 @@ both softpipe and virgl (Mesa-VirGL commit e314f2a75a5). Shaders
 DRAW_VBO all verified end-to-end. The guest GL stack is genuinely
 proven. **The cgl-shim is now plumbing.**
 
-### CGL shim note (for when the hard part is done and this gets lost)
+### CGL shim — BUILT, presentation path OPEN — 2026-08-11
 
-`-flushBuffer` arrives on Gecko's compositor thread, so presentation
-must marshal to the main thread before touching the NSView. That's the
-piece of the shim with real design content; the six swizzled
-NSOpenGLContext methods are mechanical. If presentation is done
-directly from the compositor thread without marshalling, the result is
-a race on the view's backing store — correct pixels, intermittent
-tearing or blank frames, hard to reproduce. Pre-registered here so
-the first implementation doesn't skip it.
+Shim dylib compiles and loads on 10.6. Nine NSOpenGLContext swizzles
+install at `+load`. Four `_CGL*` interpose entries processed by dyld.
+
+**Verified working:**
+- Swizzles install, context creates via swizzled `initWithFormat:`
+- GL calls reach Mesa: kext log shows `submitVirglCommandsEx` during
+  the smoke test (confirmed by slower framerate — ~7 fps with virgl
+  readback vs ~22 fps without).
+- Buffer pixels verified correct after readback: RGBA(204,51,51,255)
+  = the clear colour (0.8, 0.2, 0.2, 1.0).
+- `flushBuffer` swizzle fires: double-buffer swap, OSMesaMakeCurrent
+  re-bind, dispatch_async to main thread.
+- Coalescing flag (`present_pending`) prevents unbounded queue growth.
+
+**OPEN — the presentation mechanism:**
+NSBitmapImageRep `drawInRect` from `dispatch_async` does not produce
+visible output on 10.6. Buffer has correct pixels but view stays
+white. Tried: `NSCompositeCopy`, `setCurrentContext`, `lockFocus`
+(deadlocks), `[window flushWindow]`.
+
+**Next approach:** Swizzle the view's `drawRect:` to read from
+`present_buf` directly. The system calls `drawRect:` during the
+display cycle on the main thread in NSDefaultRunLoopMode — the
+correct context. Store `present_buf` on the view via associated
+object, `setNeedsDisplay:YES` triggers `drawRect:`.
+
+**Guest state:** left unresponsive after accumulated GUI test
+processes. Needs a clean reboot before the next session.
+
+Commits: Mesa-VirGL 96d1a68dfb9, c16f5cb2fee, 52f4d10f00c,
+ed48a60101c.
 
 ### Unexplained residuals
 
