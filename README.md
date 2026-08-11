@@ -9,7 +9,7 @@ Fork of `ivanagui2/VMQemuVGA`, itself derived from Zenith432's original.
 
 ## Status
 
-**Working: full 2D display through VirtIO GPU, plus verified 3D transport.** As
+**Working: full 2D display through VirtIO GPU, plus a working 3D path.** As
 of 2026-08-09 the driver brings up a correct Snow Leopard desktop under UTM on
 an Apple Silicon host — correct rendering, correct cursor, working resolution
 changes. The 3D command pipeline is verified end-to-end at the transport layer
@@ -18,9 +18,16 @@ resource and the guest reads them back via `TRANSFER_FROM_HOST_3D`
 (negative-control-confirmed — see [3D status](#3d-status)). Other variants not
 re-tested for 3D this session.
 
-**Not working: 3D rendering.** The transport is proven; the rendering is not.
-Generating GL commands is a userspace problem (the kext is transport by design),
-and the userspace GL stack does not yet exist.
+**Working: 3D rendering through test applications.** As of 2026-08-10 the
+userspace half exists. Mesa is cross-built for 10.6 with a new
+`virgl_iokit_winsys` that talks to the kext's user client, and a CGL shim routes
+`NSOpenGLContext` onto it. Mesa-driven clears, triangles and textured triangles
+return byte-exact pixels through virgl to the host GPU, and a shimmed Cocoa app
+renders visibly on the guest desktop — see [3D status](#3d-status).
+
+**Not yet verified: real applications.** Gecko and WebKit have not been run
+against the shim. Multiple concurrent contexts, resize under load, and sustained
+frame rates are untested, and performance under a real workload is unmeasured.
 
 This README states only what has been verified by a live boot, a negative
 control, or a visual check. Claims that rest on a success log alone are marked
@@ -47,6 +54,10 @@ Verified on `virtio-gpu-gl-pci` unless noted.
 | Cursor queue transport | Self-test probe at boot: `UPDATE_CURSOR` + `MOVE_CURSOR` on queue 1. Used-ring advances, both commands accepted. |
 | 3D transport | Self-test probe at boot: CTX_CREATE → RESOURCE_CREATE_3D → ATTACH_BACKING → CTX_ATTACH_RESOURCE → CREATE_OBJECT(surface) → SET_FRAMEBUFFER_STATE+CLEAR → TRANSFER_FROM_HOST_3D. Byte-equal positive + negative control (different clear colors produce different readback bytes, byte-perfect unorm match on all 64 dwords). Verified 2026-08-09 on `virtio-vga-gl`; other variants not re-tested this session. |
 | QXL path | Verified 2026-08-09 — VMQemuVGA class, separate code path, mode switches work. |
+| Mesa on 10.6 | `libOSMesa.8.dylib` cross-built (913 targets, zero undefined symbols) and runtime-verified on the guest — softpipe renders byte-exact clears. |
+| `virgl_iokit_winsys` | Mesa-driven `glClear` + `glReadPixels` byte-exact through virgl; `GALLIUM_DRIVER=softpipe` in the same binary gives an identical result. |
+| 3D rendering | Triangle and textured triangle PASS on virgl, 3/3 pixels, matching the softpipe reference. Exercises GLSL compilation, shader objects, vertex buffers, vertex element state, textures, sampler state and `DRAW_VBO`. |
+| CGL shim | Visual check 2026-08-10 — a Cocoa app using `NSOpenGLContext` renders a red window on the guest desktop through the shim. |
 
 ### Devices
 
@@ -60,7 +71,7 @@ Verified on `virtio-gpu-gl-pci` unless noted.
 
 ## 3D status
 
-**Transport verified; rendering does not exist.**
+**Transport verified; rendering verified through test applications.**
 
 - The host offers `VIRTIO_GPU_F_VIRGL`, and the driver reads the capset table
   (VIRGL and VIRGL2 both advertised).
@@ -74,11 +85,27 @@ Verified on `virtio-gpu-gl-pci` unless noted.
   have written without both being correct on the wire, even though neither
   produces a guest-visible signal (SUBMIT_3D returns `0x1100` unconditionally;
   virgl decode errors land in the QEMU host log, not the guest response ring).
-- **The guest half of GL command generation does not exist.** virtio-gpu 3D
-  assumes the guest compiles GLSL to TGSI before anything leaves the VM — via
-  Mesa and Gallium. Snow Leopard has neither. The kext is transport by design;
-  command generation belongs in userspace, and that userspace is the project,
-  not a detail.
+- **The guest half of GL command generation now exists.** virtio-gpu 3D assumes
+  the guest compiles GLSL to TGSI before anything leaves the VM — via Mesa and
+  Gallium, neither of which shipped with Snow Leopard. Mesa is now cross-built
+  for 10.6 x86_64 (913 targets, zero undefined symbols against libSystem plus
+  libcxx 5.0.1 and small compat shims), and a new `virgl_iokit_winsys` connects
+  Mesa's virgl driver to the kext through ten user-client selectors. The kext
+  remains transport by design; command generation is userspace, as intended.
+- **Rendering is verified through test applications.** Mesa-driven `glClear`,
+  a triangle, and a textured triangle all return byte-exact pixels through
+  virgl, each matching `GALLIUM_DRIVER=softpipe` run from the same binary. That
+  covers GLSL compilation, shader objects, vertex buffers, vertex element state,
+  textures, sampler state and `DRAW_VBO` — including the three-hop shader
+  translation chain (GLSL → TGSI in Mesa, TGSI → GLSL in virglrenderer,
+  GLSL → Metal in ANGLE).
+- **A CGL shim connects applications to it.** Nine `NSOpenGLContext` swizzles
+  plus four `_CGL*` interposes, loaded via `DYLD_INSERT_LIBRARIES`, back
+  contexts with OSMesa and present through a swizzled `drawRect:`. A Cocoa test
+  app renders visibly on the guest desktop.
+- **Not yet covered:** real applications (Gecko, WebKit), multiple concurrent
+  contexts, resize under load, sustained frame rates, and resource reuse across
+  frames. Performance under a real workload is unmeasured.
 
 The `GLPlugin/` tree is **superseded 2026-08-09** (see
 [`GLPlugin/SUPERSEDED.md`](GLPlugin/SUPERSEDED.md)). It attempted to replace
@@ -90,7 +117,9 @@ chosen direction is Mesa + virgl + a CGL shim — see
 analysis. `virglrenderer-metal/` is a shelved host-side experiment that has
 never compiled inside virglrenderer and targets a Linux/Mesa guest.
 
-If you need 3D in a Snow Leopard VM today, this driver will not give it to you.
+If you need 3D in a Snow Leopard VM today, this driver plus the Mesa build and
+CGL shim will render through the host GPU — but only test applications have been
+run against it so far.
 
 ---
 
@@ -221,5 +250,6 @@ Earlier versions of this README described a driver whose advanced features were
 stub functions returning success, with an IORegistry that reported them as
 working. That was accurate at the time. The 2D transport is real and verified,
 and has been for several releases. The 3D transport was verified end-to-end at
-the byte level on 2026-08-09; 3D rendering remains unimplemented (it is a
-userspace problem, not a kext one — see [3D status](#3d-status) above).
+the byte level on 2026-08-09, and 3D rendering through Mesa and the CGL shim on
+2026-08-10 — test applications only; no real application has been run against it
+yet (see [3D status](#3d-status) above).
