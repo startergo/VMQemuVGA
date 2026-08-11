@@ -16,7 +16,153 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-09
+Last updated: 2026-08-10
+
+---
+
+## Mesa softpipe verified on 10.6 + IOKit winsys scope — 2026-08-10
+
+### Softpipe render test — VERIFIED (byte-exact, negative-control-confirmed)
+
+The 19 MB libOSMesa.8.dylib (Mesa 24.3.0-devel, cross-compiled for
+x86_64-apple-macos10.6 on the `cross-10.6` branch of startergo/Mesa-VirGL)
+was loaded by 10.6.8's dyld and produced byte-exact pixels on two
+known-color clears. **"Links clean" finally meant "works" on the fourth
+attempt.**
+
+**Test:** `osmesa_softpipe_test` — cross-compiled C binary, deployed to
+the SL guest via scp alongside libOSMesa.8.dylib + libglapi.0.dylib.
+Run with `DYLD_LIBRARY_PATH=/tmp GALLIUM_DRIVER=softpipe`.
+
+**Method:** OSMesaCreateContextExt(OSMESA_BGRA, 16, 0, 0, NULL) →
+MakeCurrent into a 256×256 malloc'd buffer → glClearColor + glClear +
+glFinish → read back first AND last pixel (rules out partial-buffer
+artefacts). Two clears with non-boundary colors per the LEDGER's
+rounding convention:
+
+| Clear | glClearColor (RGBA)      | Expected RGB  | Got (first/last)  | Result |
+|-------|--------------------------|---------------|-------------------|--------|
+| A     | (0.20, 0.40, 0.60, 1.0) | (51, 102, 153)| (51,102,153) ×2  | PASS   |
+| B     | (0.80, 0.20, 0.40, 1.0) | (204, 51, 102)| (204,51,102) ×2  | PASS   |
+
+Tolerance: ±1 ULP per GL spec on float-to-unorm. Both clears were
+exact (zero ULP delta). The ±1 guard was quiet.
+
+**What this closes:**
+1. dyld loads the 19 MB dylib — all link-time deps resolve (libc++
+5.0.1 reexport, clock_gettime/strndup/open_memstream compat shims,
+dri_stubs, vl_video_stubs, DRM stub headers).
+2. TLS gate survives a running process — `u_thread.h`'s
+`__THREAD_INITIAL_EXEC` downgrade (plain globals on 10.6) works
+through context creation, rendering, and teardown.
+3. softpipe produces correct pixels — the Gallium software rasterizer
+is fully functional on 10.6.
+4. `inline_sw_helper.h` fix works — `GALLIUM_DRIVER=softpipe` selects
+softpipe (was previously broken by a local patch that called
+`virgl_create_screen` unconditionally; fixed in Mesa-VirGL commit
+`85da3f4cf8c` which restored upstream `GALLIUM_VIRGL`/`GALLIUM_SOFTPIPE`
+conditionals and added `-DGALLIUM_VIRGL` to the cross file's c_args so
+OSMesa still includes virgl when built with `-Dgallium-drivers=virgl`).
+
+**softpipe is now the known-good reference renderer.** When virgl
+returns wrong pixels through the IOKit winsys, one env-var change
+(`GALLIUM_DRIVER=softpipe` vs `virpipe`) in the same binary, same
+guest, same OSMesa entry points isolates "Mesa GL stack correct" from
+"transport/winsys correct." This is the bisect tool vtest would have
+provided, without vtest's external dependencies.
+
+### vtest server availability (banked, not plumbed)
+
+`virgl_test_server` is installed at
+`/opt/homebrew/opt/virglrenderer-3dfx/bin/virgl_test_server` (Homebrew
+tap `virglrenderer-3dfx`, built with ANGLE for GLES, libepoxy for GL,
+same renderer stack as UTM). Verified 2026-08-10: starts cleanly with
+`--no-fork --use-gles`, binds `/tmp/.virgl_test` UNIX socket, zero
+errors. Capsets should be closely comparable to UTM's embedded
+virglrenderer since the same renderer backend is used.
+
+**Not plumbed.** Mesa's vtest winsys is AF_UNIX only — upstream
+`virgl_vtest_winsys.c` connects to a Unix socket path with no TCP
+mode. To reach the host's vtest server from the guest, run socat in
+the guest: `socat UNIX-LISTEN:/tmp/.virgl_test,fork TCP:10.0.2.2:6660`
+(10.0.2.2 = QEMU user-net gateway, hostfwd on host side). Don't build
+this plumbing until a bisect requires it — softpipe is the cheaper
+bisect tool for most questions.
+
+### IOKit winsys vtable scope — research-complete
+
+The shipping GL path is a third winsys: `virgl_iokit_winsys`,
+implementing Mesa's `struct virgl_winsys` vtable
+(`src/gallium/drivers/virgl/virgl_winsys.h`) against the kext's
+IOUserClient. Neither of Mesa's existing winsys works: DRM needs
+`/dev/dri/*` (no DRM on macOS, stubs abort by design), vtest talks to
+a standalone host process (validation harness, not the UTM path).
+UTM's virglrenderer is embedded and reachable only through virtio-gpu,
+so the kext winsys is the path.
+
+**Vtable classification (25 entries):**
+
+| Category | Count | Entries |
+|----------|-------|---------|
+| PROVEN (probeTransport3D) | 6 | `transfer_put` (TRANSFER_TO_HOST_3D), `transfer_get` (TRANSFER_FROM_HOST_3D), `resource_create` (RESOURCE_CREATE_3D), `submit_cmd` (SUBMIT_3D), `get_caps` (GET_CAPSET), `destroy` (teardown) |
+| Bookkeeping — unconditional | 6 | `resource_reference` (refcount), `resource_get_storage_size` (return size), `cmd_buf_create` (malloc), `cmd_buf_destroy` (free), `emit_res` (patch resource handle into cmd buf), `fence_reference` (refcount on dummy) |
+| Bookkeeping — sync-dependent | 3 | `resource_wait`, `resource_is_busy`, `res_is_referenced` — only trivial because `submit_cmd` polls synchronously (no fences). **This stops holding when fences become real.** The synchronous-poll property is a property of the transport, not of the vtable. |
+| Trivial (vtest model) | 1 | `resource_map` — return local malloc'd pointer (vtest winsys does exactly this at `virgl_vtest_winsys.c:338-340`; does NOT mmap kernel memory) |
+| Stub (NULL-checked by callers) | 8 | `resource_create_from_handle` (return NULL), `resource_set_type` (no-op), `resource_get_handle` (return false), `cs_create_fence` (NULL ptr — safe, see below), `fence_wait` (return true), `fence_server_sync` (NULL ptr), `flush_frontbuffer` (no-op for OSMesa), `fence_get_fd` (return -1) |
+| Trivial | 1 | `get_fd` (return -1; no DRM fd, IOKit uses IOConnect) |
+| PROVEN + gap | 1 | `resource_create` — RESOURCE_CREATE_3D is proven, but **ATTACH_BACKING with userspace memory** is unproven (see Open below) |
+
+**Fence safety — verified in source, not inferred.** Upstream virgl
+NULL-checks every fence function pointer before calling:
+- `virgl_context.c:1412`: `if (rs->vws->cs_create_fence)` — skip if NULL
+- `virgl_context.c:1422`: `if (rs->vws->fence_server_sync)` — skip if NULL
+- vtest winsys sets `supports_fences = 0`
+  (`virgl_vtest_winsys.c:738`) and still provides `fence_wait` /
+  `fence_reference` because the flush path calls them unconditionally.
+The IOKit winsys follows the same pattern: `cs_create_fence = NULL`,
+`fence_server_sync = NULL`, `supports_fences = 0`.
+
+**resource_map is NOT the gap the DRM framing suggested.** The vtest
+winsys mallocs resource backing in userspace and returns that pointer
+from `resource_map`. No mmap of kernel memory, no
+`clientMemoryForType`, no `IOConnectMapMemory`. The IOKit winsys
+follows this model: malloc backing → return pointer → sync via
+TRANSFER_TO_HOST_3D / TRANSFER_FROM_HOST_3D (both proven).
+
+### Kext infrastructure for the winsys
+
+The kext already has most of what the winsys needs:
+
+1. **`attachBacking()` is memory-descriptor-agnostic**
+   (`VMVirtIOGPU.cpp:7303-7412`). Takes any `IOMemoryDescriptor*`,
+   walks `getPhysicalSegment()` for the scatter list. Works on kernel
+   or userspace memory equally.
+
+2. **3D UserClient dispatch table exists** (`VMQemuVGA3DUserClient.cpp:126-141`)
+   with `kVM3DUserClientSubmit3DCommands` etc. Adding a new selector
+   for ATTACH_BACKING-with-userspace-memory is a straightforward
+   extension.
+
+3. **Command submission from userspace works**
+   (`sSubmit3DCommands` receives `IOMemoryDescriptor*` from userspace,
+   maps it, forwards to `executeCommands`).
+
+4. **`clientMemoryForType` exists** but only returns VRAM (for
+   WindowServer framebuffer mapping). Not needed for GL resources
+   under the vtest model, but the plumbing is there if the
+   kext-allocated model becomes needed later.
+
+### `withAddressRange` precedent — DEAD CODE
+
+`IOMemoryDescriptor::withAddressRange` appears in
+`VMQemuVGAAccelerator.cpp:1189` (texture upload path). However, this
+is inside `VMQemuVGAAccelerator::createTexture` — part of the
+superseded 3D managers (`VMTextureManager`/`VMShaderManager`), which
+the LEDGER already flags as "nothing on the display path consumes any
+of it." The GLPlugin direction is superseded. **This `withAddressRange`
+has never been called from a live path — evidence the compiler accepts
+the API, not that it works at runtime.** The ATTACH_BACKING probe
+below is genuinely needed.
 
 ---
 
@@ -619,6 +765,72 @@ software problem. The transport proof is the load-bearing gate.
 ---
 
 ## Open
+
+- **ATTACH_BACKING with userspace memory — OPEN, the one structural
+  unknown before the IOKit winsys.** The kext's `attachBacking()`
+  accepts any `IOMemoryDescriptor*` and walks `getPhysicalSegment()` —
+  works on kernel or userspace memory. But the only `withAddressRange`
+  precedent in the codebase (`VMQemuVGAAccelerator.cpp:1189`) is dead
+  code in the superseded 3D managers — never called from a live path.
+  The probe is genuinely needed.
+
+  **Must be a userspace-driven probe, not kernel-side.** A kernel-side
+  probe using `IOMalloc` tests kernel memory, which is a different case
+  and proves nothing about the one that matters. The probe must be
+  driven from userspace via IOUserClient, using the owning task's
+  address space.
+
+  **Four design constraints (pre-registered):**
+
+  1. **Task: use `initWithTask` capture, not `current_task()`.** If the
+     external method is routed through a command gate onto the workloop,
+     `current_task()` becomes the kernel task and `withAddressRange`
+     silently describes the wrong address space. Store the owning task
+     when the user client is created and pass that.
+
+  2. **Buffer: deliberately unaligned, expect multi-segment scatter
+     list.** Every `attachBacking` call so far has been page-aligned
+     `IOBufferMemoryDescriptor` with `nr_entries=1` — practically an
+     invariant. Mesa allocates with `align_malloc(size, 64)`, so the
+     real case starts mid-page and spans many discontiguous physical
+     segments. Use `malloc` (not `valloc`/`mmap`) in the test to hit
+     the real scatter-list path.
+
+  3. **Wiring: `prepare()` before `getPhysicalSegment()`, `complete()`
+     at resource teardown — not after the transfer.** Mesa writes into
+     the buffer between transfers; unwiring after each transfer would
+     break the next operation.
+
+  4. **Selectors: check existing before adding.** The user client
+     already has handlers taking `scalarInput[8]` for ctx_id from the
+     earlier fix; if something close is there, extending beats adding.
+
+  **Probe shape:** malloc a buffer in userspace → write known pattern →
+  `withAddressRange(addr, len, kIODirectionInOut, owningTask)` +
+  `prepare()` → `attachBacking` via new/existing selector →
+  TRANSFER_TO_HOST_3D → zero the buffer (negative control) →
+  TRANSFER_FROM_HOST_3D → expect the pattern back.
+
+  **What the probe proves (known limit):** a single small buffer in a
+  quiet guest succeeds whether or not the wiring is correct, because
+  nothing is putting pressure on those pages. The probe establishes
+  the mechanism — that `withAddressRange` can describe userspace
+  memory to the device on 10.6, that `prepare()`/`getPhysicalSegment()`
+  produce valid physical addresses, and that the host can read/write
+  through the scatter list. It does NOT prove that the wiring holds
+  for the resource's lifetime under memory pressure. Confirming the
+  latter needs many live resources or sustained memory pressure,
+  which is a property of the finished winsys, not something to chase
+  now.
+
+  **Pre-registered prediction:** if `withAddressRange` + `prepare()`
+  works on 10.6 for a malloc'd userspace buffer, the entire winsys is
+  bookkeeping on top of proven transport. If 10.6's IOKit can't wire
+  arbitrary userspace memory for virtio-gpu scatter-list use, the model
+  needs adjustment (kext-allocated backing via
+  `IOBufferMemoryDescriptor` + `clientMemoryForType`/`IOConnectMapMemory`
+  — more IOKit plumbing, but already-wired kernel memory, no per-resource
+  wiring pressure).
 
 - **Hardware cursor — OPEN, unresolved whether GL scanout is the cause.**
   Queue 1 transport proven (used ring advances, PROBE PASS). Guest-side
