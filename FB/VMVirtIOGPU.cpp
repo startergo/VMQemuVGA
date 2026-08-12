@@ -2192,16 +2192,44 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
 
     __sync_synchronize();
 
-    // 7. Poll used ring (150ms timeout)
+    // 7. Poll used ring (150ms timeout).
+    //
+    // Bounded spin before falling back to IOSleep(1). Under TCG emulation,
+    // IOSleep(1) blocks until the next scheduler tick — measured at ~10ms
+    // per call on this guest (vs ~1ms on real hardware). With 5
+    // submitCommand calls per killtest frame, the IOSleep floor alone was
+    // ~50ms/frame, dominating the per-submit wall time.
+    //
+    // Spin in IODelay(20) for the first SPIN_ITERATIONS iterations
+    // (10 × 20µs = ~200µs total). virglrenderer on a modern host (Apple
+    // Silicon under UTM) typically responds within tens of µs, so the
+    // spin covers the common case. Fall back to IOSleep(1) for the
+    // remaining iterations if the host is genuinely slow (heavy GPU work,
+    // host contention). IODelay busy-waits without yielding, which is
+    // fine on this 1-vCPU workloop — nothing else needs the core while
+    // we wait for the device.
+    //
+    // Pre-registered prediction: per-submit drops from ~10ms to ~1ms,
+    // saving ~45ms/frame (5 calls × ~9ms). Verified via the EXIT OK
+    // log line's new spin_iter field — values <SPIN_ITERATIONS mean
+    // the spin covered it; values >= SPIN_ITERATIONS mean we fell back.
+    static const int SPIN_ITERATIONS = 10;
     bool timed_out = true;
+    int poll_iter = 0;
     for (int i = 0; i < 150; i++) {
-        IOSleep(1);
+        if (i < SPIN_ITERATIONS) {
+            IODelay(20);
+        } else {
+            IOSleep(1);
+        }
         __sync_synchronize();
         uint16_t used_idx = m_vq_used->idx;
         if (used_idx != m_vq_last_used) {
             timed_out = false;
+            poll_iter = i;
             break;
         }
+        poll_iter = i;
     }
 
     if (timed_out) {
@@ -2266,8 +2294,8 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     m_vq_free_head = cmd_desc;
 
     if (instr) {
-        IOLog("VMVirtIOGPU::submit[%u] EXIT OK resp_type=0x%x avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u cmd_desc=%u→ret resp_desc=%u→ret\n",
-              m_submit_count, resp ? resp->type : 0,
+        IOLog("VMVirtIOGPU::submit[%u] EXIT OK resp_type=0x%x poll_iter=%u avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u cmd_desc=%u→ret resp_desc=%u→ret\n",
+              m_submit_count, resp ? resp->type : 0, poll_iter,
               m_vq_avail ? m_vq_avail->idx : (uint16_t)0,
               m_vq_used ? m_vq_used->idx : (uint16_t)0,
               m_vq_last_used, m_vq_free_head, vringFreeDepth(), cmd_desc, resp_desc);
