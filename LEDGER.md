@@ -16,7 +16,7 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-11
+Last updated: 2026-08-12
 
 ---
 
@@ -311,6 +311,286 @@ dlsym pointers. Something differs that requires runtime stepping
    non-NULL? (Print `dispatch->Viewport` after OSMesaMakeCurrent.)
 3. Does the OSMesa context's pipe_context have a valid screen?
 4. Is there a Mesa state-tracker init step that the shim skips?
+
+---
+
+## GL routing fix — 2026-08-12 (CGL shim verified end-to-end)
+
+### Arc
+
+Starting from the GL interpose implementation (17 functions in
+cgl_interpose.c), GL calls fired but produced no effect: renderer=NULL,
+viewport=(0,0,0,0), no virgl winsys activity. Emulated-TLS was the
+leading hypothesis. This session falsified that hypothesis, found the
+real root cause, and verified GL routing end-to-end through virgl to
+the host GPU. **The CGL shim now works on a real two-level-namespace
+OpenGL application — killtest_shim shows a dark window with a rotating
+triangle at ~3 fps.**
+
+### Emulated-TLS hypothesis — FALSIFIED
+
+Cheap probe (per the prior session's pre-registration): call
+`_glapi_get_dispatch()` from inside one interposed function and log
+the pointer; log it again from the shim's glFinish path.
+
+Result (both paths, same thread `0x7fff70f0acc0`):
+- ip_glViewport (interpose): `dispatch=0x1018a9800`
+- dispcheck[shim] (flushBuffer): `dispatch=0x1018a9800`
+
+Same non-NULL pointer. TLS dispatch is fine. Emulated-TLS hypothesis
+falsified.
+
+### Real root cause — cgl_shim's own gl* calls bind to OpenGL.framework
+
+Extended the dispatch probe to dump entries. entries[0..3] = `_mesa_NewList`,
+`_mesa_EndList`, `_mesa_CallList`, `_mesa_CallLists` (verified via
+`nm` offset lookup) — real state tracker functions, not no-op stubs.
+entries[203] = `_mesa_Clear` (glClear slot, per glClear entry stub
+disassembly `jmpq *0x658(%rax)`, 0x658/8 = 203). Dispatch table is
+correctly populated; dispatch path works.
+
+Pre-resize viewport probe inside flushBuffer: `viewport=(-1,-1,-1,-1)`
+— sentinels unchanged. The call went nowhere.
+
+`/usr/bin/nm -m cgl_shim.dylib` revealed:
+```
+(undefined) external _glFinish (from OpenGL)
+(undefined) external _glGetString (from OpenGL)
+(undefined) external _glGetIntegerv (from OpenGL)
+(undefined) external _glReadPixels (from OpenGL)
+```
+
+**cgl_shim.dylib's own gl* calls bind to OpenGL.framework, NOT libOSMesa.**
+The `-framework OpenGL` before `-lOSMesa` link order (required for the
+DYLD_INTERPOSE tuple to target Apple's gl*) wins the symbol binding
+for cgl_shim's own calls too.
+
+**DYLD_INTERPOSE does NOT apply within the interposing image itself.**
+So cgl_shim's `glFinish()` calls Apple's GL, which has no current
+context (the OSMesa context isn't an Apple CGL context) — silent no-op.
+
+This explains why ip_glViewport's probe (which used `p_glGetIntegerv`
+via dlsym) worked: `before=(0,0,1,1) after=(0,0,800,600)`. Direct
+dlsym → libOSMesa → Mesa's entry stub → real dispatch. The interpose
+functions also work because they call `p_gl*` (dlsym), not `gl*`.
+
+But cgl_shim.mm's flushBuffer used `glFinish()`, `glReadPixels()`,
+`glGetString()`, `glGetIntegerv()` directly — all going to Apple's GL.
+
+### Fix #1 — route cgl_shim's gl* calls through p_* pointers
+
+Made `p_gl*` non-static in `cgl_interpose.c` (removed `static`
+qualifier from the 18 function pointer declarations). Declared them
+`extern "C"` in cgl_shim.mm. Replaced direct gl* calls in flushBuffer
+with `p_gl*`:
+- `glFinish()` → `p_glFinish()`
+- `glReadPixels(...)` → `p_glReadPixels(...)`
+- `glGetString(GL_RENDERER)` → `p_glGetString(GL_RENDERER)`
+- `glGetIntegerv(GL_VIEWPORT, vp)` → `p_glGetIntegerv(GL_VIEWPORT, vp)`
+- `glGetError()` → `p_glGetError()`
+
+Result after rebuild: `renderer="virgl (Apple M4 Pro)"`, viewport
+persists across flushBuffer, virgl winsys activity (submit_cmd +
+transfer_put + transfer_get), preswap `render[0]=0xff1f1a1a` (the
+0.1,0.1,0.12 clear color), drawRect `pixel RGBA(26,26,31,255)`.
+
+### Fix #2 — supports_encoded_transfers mismatch
+
+Hit a second bug: `Assertion failed: (vctx->supports_staging), function
+virgl_staging_map, file virgl_resource.c, line 356`.
+
+Root cause: in virgl_context.c:1819-1823, `vctx->supports_staging`
+requires `vws->supports_encoded_transfers && VIRGL_CAP_TRANSFER`. But
+`res->use_staging` (virgl_resource.c:668) is set independently based
+on `VIRGL_CAP_V2_COPY_TRANSFER_BOTH_DIRECTIONS` in cap bits v2.
+
+If the host advertises the v2 bit but the winsys reports
+`supports_encoded_transfers=0`, `use_staging=true` but
+`supports_staging=false`. virgl_staging_read_map gets called (because
+use_staging) and asserts supports_staging.
+
+Our iokit winsys had `supports_encoded_transfers = 0`. Both reference
+implementations set it to 1:
+- drm: `qdws->base.supports_encoded_transfers = 1` (always)
+- vtest: `vtws->base.supports_encoded_transfers = (protocol_version >= 2)`
+
+Set `iws->base.supports_encoded_transfers = 1` to match. The iokit
+transport carries the same virtio-gpu command stream as drm; encoded
+transfers just embed transfer commands in submit_cmd's buffer, which
+we already handle.
+
+Result: assertion gone, 275 winsys calls in 20s, 47 frames rendered,
+user reports "dark window + rotating triangle" visible in UTM.
+
+### What's verified
+
+- **GL routing for two-level-namespace apps.** The original split-dispatch
+  bug is fixed. killtest_shim (which has TWOLEVEL in its Mach header)
+  now routes GL through Mesa → virgl → host.
+- **End-to-end pipeline.** App gl* → interpose → Mesa → virgl →
+  virgl_iokit_winsys → kext → virtio-gpu → virglrenderer → host GPU.
+  Visible pixels match expected clear color.
+- **Renderer string correctness.** `glGetString(GL_RENDERER)` returns
+  `"virgl (Apple M4 Pro)"` — the host GPU name propagates through
+  virglrenderer's cap set.
+- **Frame rate ~3 fps.** Slow because real work per frame (vertex
+  upload + draw + readback + blit). Was ~10 fps on the degenerate
+  no-render workload; that number was meaningless.
+
+### Open items
+
+1. **Performance investigation** — now meaningful for the first time.
+   With real rendering, measure: IOLog gate A/B, IOSleep(1) poll loop,
+   redundant transfer_get, ~34ms unmeasured span. All previously
+   recorded open items become actionable.
+2. **GL interpose list completeness** — only 17 functions interposed.
+   Real apps (Flurry, Gecko, WebKit) reference more. Generate the
+   union from `nm -u <app> | grep ' _gl'` for each target.
+3. **Phase 2 (real apps)** — substitute OpenGL.framework via
+   DYLD_FRAMEWORK_PATH with `-reexport_library` thin dylib. Removes
+   need for per-function interpose.
+4. **cgl_shim self-call audit** — verify ALL gl* calls in cgl_shim.mm
+   go through p_gl*. Current grep confirms 0 direct gl* calls. Add
+   a build-time assertion (grep gate in build-shim.sh) to prevent
+   regressions.
+5. **Renderer string side effect** — CLOSED 2026-08-12. With
+   `supports_encoded_transfers=1`, glGetString(GL_RENDERER) returned
+   `"virgl (Apple M4 Pro)"`. With `=0`, it returned `"virgl"`. The flag
+   should gate a transfer mechanism, not what the host reports about
+   itself — so the caps path differed between the two settings. Traced
+   to the get_caps capset-id bug: idx=0 normally returned v1 (308 B),
+   leaving `host_feature_check_version` at default 0, so
+   `virgl_get_name` returned plain "virgl". The `=1` run was first-
+   after-boot; idx=0 returned garbage (size > 2048), fell through to
+   idx=1 (VIRGL2, 1408 B), and the v2 fields were populated. Fixed by
+   rewriting `virgl_iokit_get_caps` to query by `capset_id` (2 then 1)
+   instead of by index — now consistently fetches VIRGL2 regardless
+   of host index ordering or first-call garbage. See "A/B test
+   retracted" section below.
+
+### A/B test retracted — 2026-08-12 (caps contamination)
+
+**The "staging costs 54 ms" A/B recorded earlier this session was invalid.** Both sides of the comparison ran with different capability sets, not just different `supports_encoded_transfers` values, so the timing delta cannot be attributed to the flag.
+
+The contamination: `virgl_iokit_get_caps` queried capset INDEX 0 unconditionally, which on this device is VIRGL (v1, 308 B). The v2 fields (`host_feature_check_version`, `renderer[64]`, `capability_bits_v2`) stayed at the `fill_new_caps_defaults` values. **However**, on the very first user-client open after boot, `getCapsetInfo(0)` returned garbage (`id=1 version=4030145808 size=185270272`) — the size > 2048 sanity guard skipped it, the code fell through to idx=1 (VIRGL2, 1408 B). So:
+
+- Run 1 (`=1`): first-after-boot, accidentally fetched VIRGL2 v2 caps (garbage path) → `host_feature_check_version >= 5`, renderer = "virgl (Apple M4 Pro)"
+- Run 2 (`=0`): subsequent run, fetched VIRGL v1 (308 B) → `host_feature_check_version = 0`, renderer = "virgl"
+
+The renderer string difference, attributed to the flag, was actually the caps path differing. The "54 ms" was measuring staging-vs-no-staging AND v2-vs-v1 caps simultaneously. Recorded numbers retracted.
+
+The renderer-string open item (5) is also closed by this finding — explained, not a side effect of the flag.
+
+### get_caps fix — query VIRGL2 capset by id
+
+`virgl_iokit_get_caps` rewritten to match the drm winsys pattern: iterate `capset_id` from 2 down to 1, find the index hosting that id, fetch the blob. Now always returns VIRGL2 (capset_id=2, ver=2, size=1408) regardless of host index ordering or first-after-boot garbage. `glGetString(GL_RENDERER)` consistently returns "virgl (Apple M4 Pro)" across runs.
+
+Trailing 24-byte truncation (`copy=1384` vs host's `size=1408`) noted as separate item — `sizeof(union virgl_caps)` is 1384 on this build, host offers 1408. Likely a trailing-array size disagreement; not blocking since the truncated tail (video_caps entries) isn't used by the killtest path.
+
+### staging A/B redone with consistent v2 caps — the actual finding
+
+With the get_caps fix landing, both `=1` and `=0` see the same v2 caps. A/B redone (n=13 vs n=32, post-warmup):
+
+| Metric | `=1` (staging) | `=0` (non-staging) |
+|---|---|---|
+| submit | 372 ms | 108 ms |
+| transfer | 238 ms | 59 ms |
+| wall | 683 ms | 347 ms |
+| **pixels** | **RGBA(0,0,0,0) ✗** | **RGBA(26,26,31,255) ✓** |
+
+**With `=1`, staging doesn't just cost more — it produces no rendering.** Pixels come back empty. The host isn't executing the encoded `COPY_TRANSFER` commands the way virgl expects on this transport.
+
+This is the same over-claiming pattern as `crsr=1` and `IOAccelerator3D`: setting `supports_encoded_transfers=1` claims a capability the iokit winsys doesn't implement. drm sets `=1` because drm DOES implement encoded transfers; vtest sets `=1` when protocol_version >= 2 because vtest DOES implement them; iokit doesn't.
+
+**`supports_encoded_transfers=0` is the honest value, not a divergence from upstream needing justification.** The earlier "54 ms saving" framing had it backwards on both counts.
+
+### Staging-path gates — driver robustness (commits 3 + 4)
+
+Independent of the flag-value decision, two gates in `virgl_resource.c` were missing:
+
+1. **`virgl_can_use_staging`** was gated only on host's `VIRGL_CAP_V2_COPY_TRANSFER_BOTH_DIRECTIONS`. With v2 caps (post get_caps fix), every texture resource got `use_staging=true`, which set `alloc_size=1` (staging assumes a tiny placeholder because transfers go through a separate staging buffer). But with `supports_encoded_transfers=0`, `vctx->supports_staging` is false, the staging transfer path isn't taken, and the direct readback memcpy'd 1.92 MB into a 1-byte allocation → SIGBUS on first transfer_get. Added `&& vs->vws->supports_encoded_transfers` so resources are only marked use_staging when the winsys can actually deliver.
+
+2. **`virgl_resource_transfer_prepare`** (two sites, lines 259 and 305) checked `res->use_staging` without also checking `vctx->supports_staging`. With the allocation gate above, `use_staging` is now consistent with `supports_staging` — but the gate here is still needed for any future combination where they could desync (and for upstream robustness, since the desync is a real driver bug independent of iokit). Added `&& vctx->supports_staging` to both sites. No winsys setting can trip `virgl_staging_map`'s assertion now.
+
+Both gates are upstream-shaped fixes; the second is upstreamable as-is. The first is iokit-specific (drm/vtest don't need it because they set `supports_encoded_transfers=1` truthfully).
+
+### Kext used-ring baseline (drain fix) — written, not installed
+
+Traced the first-after-session-open garbage read on `getCapsetInfo(0)`: `submitCommand` polls the device's used ring with `m_vq_last_used` initialised to 0 at PCI device start. Boot probes (probeTransport3D, etc.) advance the ring correctly, but if a previous user-client session left unconsumed responses (e.g. clientDied), `m_vq_last_used` lags the device's `m_vq_used->idx`. The first submitCommand of a new session sees `used_idx != last_used` immediately, reads a stale descriptor, and returns the stale response as if it were its own.
+
+Symptom signature: garbage once, correct forever after, only on the first call following session open. Could affect any first-after-open selector call, not just caps — `createResource3DEx` could silently return a bogus id. Wider than caps.
+
+Fix written in `FB/VMVirtIOGPU.cpp` (drain stale entries at `submitCommand` entry, before publishing to the avail ring). Built into `/tmp/VMQemuVGA.kext` on guest. **Not yet installed** — needs cache clear + reboot to verify. Doing this before IOSleep since IOSleep changes the same poll loop and the two would interact in a single boot.
+
+### Files committed (Mesa-VirGL, branch cross-10.6)
+
+Seven commits landed this session:
+
+```
+1f8eb2f8f24 chore(virgl/iokit,osmesa): gate diagnostic instrumentation behind env vars
+677af2f8007 build: add cross-compat/build-10.6.sh — Mesa cross-build script
+ed478855444 fix(virgl/iokit): declare IOKit framework dependency in meson.build
+8b5a5d0a224 fix(virgl): make staging transfer path robust to supports_staging=false
+a09ddbb5161 fix(virgl): gate use_staging on supports_encoded_transfers
+6c808cd7da7 fix(virgl/iokit): query VIRGL2 capset by id, not by index
+fd7b7cf1de0 fix(cgl-shim): route own gl* calls through Mesa p_* pointers
+```
+
+Diagnostics gated behind `VIRGL_IOKIT_DEBUG=1` and `OSMESA_TARGET_DEBUG=1` (matches `SHIM_TIMING=1` pattern) — off by default, on when needed for IOSleep / caps / call-count work.
+
+Build script now writes the interpolated cross file into `build-106/` rather than in-place; tracked `cross-compat/mesa-cross-10.6.txt` stays pristine (the prior in-place substitution was leaving machine-specific paths permanently dirty in git status).
+
+### Verified (2026-08-12, post all fixes)
+
+- `killtest_shim` renders correctly: `pixel RGBA(26,26,31,255)` matches `glClearColor(0.1, 0.1, 0.12, 1.0)`, ~3 fps steady state
+- `textured_triangle_test` byte-exact with `=0` (textures + sampler state + GLSL `texture2D()`)
+- `glGetString(GL_RENDERER)` consistently returns "virgl (Apple M4 Pro)" — v2 caps fetched
+- CGL shim's GL routing works for two-level-namespace apps (the original split-dispatch bug, fixed via `p_gl*` routing)
+
+## IOSleep spin — 2026-08-12 (verified)
+
+### Change
+
+`submitCommand`'s poll loop unconditionally called `IOSleep(1)` per iteration. Under TCG, `IOSleep(1)` blocks until the next scheduler tick — measured at ~10 ms per call on this guest (vs ~1 ms on real hardware). With 5 submitCommand calls per killtest frame, the IOSleep floor alone was ~50 ms/frame.
+
+Replaced with bounded spin: first 10 iterations use `IODelay(20)` (~200 µs total busy-wait), then fall back to `IOSleep(1)` for the remaining iterations. Added `poll_iter` to the gated EXIT OK log to expose where each submit breaks out.
+
+Commit `b414425`. Drain fix and spin are independent — drain runs at submitCommand entry, spin runs in the poll loop after publish. Both touch the used-ring polling path; landed separately on purpose.
+
+### Verified (n=108 frames post-warmup)
+
+| Metric | Before | After | Delta |
+|---|---|---|---|
+| wall | 347 ms | **127 ms** | **−220 ms (−63%)** |
+| submit | 108 ms | 52 ms | −56 ms |
+| transfer | 59 ms | 33 ms | −26 ms |
+| fps | 2.9 | **7.5** | +4.6 fps |
+
+Rendering byte-identical: `RGBA(26,26,31,255)`, `"virgl (Apple M4 Pro)"`.
+
+### Mechanism (poll_iter=0)
+
+Every submit returns `poll_iter=0` — the spin's first `IODelay(20)` is already enough; the device's response is visible in under 20 µs. The host was never the bottleneck. The IOSleep(1) was waiting for the next scheduler tick for no reason.
+
+Pre-registered prediction was ~50 ms wall saving (5 calls × ~10 ms IOSleep floor). Actual wall saving is 220 ms. Submit-time drop (56 ms) matches the prediction. Transfer drop (26 ms) is explained by `transfer_get` routing through `submitCommand` internally (control-queue transit picks up the same spin benefit).
+
+Remaining ~140 ms of the wall saving is **unattributed** — recorded as such, not as scheduler overhead. The rules warn about the convenient-explanation shape. Part is directly accounted for: `transfer_put` happens during the app's draw calls before T1, so at least one of the five submitCommand calls sits inside the unmeasured span and picked up the same ~28 ms per-call saving. That covers maybe a fifth of the gap. The rest is genuinely unknown until T0 lands (see open items).
+
+### Strategic shift — call-count reduction is now the dominant lever
+
+If the host completes in <20 µs but per-call cost is still ~26 ms, then essentially all of the remaining per-call time is **guest-side**: Mach trap into the kernel, memory-descriptor setup/teardown, virtqueue descriptor management, MMIO doorbell exit. Nothing host-side helps. At 4–5 calls per frame that's roughly the entire 127 ms budget.
+
+Two implications:
+
+1. **The readback-side items (IOSleep already done; redundant transfer_get) become the entire remaining surface.** Per-frame wall is now bounded by `call_count × per_call_guest_overhead`. Reducing call count is the only way to break below ~25 ms/frame at this transport's per-call cost.
+
+2. **The redundant transfer_get is the leading candidate.** Worth ~26 ms on its own at the measured per-call cost. Evidence already in hand: two full-surface reads of the same resource per frame, with a flush between them — most likely virgl_resource_transfer_map discovering the resource is still referenced. Eliminating it drops 1 call from the steady-state 5, a 20% call-count reduction for a ~20% wall reduction.
+
+### Open items (updated priority)
+
+1. **T0 at the top of the render loop** (was nice-to-have, now blocking). The unmeasured span went from ~191 ms to ~53 ms and is still 40% of the frame. Without it, optimization is blind. One-line addition to the killtest.
+2. **Redundant transfer_get** (now the dominant lever after IOSleep landed). ~26 ms available, evidence points clearly. Investigate why virgl issues 2 full-surface reads of the same resource with a flush between them.
+3. **Cursor smoothness** (pushed below call-count work). The 60 Hz throttle test is diagnostic, not ship config — confirms pull-vs-push but degrades everything else. The userspace dirty-rect helper via `[NSEvent mouseLocation]` is the architectural fix worth prototyping, but only after the frame budget is understood via T0.
 
 ---
 
