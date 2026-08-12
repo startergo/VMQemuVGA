@@ -250,6 +250,59 @@ workload, the gate saves ~50ms/frame on the real workload too. If it
 shows no effect, the IOSleep(1) poll loop is the dominant cost and
 becomes the next variable.
 
+### Interpose implementation — DONE, but GL calls are no-ops
+
+17 GL function interposes implemented in `cgl_interpose.c` (generated
+from `nm -u killtest_shim | grep ' _gl'`). Build link order changed:
+`-framework OpenGL` before `-lOSMesa` so DYLD_INTERPOSE tuples target
+Apple's gl*. Verified post-build: `nm -m cgl_shim.dylib` shows
+`_glClear (from OpenGL)`. Context-check in each interpose function:
+forwards to Mesa when `OSMesaGetCurrentContext()` is non-NULL, falls
+through to Apple via `RTLD_NEXT` otherwise (prevents crash from Apple
+CGL internal gl* calls during context creation).
+
+**The interpose mechanism works:** `ip_glViewport FIRED osmc=0x101444950
+p=0x100006000 args=(0,0,800,600)`. Constructor runs, dlopen succeeds,
+dlsym finds all 17 Mesa function pointers (non-NULL). OSMesa context is
+current.
+
+**But GL calls are no-ops:** `renderer="(null)"`, `viewport=(0,0,0,0)`,
+`scratch=(0xdeadbeef,...)` (sentinels unchanged from glReadPixels),
+`submit=0.01ms` (glFinish does nothing). Every Mesa function is called
+with correct args but produces no effect.
+
+**Dual-dispatch hypothesis — FALSIFIED.** Proposed: libOSMesa has a
+statically linked copy of `_glapi_tls_Dispatch` alongside libglapi's
+shared copy, causing write/read mismatch under two-level namespace.
+Checked by `nm -g`:
+
+```
+libOSMesa:  U __glapi_tls_Dispatch  U __glapi_set_dispatch  U __glapi_get_dispatch
+libglapi:   D __glapi_tls_Dispatch  T __glapi_set_dispatch   T __glapi_get_dispatch
+```
+
+All dispatch symbols are `U` (imported) in libOSMesa, `D`/`T` (defined)
+in libglapi. ONE copy. No split. The dispatch state IS unified.
+
+**Actual cause: UNIDENTIFIED.** The interpose fires, Mesa pointers are
+valid, OSMesa context is current, dispatch state is unified. But GL
+functions are no-ops. The flat-namespace smoke test works (same Mesa
+build, same dispatch). The interpose path calls the same functions via
+dlsym pointers. Something differs that requires runtime stepping
+(gdb/lldb on the guest) to identify.
+
+**Hypotheses to check next session:**
+1. Does `_glapi_get_dispatch()` return the same table inside
+   `p_glViewport` as inside `OSMesaMakeCurrent`? (Add a diagnostic
+   that prints the dispatch pointer from both sites.)
+2. Are the dispatch table's function pointers (dispatch->Viewport etc.)
+   non-NULL? (Print `dispatch->Viewport` after OSMesaMakeCurrent.)
+3. Does the OSMesa context's pipe_context have a valid screen?
+   (Check if softpipe_create_screen succeeded during OSMesaCreateContextExt.)
+4. Is there a Mesa state-tracker init step that the shim skips?
+   (The direct-OSMesa tests call OSMesaPostBuffer or other init that
+   the shim doesn't.)
+
 ---
 
 ## Session summary — 2026-08-10/11
