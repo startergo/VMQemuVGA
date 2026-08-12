@@ -292,16 +292,25 @@ dlsym pointers. Something differs that requires runtime stepping
 (gdb/lldb on the guest) to identify.
 
 **Hypotheses to check next session:**
-1. Does `_glapi_get_dispatch()` return the same table inside
-   `p_glViewport` as inside `OSMesaMakeCurrent`? (Add a diagnostic
-   that prints the dispatch pointer from both sites.)
+1. **Emulated TLS (leading candidate).** This build uses
+   `-femulated-tls`. `_glapi_tls_Dispatch` is `__thread`, which under
+   emulated TLS resolves through `__emutls_get_address` against a
+   per-variable control object. If the interpose path and OSMesa's
+   MakeCurrent end up reading different TLS keys — or run on different
+   threads — the reader gets NULL and every entry point falls to the
+   no-op stub. Matches all four symptoms (NULL renderer, 0×0 viewport,
+   unchanged sentinels, 0ms submit). Consistent with flat namespace
+   working (single resolution) while two-level doesn't.
+   **Cheap first probe:** call `_glapi_get_dispatch()` directly from
+   inside one interposed function and log the pointer, then log it
+   again from the shim's glFinish path. Same non-NULL value means
+   dispatch is fine; NULL in the interpose and non-NULL in the shim
+   confirms the TLS story and points at the thread or the emulated-TLS
+   key. No runtime stepping needed.
 2. Are the dispatch table's function pointers (dispatch->Viewport etc.)
    non-NULL? (Print `dispatch->Viewport` after OSMesaMakeCurrent.)
 3. Does the OSMesa context's pipe_context have a valid screen?
-   (Check if softpipe_create_screen succeeded during OSMesaCreateContextExt.)
 4. Is there a Mesa state-tracker init step that the shim skips?
-   (The direct-OSMesa tests call OSMesaPostBuffer or other init that
-   the shim doesn't.)
 
 ---
 
