@@ -8421,18 +8421,23 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
         return kIOReturnNoMemory;
     }
 
-    // Hex dump the first 80 bytes (20 dwords) so the exact bytes on the wire
-    // can be diffed against what probeTransport3D sends. SUBMIT_3D returns
-    // 0x1100 unconditionally — the only way to know if virglrenderer actually
-    // decoded the commands is to compare bytes here with what the host log
-    // shows it received, AND to check the host log for decode errors.
+    // Hex dump — gated to first 20 calls. Was unconditional, producing 21
+    // IOLog calls per submitVirglCommandsEx invocation. Under TCG each
+    // IOLog involves kernel string formatting and is expensive at volume.
+    // The dump served its purpose during Increment A/B wire-byte diffing
+    // and is no longer needed at steady state. Matches the
+    // SUBMIT_INSTRUMENT_LIMIT pattern in submitCommand.
     {
-        const uint32_t* dwords = (const uint32_t*)commands;
-        unsigned n_dump = size / 4; if (n_dump > 20) n_dump = 20;
-        IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
-              "first %u dwords:", ctx_id, size, n_dump);
-        for (unsigned i = 0; i < n_dump; i++) {
-            IOLog(" [%u]=0x%08x", i, dwords[i]);
+        static uint32_t s_hex_dump_count = 0;
+        if (s_hex_dump_count < 20) {
+            s_hex_dump_count++;
+            const uint32_t* dwords = (const uint32_t*)commands;
+            unsigned n_dump = size / 4; if (n_dump > 20) n_dump = 20;
+            IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
+                  "first %u dwords:", ctx_id, size, n_dump);
+            for (unsigned i = 0; i < n_dump; i++) {
+                IOLog(" [%u]=0x%08x", i, dwords[i]);
+            }
         }
     }
 
@@ -8443,8 +8448,12 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
         IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
               "executeCommands FAIL ret=0x%x\n", ctx_id, size, ret);
     } else {
-        IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u ok\n",
-              ctx_id, size);
+        static uint32_t s_submit_ok_count = 0;
+        if (s_submit_ok_count < 20) {
+            s_submit_ok_count++;
+            IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u ok\n",
+                  ctx_id, size);
+        }
     }
     return ret;
 }
@@ -8569,7 +8578,13 @@ IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
         return ret;
     }
     
-    IOLog("VMVirtIOGPU::transferToHost3D: Resource %u transferred successfully\n", resource_id);
+    {
+        static uint32_t s_transfer_to_count = 0;
+        if (s_transfer_to_count < 20) {
+            s_transfer_to_count++;
+            IOLog("VMVirtIOGPU::transferToHost3D: Resource %u transferred successfully\n", resource_id);
+        }
+    }
     return kIOReturnSuccess;
 }
 
@@ -8623,7 +8638,13 @@ IOReturn CLASS::transferFromHost3D(uint32_t resource_id, uint32_t level,
         return ret;
     }
     
-    IOLog("VMVirtIOGPU::transferFromHost3D: Resource %u pixels copied from host to guest\n", resource_id);
+    {
+        static uint32_t s_transfer_from_count = 0;
+        if (s_transfer_from_count < 20) {
+            s_transfer_from_count++;
+            IOLog("VMVirtIOGPU::transferFromHost3D: Resource %u pixels copied from host to guest\n", resource_id);
+        }
+    }
     return kIOReturnSuccess;
 }
 
