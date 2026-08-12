@@ -20,6 +20,238 @@ Last updated: 2026-08-11
 
 ---
 
+## Readback investigation — 2026-08-11 (late session)
+
+### Arc
+
+Starting from the CGL shim verified with RED WINDOW, this session
+instrumented and measured the ~10 fps bottleneck. The measurement work
+surfaced a **critical architectural bug in the killtest's GL dispatch**
+that invalidates all performance measurements taken this session.
+
+### Split-dispatch — architectural limitation of the shim, never working
+
+The killtest (`killtest_shim.mm`) links `-framework OpenGL`. Under
+macOS two-level namespace, every `gl*` symbol in the killtest binds to
+**Apple's OpenGL.framework** at link time — regardless of what
+DYLD_INSERT_LIBRARIES or DYLD_LIBRARY_PATH loads at runtime. This is
+not a regression from the rebuild; it was never working.
+
+Confirmed by `nm -m killtest_shim`:
+```
+(undefined) external _glClear (from OpenGL)
+(undefined) external _glViewport (from OpenGL)
+(undefined) external _glBegin (from OpenGL)
+```
+
+Absent: `_glFinish` and `_glReadPixels` — those are in the shim, which
+links `-lOSMesa`. They bind to Mesa.
+
+**Result:** draw calls → Apple's GL (no drawable → viewport 1×1 →
+nothing rendered). Shim's glFinish/glReadPixels → Mesa (empty resource
+→ 5 real submitCommand calls on an empty scene → all-zero pixels).
+
+**This is architectural, not a killtest bug.** Flurry, Gecko, and WebKit
+all link OpenGL.framework. The shim as designed cannot route any real
+application's GL calls. DYLD_FORCE_FLAT_NAMESPACE=1 was tested — crashes
+GUI apps (too aggressive for AppKit/Cocoa system frameworks).
+
+**Why DYLD_FORCE_FLAT_NAMESPACE crashes but flat-namespace binaries don't:**
+a binary built flat-namespace (shim_smoke_test, stress_test — Mach header
+lacks TWOLEVEL) resolves only ITS OWN undefined references first-found-wins;
+system frameworks keep their two-level bindings among themselves.
+DYLD_FORCE_FLAT_NAMESPACE=1 forces the ENTIRE PROCESS flat — AppKit,
+Foundation, CoreGraphics and everything they load — which is where the
+collisions come from. Same word, very different blast radius. Do not
+retry DYLD_FORCE_FLAT_NAMESPACE expecting the smoke test's result.
+
+**What survives:** `osmesa_softpipe_test` and `virgl_clear_test` link
+`-lOSMesa` directly (`_glClear (from libOSMesa)`, confirmed by nm -m).
+Those verifications — Mesa on 10.6, the winsys, the kext, shaders,
+textures, DRAW_VBO — are unaffected.
+
+**The shim's presentation path also survives.** `shim_smoke_test` and
+`stress_test` are flat-namespace binaries (confirmed: Mach header lacks
+`TWOLEVEL` flag). Their `_glClear` resolves first-found-wins at load
+time — with libOSMesa loaded via DYLD_INSERT_LIBRARIES before
+OpenGL.framework, Mesa's glClear wins. The RED WINDOW test used these
+binaries. The entire presentation chain is verified: swizzles, OSMesa
+context, double-buffer swap/rebind, glFinish/glReadPixels, drawRect:,
+visible pixels on desktop.
+
+**What's broken is specifically GL routing for two-level-namespace apps.**
+`killtest_shim` has `TWOLEVEL` in its Mach header (confirmed by
+`otool -hv`). Its glClear binds to OpenGL.framework at link time. All
+real apps (Flurry, Gecko, WebKit) are two-level. The shim cannot route
+their GL calls to Mesa without the interpose fix.
+
+**All session performance measurements are invalid** — they measured a
+degenerate workload with no rendering.
+
+**Fix direction (two phases):**
+
+Phase 1 — **15-function interpose** (validates routing on a working
+scene). Add `__DATA,__interpose` entries in `cgl_interpose.c` for the
+~15 GL functions the killtest uses (glClear, glClearColor, glViewport,
+glLoadIdentity, glRotatef, glMatrixMode, glOrtho, glDisable,
+glBegin, glEnd, glColor3f, glVertex2f, glFinish, glReadPixels,
+glGetString). Each shim function dispatches to Mesa's implementation
+via OSMesa's GL dispatch. This mechanism works under two-level
+namespace because `_glClear (from OpenGL)` is a genuine dyld bind —
+exactly what `__DATA,__interpose` replaces. Verify: glGetString returns
+Mesa driver, viewport=800×600, pixels non-zero RGBA(26,26,31,255).
+
+**Generate the interpose list from the binary, not by hand:**
+`nm -u killtest_shim | grep ' _gl'` produces the complete set of
+GL entry points the killtest references. A partial list produces a
+partial scene — some calls to Mesa, some to Apple's GL — which looks
+like a rendering bug rather than a missing interpose. The killtest
+uses glBegin/glEnd immediate mode, so the list includes glVertex3f,
+glColor3f, glMatrixMode, glPushMatrix/glPopMatrix and friends, not
+just the obvious glClear/glViewport.
+
+**Implementation gotcha:** replacement functions must reach Mesa via
+`dlopen("libOSMesa.8.dylib", RTLD_LAZY)` + `dlsym(handle, "glClear")`,
+cached once at load time — NOT by calling the symbol name `glClear()`
+from inside the replacement. The usual DYLD_INTERPOSE pattern (call the
+original by name) resolves to Apple's glClear inside the interposing
+image too, because the interpose replaces the symbol everywhere
+including in the shim dylib itself. dlsym returns the raw Mesa function
+pointer, bypassing the dyld stub — no recursion, no ambiguity about
+self-interposition.
+
+Phase 2 — **substitute OpenGL.framework** (for real apps: Flurry, Gecko,
+WebKit). Build a thin dylib linked with
+`-reexport_library libOSMesa.8.dylib` plus the shim's CGL*
+implementations, deployed as a substitute OpenGL.framework via
+DYLD_FRAMEWORK_PATH. Every gl* symbol resolves through the re-export
+automatically — no per-function stub, no flat namespace. Two viability
+questions: (a) the substitute's install_name and compatibility version
+must match what apps recorded against the real framework, (b) it must
+export every CGL* an app might reference — worth an `nm -u` sweep
+across Flurry and PowerFox to size that set.
+
+### What was built (correct, reusable regardless of the bug)
+
+| Increment | What | Repo | Verified how |
+|---|---|---|---|
+| Timing instrumentation | Six timestamps (T1-T6) in cgl_shim.mm isolating submit/transfer/lock/blit per frame + wall-clock frame-to-frame. Time-based warmup (12s default, SHIM_TIMING_WARMUP_SECS env override). Per-frame log gated by SHIM_TIMING env var | Mesa-VirGL | Compiles clean, timestamps print correct ms-scale values |
+| Call-count diagnostics | fprintf per submit_cmd/transfer_get/transfer_put in virgl_iokit_winsys.c | Mesa-VirGL | Counted 2+2+1=5 calls per frame |
+| IOLog gates (kext) | Hex dump + success logs in submitVirglCommandsEx, transferToHost3D, transferFromHost3D gated to first 20 calls | VMQemuVGA | kext md5 f1a9cc614e0e0581c00f6ef41b880fc4 |
+| Build scripts | cross-compat/build-10.6.sh (Mesa dylib, 4-bug fix chain), cgl-shim/build-shim.sh (shim + killtest), with precondition/postcondition checks | Both | Reproducible from scripts |
+| Killtest time-based spin | `angle = elapsed_s * 60°/s` instead of `phase += 0.02` per frame | Mesa-VirGL | Same GL commands per frame regardless of angle |
+
+### What was found (correct regardless of the bug)
+
+1. **5 submitCommand calls per frame.** 2 submit_cmd (62 dwords + 14
+   dwords) + 2 transfer_get (both full-surface 800×600×1, same resource)
+   + 1 transfer_put (60×1×1 vertex upload). The 2 transfer_get calls
+   with a 14-dword submit_cmd between them suggest: read → discover
+   resource referenced → flush → read again. Upstream Mesa pattern,
+   fixable by eliminating the redundant read.
+
+2. **IOSleep(1) poll loop confirmed** (VMVirtIOGPU.cpp:2170). Every
+   submitCommand costs ≥1ms floor. IOSleep(1) blocks until the next
+   scheduler tick — up to ~10ms under TCG. 5 calls × ~10ms = ~50ms
+   potential. Fix: bounded spin (IODelay(20) loop for ~200μs, fall back
+   to IOSleep(1) if host genuinely slow). NEXT variable, separate boot.
+
+3. **IOLog to serial=5 costs ~1-2ms per formatted line under TCG.** The
+   submitVirglCommandsEx hex dump produced 21 IOLog calls per invocation
+   (unconditional, not gated). Gated to first 20 calls. Transfer
+   success logs also gated. The gate is correct regardless of whether
+   the savings measurement was valid.
+
+4. **Two measurement confounds.** (a) Stale killtest processes surviving
+   SSH session close (kill -9 via SSH-launched background processes
+   unreliable on 10.6 — use `killall -9 killtest_shim` instead).
+   (b) Background work (kextd rebuilding caches, mds/mdworker indexing)
+   inflating userspace-only spans. **Precondition check needed:**
+   `uptime` load average near zero, no kextd/mdworker in `ps`. Log in
+   timing header alongside vCPU count.
+
+5. **Guest-wide degradation (unidentified cause).** Submit climbing
+   90→800ms over 70s of sustained rendering. RSS flat (not allocation).
+   Fresh process on degraded guest slow from frame 1 (not in-process).
+   Reboot clears it. Monotonic growth shape is accumulation, not TCG
+   cache thrashing (which plateaus). Specific kernel/TCG state
+   accumulating across processes: unidentified. Named as open.
+
+6. **Build script bugs found and fixed** (cross-compat/build-10.6.sh):
+   force-link missing `libvirgliokit.a` (fourth archive), missing
+   `-framework IOKit`, `set -e` killing script before force-link (ninja
+   link fails by design — meson doesn't include virgl in OSMesa target),
+   `--no-force-link` now produces nothing (force-link is mandatory).
+
+### What was falsified
+
+1. **"IOLog gate saved 50ms"** — measured on degenerate workload.
+   UNRESOLVED. Must re-measure after split-dispatch fix.
+2. **"Cacheless boot inflates steady-state"** — wrong. kextd/mdworker
+   background work was the cause. Cacheless boot doesn't slow steady-state.
+3. **"Degradation is TCG-specific"** — 9× growth is accumulation, not
+   cache thrashing. RSS flat. Guest-wide, not in-process.
+4. **"No current context"** — OSMesaGetCurrentContext non-NULL,
+   renderer "softpipe", OSMesaMakeCurrent returns GL_TRUE. Falsified.
+5. **"meson.build dep_iokit broke rendering"** —
+   declare_dependency(link_args:) only adds linker flags. Can't change
+   compiled code.
+
+### Corrections made during the session
+
+1. **Shim plan premise was wrong.** The plan assumed GL entry points
+   resolve into Mesa via DYLD_LIBRARY_PATH. They don't: DYLD_LIBRARY_PATH
+   doesn't affect framework lookups under two-level namespace. GL symbols
+   bind to their link-time library. The killtest's gl* calls go to Apple's
+   OpenGL, not Mesa. User's own correction.
+
+2. **Radii framework for variant generalisation.** Three radii: PCI-ID
+   (all variants), VGA/no-VGA split (class-code + BAR layout + cap walk +
+   mapBarByNumber + aperture, family-scoped), virgl backend (three -gl
+   variants: virtio-vga-gl, virtio-gpu-gl-pci, virtio-ramfb-gl).
+
+3. **GfxInfo does not query CGL.** Gecko's Mac blocklist reads
+   vendor-id/device-id from IOKit registry
+   (IORegistryEntrySearchCFProperty), not CGL renderer queries.
+   Renderer-info interpose idea dropped. PCI nub publishes
+   vendor-id=0x1af4 / device-id=0x1050. No static blocklist match.
+   Downloaded blocklist probably never fetches (TLS 1.2 on 10.6).
+
+4. **README corrected.** virtio-vga-gl promoted to recommended variant
+   (System Profiler Graphics/Displays entry + resolution picker).
+   BAR-layout added to header note alongside class-code as the
+   family-scoped differences. Devices list demoted others to functional.
+
+### Open items
+
+1. **Split-dispatch fix** (BLOCKING). Killtest must route GL through
+   Mesa. Rebuild with `-lOSMesa` instead of `-framework OpenGL`, or use
+   `DYLD_FORCE_FLAT_NAMESPACE=1`. Verify: `nm -m` shows glClear from
+   libOSMesa, glGetString returns Mesa driver, pixels non-zero.
+2. **IOLog gate** — re-measure after split-dispatch fix on a working
+   scene. Pre-registered: submit+transfer drop, wall drops >5ms.
+3. **IOSleep(1) poll loop** — bounded spin, separate boot.
+4. **Redundant transfer_get** — 2 full-surface reads per frame.
+5. **Guest-wide degradation cause** — kernel/TCG state accumulating.
+   Unidentified.
+6. **flush_frontbuffer stub** — virgl_iokit_flush_frontbuffer empty.
+7. **~34ms unmeasured span** — T0 at top of render loop.
+
+### Next concrete step and pre-registered prediction
+
+Implement the 15-function GL interpose in `cgl_interpose.c`. Verify:
+glGetString(GL_RENDERER) returns Mesa driver, viewport=800×600, pixels
+non-zero RGBA(26,26,31,255) for the clear color. Then re-run the IOLog
+gate A/B on a working scene.
+
+Prediction: with GL routing through Mesa, the scene renders correctly.
+If IOLog costs ~1-2ms/line under serial=5 as observed on the degenerate
+workload, the gate saves ~50ms/frame on the real workload too. If it
+shows no effect, the IOSleep(1) poll loop is the dominant cost and
+becomes the next variable.
+
+---
+
 ## Session summary — 2026-08-10/11
 
 ### Arc

@@ -16,9 +16,12 @@ GUEST — macOS 10.6.8 x86_64 (UTM VM)
 └───────────┬───────────────────────────┬──────────────────────────────────┘
             │ ObjC swizzle              │ __DATA,__interpose
 ┌───────────▼───────────────────────────▼──────────────────────────────────┐
-│  cgl-shim            VERIFIED — red window on 10.6 guest                  │
+│  cgl-shim            presentation path works; GL dispatch BROKEN          │
 │  9 NSOpenGLContext swizzles + 4 _CGL* interposes + NSView drawRect swizzle│
 │  presentation: OSMesa buffer → setNeedsDisplay → drawRect → NSBitmapImageRep│
+│  GL DISPATCH: app's draw calls bind to OpenGL.framework, NOT Mesa.        │
+│  See "Split-dispatch" below. Fix: __DATA,__interpose for gl* or           │
+│  substitute OpenGL.framework via DYLD_FRAMEWORK_PATH.                     │
 └───────────┬──────────────────────────────────────────────────────────────┘
             │ OSMesaCreateContextExt / OSMesaMakeCurrent
 ┌───────────▼──────────────────────────────────────────────────────────────┐
@@ -201,7 +204,7 @@ is the mechanism that enters the display cycle from another thread.
 | `ATTACH_BACKING` with userspace memory | **verified** — unaligned 16 KB malloc, 5-segment scatter list (partial page, 3 full, partial page), 4096/4096 dwords correct, wiring held across the guest write between transfers |
 | `virgl_iokit_winsys` | **verified** — Mesa-driven `glClear`+`glReadPixels` byte-exact via virgl, softpipe reference identical (Mesa-VirGL commit c703f8fb910) |
 | Mesa + Gallium + virgl driver (guest) | **built and runtime-verified** via softpipe + virgl (clear, triangle, textured triangle, shaders+textures+sampler state) |
-| `cgl-shim` | **verified — red window on 10.6 guest.** 9 NSOpenGLContext swizzles + 4 `_CGL*` interposes + `drawRect:` presentation. GL calls reach Mesa via `DYLD_LIBRARY_PATH`; visible pixels via `performSelectorOnMainThread` → `setNeedsDisplay:` → `drawRect:` swizzle. |
+| `cgl-shim` | **presentation path verified; GL routing broken for two-level apps.** Swizzles, OSMesa context, double-buffer swap/rebind, drawRect: → visible pixels — all verified via flat-namespace test binaries (`shim_smoke_test`, `stress_test` — Mach header lacks `TWOLEVEL`, so Mesa's glClear wins at load time). But two-level-namespace apps (`killtest_shim` and all real apps: Flurry, Gecko, WebKit) bind glClear to OpenGL.framework at link time — GL draw calls go to Apple, not Mesa. Confirmed by `nm -m` + `otool -hv`. Fix: `__DATA,__interpose` for gl* entry points. |
 | virglrenderer / ANGLE (host) | stock UTM, unmodified |
-| What the shim proves | A clear with a working presentation path through NSOpenGLContext. Does not yet cover: multiple concurrent contexts, resize under load, `CGLEnable` through the interpose layer, sustained frames with coalescing drops, or a real application. |
-| Next milestone | **killtest via NSOpenGLContext** — rotating triangle through the shim rather than direct OSMesa. Exercises repeated `-flushBuffer`, swap-and-rebind per frame, coalescing, and the full presentation route. Gecko becomes a reasonable target after that holds. |
+| What the shim proves | The **presentation path** is verified end-to-end (swizzles → OSMesa → buffer swap → drawRect → visible pixels) via flat-namespace test binaries. The **GL dispatch path** (app draw calls → Mesa) is the only gap — broken for two-level-namespace apps (which is all real apps). Fix: `__DATA,__interpose` for gl* entry points (Phase 1, ~15 functions for the killtest), or substitute OpenGL.framework via `DYLD_FRAMEWORK_PATH` with a `-reexport_library` thin dylib (Phase 2, for real apps). See LEDGER.md for the full diagnosis and implementation gotcha (dlsym, not symbol name). |
+| Next milestone | **15-function GL interpose** — add `__DATA,__interpose` entries in `cgl_interpose.c` for the killtest's ~15 GL functions, dispatching to Mesa via `dlopen`/`dlsym`. Validates GL routing on a working scene. Then re-run the IOLog gate and IOSleep(1) poll-loop measurements against a real workload. |

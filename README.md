@@ -38,7 +38,15 @@ summary.
 
 ## Verified working
 
-Verified on `virtio-gpu-gl-pci` unless noted.
+Verified on `virtio-vga-gl` unless noted — that is the variant the guest runs
+and the recommended one (see Devices below). `vendor-id`/`device-id` are
+identical across the virtio variants (0x1af4/0x1050); `class-code` (0x0300 on
+`virtio-vga-gl`, 0x0380 on `virtio-gpu-gl-pci`) **and BAR layout** differ
+between the VGA and pure-GPU families — the `-vga` family's VGA framebuffer BAR
+shifts the capability-structure BARs, which is why `virtio-vga-gl` once produced
+"Common map too small" and `mapBarByNumber` exists. Findings that turn on the
+PCI IDs carry across all variants; anything touching the cap walk, BAR mapping,
+or the aperture is family-scoped.
 
 | Capability | How it was verified |
 |---|---|
@@ -52,20 +60,24 @@ Verified on `virtio-gpu-gl-pci` unless noted.
 | Resolution changes | Real user-driven mode switch, resource recreated against a stable buffer, aperture mapping preserved. |
 | Resource tracking | Self-test probe at boot: create → duplicate-reject → destroy → verify-gone. |
 | Cursor queue transport | Self-test probe at boot: `UPDATE_CURSOR` + `MOVE_CURSOR` on queue 1. Used-ring advances, both commands accepted. |
-| 3D transport | Self-test probe at boot: CTX_CREATE → RESOURCE_CREATE_3D → ATTACH_BACKING → CTX_ATTACH_RESOURCE → CREATE_OBJECT(surface) → SET_FRAMEBUFFER_STATE+CLEAR → TRANSFER_FROM_HOST_3D. Byte-equal positive + negative control (different clear colors produce different readback bytes, byte-perfect unorm match on all 64 dwords). Verified 2026-08-09 on `virtio-vga-gl`; other variants not re-tested this session. |
+| 3D transport | Self-test probe at boot: CTX_CREATE → RESOURCE_CREATE_3D → ATTACH_BACKING → CTX_ATTACH_RESOURCE → CREATE_OBJECT(surface) → SET_FRAMEBUFFER_STATE+CLEAR → TRANSFER_FROM_HOST_3D. Byte-equal positive + negative control (different clear colors produce different readback bytes, byte-perfect unorm match on all 64 dwords). Verified 2026-08-09; other variants not re-tested this session. |
 | QXL path | Verified 2026-08-09 — VMQemuVGA class, separate code path, mode switches work. |
 | Mesa on 10.6 | `libOSMesa.8.dylib` cross-built (913 targets, zero undefined symbols) and runtime-verified on the guest — softpipe renders byte-exact clears. |
 | `virgl_iokit_winsys` | Mesa-driven `glClear` + `glReadPixels` byte-exact through virgl; `GALLIUM_DRIVER=softpipe` in the same binary gives an identical result. |
 | 3D rendering | Triangle and textured triangle PASS on virgl, 3/3 pixels, matching the softpipe reference. Exercises GLSL compilation, shader objects, vertex buffers, vertex element state, textures, sampler state and `DRAW_VBO`. |
-| CGL shim | Visual check 2026-08-10 — a Cocoa app using `NSOpenGLContext` renders a red window on the guest desktop through the shim. |
+| CGL shim | **Presentation path works; GL dispatch broken.** The `drawRect:` → OSMesa buffer → visible pixels path is verified. But the app's GL draw calls bind to Apple's OpenGL.framework under two-level namespace and do NOT reach Mesa. Confirmed by `nm -m`. Earlier "red window" was from test binaries linking `-lOSMesa` directly. Fix: `__DATA,__interpose` for gl* entry points, or substitute OpenGL.framework. See LEDGER.md. |
 
 ### Devices
 
-- `virtio-gpu-gl-pci` — primary target, verified 2026-08-09
-- `virtio-ramfb-gl` — verified 2026-08-09
-- `virtio-vga-gl` — verified 2026-08-09 (required `useNativeScanout` fix; VGA
-  compat no longer gates the rendering path)
-- QXL / QEMU std VGA — verified 2026-08-09 (VMQemuVGA class, separate path)
+- `virtio-vga-gl` — **recommended.** Verified 2026-08-09 (display) and
+  2026-08-10/11 (3D). This is the variant the guest runs. Recommended because
+  System Profiler's Graphics/Displays panel surfaces both a display entry and
+  a working resolution picker on this variant; the pure-GPU variants are
+  functional but produce a reduced Displays UI there
+  (see [No EDID on any variant](#known-issues)).
+- `virtio-gpu-gl-pci` — functional. Verified 2026-08-09 (display bring-up).
+- `virtio-ramfb-gl` — functional. Verified 2026-08-09 (display bring-up).
+- QXL / QEMU std VGA — verified 2026-08-09 (VMQemuVGA class, separate path).
 
 ---
 
@@ -99,10 +111,7 @@ Verified on `virtio-gpu-gl-pci` unless noted.
   textures, sampler state and `DRAW_VBO` — including the three-hop shader
   translation chain (GLSL → TGSI in Mesa, TGSI → GLSL in virglrenderer,
   GLSL → Metal in ANGLE).
-- **A CGL shim connects applications to it.** Nine `NSOpenGLContext` swizzles
-  plus four `_CGL*` interposes, loaded via `DYLD_INSERT_LIBRARIES`, back
-  contexts with OSMesa and present through a swizzled `drawRect:`. A Cocoa test
-  app renders visibly on the guest desktop.
+- **A CGL shim connects applications to it — presentation path works, GL dispatch does not.** Nine `NSOpenGLContext` swizzles plus four `_CGL*` interposes, loaded via `DYLD_INSERT_LIBRARIES`, intercept context lifecycle and present through a swizzled `drawRect:`. But the app's GL draw calls bind to Apple's OpenGL.framework under two-level namespace — they do NOT reach Mesa. The shim's own `glFinish`/`glReadPixels` DO reach Mesa (via `-lOSMesa`). Split dispatch confirmed by `nm -m`: `_glClear (from OpenGL)`. All real apps (Flurry, Gecko, WebKit) link OpenGL.framework and are affected. Fix: `__DATA,__interpose` for gl* entry points (Phase 1), or substitute OpenGL.framework via `DYLD_FRAMEWORK_PATH` (Phase 2). See [LEDGER.md](LEDGER.md) for the full diagnosis.
 - **Not yet covered:** real applications (Gecko, WebKit), multiple concurrent
   contexts, resize under load, sustained frame rates, and resource reuse across
   frames. Performance under a real workload is unmeasured.
@@ -117,9 +126,12 @@ chosen direction is Mesa + virgl + a CGL shim — see
 analysis. `virglrenderer-metal/` is a shelved host-side experiment that has
 never compiled inside virglrenderer and targets a Linux/Mesa guest.
 
-If you need 3D in a Snow Leopard VM today, this driver plus the Mesa build and
-CGL shim will render through the host GPU — but only test applications have been
-run against it so far.
+If you need 3D in a Snow Leopard VM today, the Mesa build and winsys work
+end-to-end (verified via direct-OSMesa test programs that link `-lOSMesa`), but
+the CGL shim's GL dispatch is broken — apps linked against OpenGL.framework
+(which is all of them) route draw calls to Apple's GL, not Mesa. The
+presentation path works; the GL routing fix (`__DATA,__interpose` for gl*
+functions) is the next milestone.
 
 ---
 
@@ -250,6 +262,9 @@ Earlier versions of this README described a driver whose advanced features were
 stub functions returning success, with an IORegistry that reported them as
 working. That was accurate at the time. The 2D transport is real and verified,
 and has been for several releases. The 3D transport was verified end-to-end at
-the byte level on 2026-08-09, and 3D rendering through Mesa and the CGL shim on
-2026-08-10 — test applications only; no real application has been run against it
-yet (see [3D status](#3d-status) above).
+the byte level on 2026-08-09, and 3D rendering through Mesa on 2026-08-10 —
+via direct-OSMesa test programs that link `-lOSMesa` directly. The CGL shim's
+presentation path works, but its GL dispatch is broken: apps linked against
+OpenGL.framework (which is all of them) route draw calls to Apple's GL, not
+Mesa. See [3D status](#3d-status) above and [LEDGER.md](LEDGER.md) for the
+diagnosis.
