@@ -588,8 +588,8 @@ Two implications:
 
 ### Open items (updated priority)
 
-1. **T0 at the top of the render loop** (was nice-to-have, now blocking). The unmeasured span went from ~191 ms to ~53 ms and is still 40% of the frame. Without it, optimization is blind. One-line addition to the killtest.
-2. **Redundant transfer_get** (now the dominant lever after IOSleep landed). ~26 ms available, evidence points clearly. Investigate why virgl issues 2 full-surface reads of the same resource with a flush between them.
+1. **T0 at the top of the render loop** — CLOSED 2026-08-12 (commit `6d737f3f285` in Mesa-VirGL). Within-frame unmeasured span is **<1 ms in steady state** (0.24–0.93 ms across frames 2-9). The "wall − (submit + transfer + lock)" gap that had been called the unmeasured span is NOT inside the frame — it's between frames (AppKit display cycle, NSTimer dispatch, drawRect), outside our optimization surface. Killtest's draw-call encoding is essentially free; all 5 submitCommand calls are inside submit/transfer timing. Call-count reduction confirmed as the dominant lever.
+2. **Redundant transfer_get** (now the dominant lever). ~26 ms available, evidence points clearly. Investigate why virgl issues 2 full-surface reads of the same resource with a flush between them.
 3. **Cursor smoothness** (pushed below call-count work). The 60 Hz throttle test is diagnostic, not ship config — confirms pull-vs-push but degrades everything else. The userspace dirty-rect helper via `[NSEvent mouseLocation]` is the architectural fix worth prototyping, but only after the frame budget is understood via T0.
 
 ---
