@@ -2005,6 +2005,33 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
 
     IOLockLock(m_vq_lock);
 
+    /* Drain stale used-ring entries before submitting.
+     *
+     * If the previous user-client session ended without consuming all its
+     * responses (e.g. clientDied, abrupt termination), m_vq_last_used lags
+     * m_vq_used->idx. The poll loop below waits for `used_idx != m_vq_last_used`,
+     * which would be true immediately — we'd read a stale descriptor and
+     * return its response as if it were ours. Symptoms: first getCapsetInfo
+     * of a new session returns garbage id/version/size but resp_type=0x1100
+     * (the stale response happened to be a CTX_CREATE nodata); first
+     * createResource3DEx could return a bogus resource id silently.
+     *
+     * Sync m_vq_last_used to the device's current used_idx BEFORE we publish
+     * our own command to the avail ring. After this, the poll loop only
+     * exits when the device processes OUR command. */
+    __sync_synchronize();
+    uint16_t dev_used_idx_drain = m_vq_used->idx;
+    if (m_vq_last_used != dev_used_idx_drain) {
+        if (instr) {
+            IOLog("VMVirtIOGPU::submit[%u] DRAIN stale used entries: "
+                  "last_used=%u -> %u (skipping %u)\n",
+                  m_submit_count, (unsigned)m_vq_last_used,
+                  (unsigned)dev_used_idx_drain,
+                  (unsigned)(dev_used_idx_drain - m_vq_last_used));
+        }
+        m_vq_last_used = dev_used_idx_drain;
+    }
+
     // 1. Pop two free descriptors
     uint16_t cmd_desc = m_vq_free_head;
     if (cmd_desc == (uint16_t)-1) {
