@@ -576,6 +576,9 @@ path gets the already-loaded image.
 
 ### But substitute framework is the wrong mechanism — interposition wins
 
+**UPDATE: this conclusion was REVERSED by the dlsym check below. Kept
+here for the reasoning trail.**
+
 Census with host `nm` (guest's 10.6 `nm` reports "malformed object
 (unknown load command 42)" on modern Mach-O — census was invalid
 until re-run on host):
@@ -601,28 +604,53 @@ Interposition covers XUL's 10 CGL + 21 gl* = **31 symbols** with no
 load-time obligation. Unmatched symbols simply aren't interposed —
 QuartzCore's launch isn't affected. Runtime exposure is the same either
 way (if QuartzCore calls an interposed gl*, it reaches Mesa), but
-interposition adds no load-time failure mode. **Interposition strictly
-dominates.**
+interposition adds no load-time failure mode. Interposition appears to
+strictly dominate.
 
-### Decision: scale Phase 1 to XUL, not substitute framework
+### REVERSAL: Gecko uses GLLibraryLoader (dlsym) — substitute framework is necessary
 
-Generate the interpose list from `nm -u` on XUL (same pattern as
-killtest's 17-symbol list). Existing interpose covers 17 gl* + 4 CGL.
-XUL adds:
+The above interposition argument is contingent on XUL's static binds
+being the complete set. **They are not.** Gecko's
+`mozilla::gl::GLLibraryLoader::LoadSymbols` and
+`GLContext::LoadFeatureSymbols` (both confirmed present in XUL via
+strings) dlopen the OpenGL.framework and dlsym hundreds of additional
+GL entry points at runtime — extensions, version-specific functions,
+ARB/EXT suffixes. XUL contains the full framework path strings
+(`/System/Library/Frameworks/OpenGL.framework/Versions/A/OpenGL`)
+used as dlopen arguments.
 
-- **12 new gl*** (all verified in libOSMesa):
-  glBindFramebufferEXT, glBindTexture, glCheckFramebufferStatusEXT,
-  glDeleteFramebuffersEXT, glDeleteTextures, glFramebufferTexture2DEXT,
-  glGenFramebuffersEXT, glGenTextures, glPixelStorei, glScalef,
-  glTexParameteri, glTranslatef
+Interposition rewrites dyld's binding of undefined symbols only.
+**dlsym is not affected by __DATA,__interpose.** A call resolved via
+`dlsym(handle, "glTexImage2D")` returns Apple's GL function pointer,
+bypassing the interpose entirely. Result: `glClear` (static) → Mesa,
+but `glTexImage2D` (dlsym'd) → Apple's GL → no Mesa context → partial
+scene or crash.
 
-- **8 new CGL** (absent from libOSMesa — need implementations):
-  CGLChoosePixelFormat, CGLCreateContext, CGLGetCurrentContext,
-  CGLLockContext, CGLReleasePixelFormat, CGLDestroyPixelFormat,
-  CGLSetCurrentContext, CGLUnlockContext
+Only a substitute framework changes what dlsym finds. With
+`DYLD_FRAMEWORK_PATH` pointing at the substitute (gate test already
+passed), the dlopen call returns the substitute's handle, and every
+subsequent dlsym resolves through Mesa via `-reexport_library`.
 
-The CGL functions mirror the NSOpenGLContext swizzle but at the C-level
-API. The existing `shim_registry` + `shim_ctx` infrastructure is reusable.
+**The 160+ CGL symbol burden is the necessary cost of correctness.**
+Most can be stub implementations that return plausible defaults
+(kCGLNoError, etc.) — they satisfy QuartzCore/CoreVideo's load-time
+link requirement without actually servicing compositing calls (which
+go to Apple's path if the stub returns an error that QuartzCore
+handles gracefully).
+
+### Decision: build substitute framework, not scale interposition
+
+The interpose set from Phase 1 is still useful as a fallback for apps
+that DON'T use dlsym (the killtest is one — it statically binds
+everything). But for PowerFox/Gecko, the substitute framework is the
+only mechanism that covers both static AND dynamic GL resolution.
+
+Build path:
+1. Thin x86_64 dylib with install_name matching OpenGL.framework
+2. `-reexport_library libOSMesa.8.dylib` (covers all gl* that Mesa exports)
+3. CGL implementation layer (~160+ symbols — many stubs, real ones for
+   the 10 that XUL actually uses)
+4. Deploy via DYLD_FRAMEWORK_PATH (gate test already passed)
 
 ### PowerFox architecture: x86_64-only
 
