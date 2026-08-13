@@ -547,6 +547,53 @@ Build script now writes the interpolated cross file into `build-106/` rather tha
 - `glGetString(GL_RENDERER)` consistently returns "virgl (Apple M4 Pro)" — v2 caps fetched
 - CGL shim's GL routing works for two-level-namespace apps (the original split-dispatch bug, fixed via `p_gl*` routing)
 
+## Per-call cost study — 2026-08-12 (CONFOUNDED — pending A/B)
+
+### What was measured
+
+Bumped `SUBMIT_INSTRUMENT_LIMIT` 20 → 200 and added `cmd` + `call_ns` to the gated EXIT OK log. Captured submits 1-200 across ~40 frames of killtest steady state. Per-cmd-type counts and call_ns:
+
+| cmd type | meaning | count | typical call_ns |
+|---|---|---|---|
+| 0x105 | TRANSFER_FROM_HOST_2D | 82 | ~5 ms |
+| 0x104 | TRANSFER_TO_HOST_2D | 81 | ~16 ms |
+| 0x106/0x101/0x103/0x102 | various resource ops | 7-9 each | ~16 ms (resource ops) / ~3-16 ms (unref) |
+| 0x207 | SUBMIT_3D | **4** | ~16-26 ms |
+| 0x204/0x200/0x206 | CTX_CREATE / RESOURCE_CREATE_3D / TRANSFER_FROM_HOST_3D | 2-5 | ~3 ms |
+| 0x108/0x109 | GET_CAPSET_INFO / GET_CAPSET | 4 each | ~2-38 ms |
+
+### Conclusion 1 — "dominant per-frame commands are 2D, not 3D" — PENDING (likely false)
+
+**The arithmetic contradicts the claim.** 82 reads + 81 uploads matches the winsys's per-frame count of 2 transfer_get + ~1.6 transfer_put per frame. But the same winsys count says 2 submit_cmd per frame, which should be ~82 SUBMIT_3D over the session. Only 4 appear.
+
+The most plausible explanation is the one offered as hypothesis in the same breath: `submitVirglCommandsEx` (kext handler for winsys selector 0x6008) writes the virtqueue directly, bypassing `submitCommand`'s poll loop and its instrumentation. If that's the case, the table above is a census of the LOGGED path, not a per-frame census. "3D commands are rare" is unsupported; they may be entirely absent from the sample.
+
+**Not recorded as a finding.** Same shape as the prior caps-contaminated A/B: a measurement whose sampling boundary wasn't established before the numbers were interpreted. Trace `submitVirglCommandsEx` before drawing any conclusion about which commands dominate.
+
+### Conclusion 2 — per-call costs may be measuring the instrumentation, not the call
+
+Cost clustering on identical values across semantically unrelated commands:
+
+- ~16 ms appears for UPLOAD (0x104), DETACH_BACKING (0x106), RESOURCE_UNREF (0x101)
+- ~26 ms appears for RESOURCE_FLUSH (0x103) and SUBMIT_3D (0x207)
+- ~3 ms appears for several unrelated types
+
+Commands with nothing in common landing on identical values means the cost is in something shared, not in the command. The leading candidate is the **ungated IOLog to emulated serial port at serial=5** — known from prior work to cost ~1-2 ms per formatted line. The EXIT OK log fires once per submit and writes a long formatted line; with serial=5 that's a synchronous serial write per call.
+
+Worse, the per-call timestamps themselves are captured via mach_absolute_time inside the same IOLog-gated block. If the gating IOLog is the dominant cost, the measurement is generating most of what it reports. With the host completing in under 20 µs (poll_iter=0) and no other obvious mechanism for a 16 ms per-call floor, the IOLog confound is a strong candidate.
+
+**Action: IOLog gate A/B first, ahead of the bypass trace.** Run killtest with `SUBMIT_INSTRUMENT_LIMIT=0` (no per-submit IOLog), compare wall time against the 127 ms baseline. If wall drops substantially, the absolute per-call numbers here are inflated and only the relative shape might survive.
+
+### Solid: redundant transfer_get downgraded to ~5 ms (not ~26 ms)
+
+The one conclusion from the per-call data that survives both confounds: the redundant `transfer_get` is a `0x105` (TRANSFER_FROM_HOST_2D), which even under the inflated-cost reading is in the cheapest cluster. Eliminating it saves ~5 ms against a 127 ms wall — under 4%. **Demoted from optimization lever to correctness cleanup.** Still worth doing for hygiene, no longer on the critical path.
+
+### Open items (reprioritized)
+
+1. **IOLog gate A/B** — determines whether the entire per-call dataset is real. Cheap, already designed.
+2. **Trace `submitVirglCommandsEx`** — settles the bypass question AND the older contradiction (per-call submit ~26 ms while T0→T1 <1 ms with transfer_put supposedly inside it). Those are probably the same finding.
+3. **Redundant transfer_get** — ~5 ms, correctness cleanup not lever. Defer until cost model is trustworthy.
+
 ## IOSleep spin — 2026-08-12 (verified)
 
 ### Change
