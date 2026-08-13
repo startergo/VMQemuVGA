@@ -961,16 +961,101 @@ produced nothing and vanished — no crash report, guest healthy,
 identical load-time code to the working build. Unexplained; single
 occurrence, did not reproduce.
 
-**Next step (pre-registered):** wire present_buf → screen. Preferred:
-blit directly in shim_present (main thread, already runs every
-coalesced flush) via `[view lockFocus]` + the NSBitmapImageRep draw +
-`[view unlockFocus]`, bypassing drawRect (ChildView overrides it;
-drawptr count 0 across all runs). Alternative: handle
-CGLTexImageIOSurface2D against the OSMesa context. Prediction: with
-the lockFocus blit, the safe-mode prompt's content area shows
-composed content; test surface is the prompt itself, then Start in
-Normal Mode for the full browser window. Verify visually, then
-confirm drawptr-equivalent evidence in the log.
+### 2026-08-13 evening — FIRST FULLY RENDERED GECKO UI (milestone)
+
+**The safe-mode dialog renders correctly: text upright, buttons
+visible — and the user CLICKED one (Refresh Profile), so input
+routing works too.** Pipeline verified end-to-end visually:
+virgl render → CGLTexImageIOSurface2D upload (BGRA/RECT honoured,
+target=0x84f5 fmt=0x80e1 type=0x8367, glErr=0x0) → composite →
+readback → swap → drawRect blit → screen.
+
+Changes that closed it (each verified):
+1. **PixelHostingView drawRect swizzle.** The NSView-level swizzle
+   never runs under Gecko — ChildView/PixelHostingView override
+   drawRect: and per-class dispatch lets the override win (drawptr 0,
+   blit no samples, white content). Fix: lazy swizzle of
+   `[view class]` at first -setView: (only classes whose drawRect:
+   IMP differs from NSView's; one-shot; logged). The actual class is
+   **PixelHostingView**, NOT ChildView — resolving from the instance
+   is what caught it; a hardcoded objc_getClass("ChildView") would
+   have missed. shim_childViewDrawRect: calls through to Gecko's
+   original first (it drives the PaintWindow/SendFlushRendering sync
+   that produces frames), then blits present_buf over the top.
+2. **CGLTexImageIOSurface2D implemented as CPU upload** into the
+   current OSMesa context (lock read-only, base address +
+   GL_UNPACK_ROW_LENGTH from bytes-per-row, honour caller's
+   target/format/type verbatim). Never forward this call — the shim
+   token in ctx is dereferenced by real CGL. Cost noted: converts
+   Gecko's zero-copy into a per-texture CPU copy; the frame budget
+   now carries two full-surface copies (upload + readback).
+3. **Vertical flip fixed at the blit via CTM** (one transform, no
+   row copy). Content arrived bottom-up: window chrome correct,
+   content mirrored top-to-bottom (pure row inversion, not 180°
+   rotation). **OSMesaPixelStore(OSMESA_Y_UP, 0) is INERT in this
+   Mesa's gallium OSMesa frontend** — falsified by hash-verified
+   A/B (image byte-identical with/without; the classic-OSMesa row
+   inversion did not carry into the gallium frontend). The inert
+   calls were removed to avoid double-flipping if a future Mesa
+   implements them.
+4. **OSMesaPixelStore crash lesson:** it dereferences the CURRENT
+   context — calling before the first OSMesaMakeCurrent NULL-derefs
+   (compositor SIGSEGV at OSMesaPixelStore+56, addr 0x38, crash
+   report 11:12). Always after MakeCurrent.
+5. Why the flip was invisible until now: solid red and the symmetric
+   triangle are flip-invariant; text was the first content that
+   could reveal it.
+
+**New frontier: the MAIN browser window composites black.** After
+Refresh Profile (which restarts Gecko), the main window opened at
+viewport 1280×843 and flushed 1000+ frames whose readback is ALL
+ZEROS (blit itself working, 7-8ms). The only IOSurface inputs are
+strips (1280×27, 15×15, 4×4) — never a window-sized upload. Forcing
+`browser.tabs.remote.autostart=false` changed nothing → e10s is NOT
+the gate. No content process has ever spawned (no 4th framework
+block, no plugin-container crash). Then the process died silently —
+no crash report, and (blocks: 1) this generation never even ran the
+usual stub handoff.
+
+**Recurring unexplained pattern: silent process death, no crash
+report.** Third+ occurrence today (spew7 flake, refresh-generation
+death, this one). Suspects unverified: Gecko hang watchdog, exit()
+from a failed subsystem.
+
+**Pre-registered next steps:**
+1. During a black-window run, `sample` both Compositor and main
+   threads: main grinding in layout/JS = first content is SLOW under
+   TCG (wait 10+ min before concluding broken); both parked = no
+   content arriving, chase the layer manager.
+2. Identify which layer manager the main window uses
+   (CompositorOGL vs BasicCompositor — the strips-vs-big-surface
+   upload asymmetry hints different input paths per surface).
+
+**Next step — CORRECTED (lockFocus was a falsified route, proposed in
+error three times above):** the presentation fix is a ChildView-class
+drawRect swizzle, not a new draw mechanism. lockFocus/unlockFocus
+deadlocks on 10.6 (AppKit re-enters the run loop inside it —
+architecture-3d.md #2, falsified-routes list); the ONLY proven route
+is drawing inside the view's own drawRect:. The reason our drawRect
+path never ran is per-class dispatch: the swizzle sits on NSView, and
+Gecko's ChildView overrides drawRect:, so Gecko's implementation wins
+and ours never fires (drawptr 0, blit no samples, white content —
+visually confirmed via user screenshot: "PowerFox Safe Mode" window,
+system chrome rendered, content blank white; note the readback holds
+opaque BLACK, so not even a wrong blit was reaching the screen).
+Implemented: lazy swizzle of `[view class]` at first -setView:
+(XUL not mapped at +load; only classes whose drawRect: IMP differs
+from NSView's are patched; shim_childViewDrawRect: calls through to
+Gecko's original first — it drives the PaintWindow/
+SendFlushRendering sync that produces fresh frames — then blits
+present_buf over the top). Blit-only (no call-through) is the
+fallback variant if call-through-first misbehaves. Prediction: the
+safe-mode prompt's content renders (text + buttons); log shows
+"drawRect swizzled on ChildView", drawptr lines, and blit samples.
+The kCGLBadContext on CGLTexImageIOSurface2D remains its own datum:
+Gecko has a native present path it expects to work; the drawRect
+blit bypasses rather than fixes it — revisit if native compositing
+is ever wanted.
 
 ### PowerFox architecture: x86_64-only
 
