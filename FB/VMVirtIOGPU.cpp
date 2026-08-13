@@ -1994,13 +1994,19 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     // so the succeed→fail transition is visible in a single boot. Throttled after N.
     m_submit_count++;
     const bool instr = (m_submit_count <= SUBMIT_INSTRUMENT_LIMIT);
+    // Per-call wall time. Captured at entry, diff'd at EXIT OK. Pairs with
+    // cmd->type to give a per-call cost model — without this, attributing
+    // the IOSleep saving and estimating redundant-transfer_get value is
+    // inference. mach_absolute_time is the same source the shim uses.
+    uint64_t submit_entry_time = mach_absolute_time();
     if (instr) {
         uint16_t entry_depth = vringFreeDepth();
-        IOLog("VMVirtIOGPU::submit[%u] ENTRY this=%p cmd=0x%x noisy=%d avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u\n",
+        IOLog("VMVirtIOGPU::submit[%u] ENTRY this=%p cmd=0x%x noisy=%d avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u entry_time=%llu\n",
               m_submit_count, this, cmd->type, noisy ? 1 : 0,
               m_vq_avail ? m_vq_avail->idx : (uint16_t)0,
               m_vq_used ? m_vq_used->idx : (uint16_t)0,
-              m_vq_last_used, m_vq_free_head, entry_depth);
+              m_vq_last_used, m_vq_free_head, entry_depth,
+              (unsigned long long)submit_entry_time);
     }
 
     IOLockLock(m_vq_lock);
@@ -2294,8 +2300,10 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     m_vq_free_head = cmd_desc;
 
     if (instr) {
-        IOLog("VMVirtIOGPU::submit[%u] EXIT OK resp_type=0x%x poll_iter=%u avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u cmd_desc=%u→ret resp_desc=%u→ret\n",
-              m_submit_count, resp ? resp->type : 0, poll_iter,
+        uint64_t submit_exit_time = mach_absolute_time();
+        IOLog("VMVirtIOGPU::submit[%u] EXIT OK cmd=0x%x resp_type=0x%x poll_iter=%u call_ns=%llu avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u cmd_desc=%u→ret resp_desc=%u→ret\n",
+              m_submit_count, cmd->type, resp ? resp->type : 0, poll_iter,
+              (unsigned long long)(submit_exit_time - submit_entry_time),
               m_vq_avail ? m_vq_avail->idx : (uint16_t)0,
               m_vq_used ? m_vq_used->idx : (uint16_t)0,
               m_vq_last_used, m_vq_free_head, vringFreeDepth(), cmd_desc, resp_desc);
