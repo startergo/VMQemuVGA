@@ -711,10 +711,30 @@ in CoreText during shutdown (TFont::InitAdvanceCache → SIGSEGV at
 0x50 — font cache in a bad state during exit, secondary to the
 compositor failure).
 
-**Next step:** read CompositorOGL::CreateContext() source to find
-what Gecko checks after context creation that rejects it. The context
-reports correctly (GL 2.1, virgl, all extensions), so the rejection
-is likely in a post-creation capability check.
+**Next step:** run PowerFox with `MOZ_GL_SPEW=1` to see Gecko's init
+decisions. The full API chain PASSES (pixel format with accelerated
+attributes OK, context creation OK, makeCurrent OK, setValues OK, GL
+2.1/virgl/all extensions reported). The rejection is in Gecko's
+internal `GLContext::Init()` operating on a context that is, by every
+external measure, fine.
+
+Verified NOT the blocker (each tested):
+- NSOpenGLPixelFormat initWithAttributes: with NSOpenGLPFAAccelerated
+  → SUCCEEDED (hypothesis falsified by 20-line test app)
+- Full chain: pixel format → context → makeCurrent → setValues →
+  glGetString → PASS
+- framebuffer_object hard requirement (GLContext.cpp:1011): both
+  GL_ARB/EXT_framebuffer_object in extension string, no NS_ERROR
+  in stderr → passes
+- Six missing symbols (EGLImage*, QueryCounter, GetQueryObjecti64v,
+  GetInternalformativ): all loaded via fnLoadForFeature →
+  MarkUnsupported on failure → optional, not fatal
+
+Next session's two cheap first moves:
+1. `MOZ_GL_SPEW=1` — Gecko prints init decisions to stderr. The
+   fastest route to which check failed. Never actually run.
+2. Read GLContext::InitWithPrefixImpl line by line (GLContext.cpp:572+)
+   looking for return false paths not covered by the above checks.
 
 ### PowerFox architecture: x86_64-only
 
