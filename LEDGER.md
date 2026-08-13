@@ -16,7 +16,7 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
 ---
 
@@ -651,6 +651,70 @@ Build path:
 3. CGL implementation layer (~160+ symbols — many stubs, real ones for
    the 10 that XUL actually uses)
 4. Deploy via DYLD_FRAMEWORK_PATH (gate test already passed)
+
+### Substitute framework — BUILT and LOADS (2026-08-13)
+
+**Substitute OpenGL.framework built and verified loading into PowerFox
+and System Preferences.** Multiple issues found and fixed in sequence:
+
+**Static libc++ relink (eliminates init-order crash).** libOSMesa had
+LC_REEXPORT_DYLIB for libc++/libc++abi (from Mesa build). When
+re-exported from the substitute, dyld processed libc++ init during
+framework loading — before the host process was set up. Result:
+`ios_base::Init::Init()` → NULL dereference. Fixed by statically
+linking libc++ into libOSMesa using x86_64 static archives from
+llvm 5.0.1 (via leopard-webkit-build/macports-mirror). `-nostdlib++`
+prevents auto-linking the dynamic version. libOSMesa now has zero
+libc++ dependency — no init-order conflict, no duplicate runtime,
+works in any host app.
+
+**DYLD_LIBRARY_PATH causes LaunchServices crash.** With both
+DYLD_FRAMEWORK_PATH and DYLD_LIBRARY_PATH set, LaunchServices aborts
+during `_LSApplicationCheckIn`. Only DYLD_FRAMEWORK_PATH is needed —
+the substitute's rpaths resolve libOSMesa/libglapi/libOpenGL_real.
+Added `@loader_path/../../..` rpath so the framework resolves
+dependencies from the deploy directory.
+
+**GC compatibility for System Preferences.** System Preferences
+requires ObjC Garbage Collection. The substitute was not compiled with
+`-fobjc-gc` (Apple Silicon clang can't emit it — deprecated post-10.8).
+Fixed by injecting `__DATA,__objc_imageinfo` section via C attribute +
+post-build dd patch to set OBJC_IMAGE_SUPPORTS_GC flag (0x02).
+
+**Interpose section excluded.** `__DATA,__interpose` from
+cgl_interpose.c is `#ifdef !SUBSTITUTE_FRAMEWORK` — the interpose
+model targets Apple's gl* in other images; the substitute IS the
+OpenGL framework, so interpose is both redundant and harmful (makes
+AppKit's gl* calls into no-ops via RTLD_NEXT returning NULL).
+
+**CGL forward instrumentation (observed, not predicted).** Only 2 of
+62 CGL forwards actually fire during Gecko's GL init: CGLSetOption
+(global, safe) and CGLSetParameter (per-context, receives shim token).
+CGLSetParameter fixed with registry lookup (no-op for shim contexts).
+CGLDescribePixelFormat and CGLQueryRendererInfo never called.
+
+**Zero blast-radius calls.** glClear no-context probe (GL_NO_CTX)
+fired 0 times during 5-minute PowerFox run. No system framework calls
+gl* without a Mesa context on this workload. Per-caller routing is
+unnecessary.
+
+**Compile as .m not .mm.** Eliminates libc++ dependency from the shim
+object itself (clang++ auto-adds -lc++; clang doesn't). extern "C"
+blocks guarded with `#ifdef __cplusplus`.
+
+**Remaining blocker: Gecko compositor rejects the context.** The GL
+context IS created successfully (GL 2.1, virgl, all extensions
+present). Gecko's CompositorOGL::CreateContext() returns NULL →
+FEATURE_FAILURE_OPENGL_CREATE_CONTEXT. The failure is in Gecko's
+compositor init, not in context creation. PowerFox eventually crashes
+in CoreText during shutdown (TFont::InitAdvanceCache → SIGSEGV at
+0x50 — font cache in a bad state during exit, secondary to the
+compositor failure).
+
+**Next step:** read CompositorOGL::CreateContext() source to find
+what Gecko checks after context creation that rejects it. The context
+reports correctly (GL 2.1, virgl, all extensions), so the rejection
+is likely in a post-creation capability check.
 
 ### PowerFox architecture: x86_64-only
 
