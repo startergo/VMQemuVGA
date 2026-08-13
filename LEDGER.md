@@ -702,23 +702,40 @@ unnecessary.
 object itself (clang++ auto-adds -lc++; clang doesn't). extern "C"
 blocks guarded with `#ifdef __cplusplus`.
 
-**Remaining blocker: Gecko compositor rejects the context.** The GL
-context IS created successfully (GL 2.1, virgl, all extensions
-present). Gecko's CompositorOGL::CreateContext() returns NULL →
-FEATURE_FAILURE_OPENGL_CREATE_CONTEXT. The failure is in Gecko's
-compositor init, not in context creation. PowerFox eventually crashes
-in CoreText during shutdown (TFont::InitAdvanceCache → SIGSEGV at
-0x50 — font cache in a bad state during exit, secondary to the
-compositor failure).
+**CORRECTION (2026-08-13, re-dated): "Gecko compositor rejects the
+context" was never observed.** FEATURE_FAILURE_OPENGL_CREATE_CONTEXT
+was an inference from the missing window, built on pf_test2's
+external-chain result (GL 2.1, virgl). Those pf_test2 runs carried
+`GALLIUM_DRIVER=virgl` in their environment (the standard launch
+incantation of the era — guest bash_history shows it on PowerFox
+launches too). The first bare-env PowerFox run under the substitute
+(2026-08-13, 300s, `MOZ_GL_SPEW=1`, DYLD_FRAMEWORK_PATH only, log
+/tmp/pf_spew2.log) shows what actually happens: **GLContext::Init()
+does not fail.** Gecko logs `OpenGL version detected: 330`,
+`OpenGL renderer: softpipe`, loads symbols (same six optional
+misses), and compiles its VS/FS shaders (KHR_debug: 15-inst VS,
+2-inst FS). No rejection evidence exists in any PowerFox log under
+the substitute. The verified-NOT-the-blocker list below was testing a
+failure that was never happening.
 
-**Next step:** run PowerFox with `MOZ_GL_SPEW=1` to see Gecko's init
-decisions. The full API chain PASSES (pixel format with accelerated
-attributes OK, context creation OK, makeCurrent OK, setValues OK, GL
-2.1/virgl/all extensions reported). The rejection is in Gecko's
-internal `GLContext::Init()` operating on a context that is, by every
-external measure, fine.
+**Actual root cause of no-window: setenv after first context.** The
+substitute's CGLCreateContext called `OSMesaCreateContextExt` before
+its `setenv("GALLIUM_DRIVER","virgl")` (the setenv sat after the
+create). Mesa's driver choice is a process-global call_once keyed off
+GALLIUM_DRIVER — the first context landed on default softpipe and
+every later context in the process reuses it. Gecko then runs a GL
+3.3 softpipe context: functional (init completes, shaders compile)
+but software compositing under TCG never reaches first paint in the
+observation window. The 3.3 in the log is itself confirmation of the
+diagnosis — softpipe's ceiling; virgl through the same entry point
+reports 2.1.
 
-Verified NOT the blocker (each tested):
+(Note on method: the first spew attempt, 100s with
+`MOZ_GL_SPEW=1 MOZ_GL_DEBUG=1`, produced no GL lines at all. The
+300s SPEW-only run reached shader compile. Attribution to DEBUG's
+per-call glGetError cost vs the shorter window is not isolated.)
+
+Verified NOT the blocker (each tested, pre-correction):
 - NSOpenGLPixelFormat initWithAttributes: with NSOpenGLPFAAccelerated
   → SUCCEEDED (hypothesis falsified by 20-line test app)
 - Full chain: pixel format → context → makeCurrent → setValues →
@@ -730,11 +747,114 @@ Verified NOT the blocker (each tested):
   GetInternalformativ): all loaded via fnLoadForFeature →
   MarkUnsupported on failure → optional, not fatal
 
-Next session's two cheap first moves:
-1. `MOZ_GL_SPEW=1` — Gecko prints init decisions to stderr. The
-   fastest route to which check failed. Never actually run.
-2. Read GLContext::InitWithPrefixImpl line by line (GLContext.cpp:572+)
-   looking for return false paths not covered by the above checks.
+**Fix deployed 2026-08-13 (pending verification):** setenv moved to
+the two earliest entry points — `substitute_init` constructor and
+cgl_shim `+load` — both guarded `if (!getenv("GALLIUM_DRIVER"))` so
+an explicit export still wins (preserves the softpipe bisect tool).
+Bundled with: GC write-barrier store for `sc->view` via
+`objc_assign_strongCast` (objc-auto.h:111; verified exported from
+10.6 libobjc). In non-GC processes it is a plain store, so it cannot
+affect PowerFox attribution; GC-process verification pending.
+
+**Pre-registered predictions (written before the runs):**
+1. Control, OLD framework still on guest, `/tmp/subst/test_app`,
+   no GALLIUM_DRIVER: GL_RENDERER "softpipe", GL_VERSION "3.3 …".
+2. NEW framework, same command: GL_RENDERER "virgl (Apple M4 Pro)",
+   GL_VERSION "2.1 …".
+3. NEW framework, PowerFox 300s MOZ_GL_SPEW, no GALLIUM_DRIVER:
+   +load canary prints GALLIUM_DRIVER=virgl (was "(unset)"); Gecko
+   logs renderer virgl, "OpenGL version detected: 210". Window
+   outcome branches:
+   a. Window appears → compositor running on virgl.
+   b. Still no window, virgl in log → blocker is past driver
+      selection: candidates are per-call virgl round-trip cost during
+      compositor warmup under TCG, or Gecko falling back to basic
+      layers for an unrelated reason. Measure before guessing.
+   c. New crash → record where; the frontier moved into code that
+      never ran before.
+   Negative control for the fix itself: if test_app still reports
+   softpipe on the new framework, the setenv is still too late — hunt
+   an earlier Mesa trigger (e.g. a libOSMesa constructor).
+
+### 2026-08-13 — session results (predictions 1-2 hit; then two more bugs, both fixed)
+
+**Predictions 1 and 2 hit exactly.** Control (old framework, `/tmp/pf_test2`,
+bare env): `GL_RENDERER: softpipe`, `GL_VERSION: 3.3 (Compatibility Profile)
+Mesa 24.3.0-devel`. New framework, same command: `GL_RENDERER: virgl (Apple
+M4 Pro)`, `GL_VERSION: 2.1`, +load canary `virgl`, `virgl_iokit: get_caps
+capset_id=2 ver=2 size=1408 copy=1384` (iokit winsys now actually
+initializes). In PowerFox itself: `OpenGL version detected: 210`, `renderer:
+virgl (Apple M4 Pro)`.
+
+**Run-3 anomaly resolved — was never a crash.** `PFWATCH: powerfox exited
+rc=0` after ~70s, then a successor process (ppid 1) launched: Gecko's
+one-shot self-handoff for non-LaunchServices launches (ssh/nohup). The
+"disappear for a second and restart" the user saw at the dock is this
+handoff, not a crash loop. No crash reports exist for any of it.
+
+**Deadlock 1 — off-main AppKit in shim_setView: (fixed).** Evidence:
+`sample` of hung pid 5326 — main thread parked inside
+`makeKeyAndOrderFront → _recursiveDisplayAllDirtyWithLockFocus → ChildView
+doDrawRect → PaintWindow → PCompositorBridgeChild::SendFlushRendering →
+PR_WaitCondVar`; Compositor thread parked inside `RecvFlushRendering →
+CompositeToTarget → BasicCompositor::EndFrame → TryToEndRemoteDrawing →
+shim_setView:+221`. ABBA: main holds the AppKit display path and waits for
+the compositor's flush reply; the compositor calls `[view bounds]` off-main
+inside our shim. Fix: **no AppKit geometry off-main, anywhere**. Drawable
+size now comes from `p_glGetIntegerv(GL_VIEWPORT)` at the top of
+flushBuffer (thread-local, no AppKit, correct by construction —
+glViewport is how the app tells GL the drawable size). setView: only
+stores the view; shim_update is a no-op (its main-thread
+OSMesaMakeCurrent would also have bound the context to the wrong
+thread's TLS dispatch). Remaining `[self bounds]` only in
+shim_drawRect (main thread by construction).
+
+**Deadlock 2 — CGLLockContext aliased to sc->lock (fixed).** Evidence:
+`sample` of next hang (pid 6234) — compositor thread in
+`nsChildView::DoRemoteComposition → GLContextCGL::SwapBuffers →
+shim_flushBuffer+311 → pthread_mutex_lock → semaphore_wait_trap`;
+no thread in the process inside any shim/OSMesa code. Gecko calls
+`CGLLockContext` around `-flushBuffer` on the SAME thread
+(nsChildView.mm:4188/4195/4364/4598) — our substitute implemented
+CGLLockContext/CGLUnlockContext directly on `sc->lock`, the same mutex
+flushBuffer takes → self-deadlock on the first flush. These two symbols
+are IMPLEMENTED, not forwarded, so they never appeared in any CGL_FWD
+census — invisible by construction. Fix: separate `pthread_mutex_t
+cgl_lock` in shim_ctx for the public CGL pair; internal `lock` never
+exposed. Bounded logging added to CGLLockContext (now visible).
+
+**Result: live render loop.** After both fixes: 417+ frames flushed in
+~5 min, viewport 400x128, `ctxcheck: renderer="virgl (Apple M4 Pro)"`,
+`swap_mc ret=1` every frame, preswap pixels real (frame 1 zeros, frames
+2+ `0xff000000` = opaque black), ~65-80ms mean wall/frame (~12-15 fps
+under TCG; submit ~25ms + transfer ~25ms per frame — matches the
+per-call cost study), process at 19% CPU (vs 1.2% parked).
+
+**Remaining frontier — presentation to screen.** `shim_drawRect` never
+fires (0 samples; Gecko's ChildView overrides drawRect, so the
+associated-object present path is unreachable for PowerFox).
+Gecko's own present goes through `CGLTexImageIOSurface2D`, which our
+substitute forwards to the real GL with the shim token as context —
+fails silently, nothing reaches the window. Next: wire present_buf →
+screen. Candidate: blit directly in shim_present (main thread, runs
+today) via lockFocus/unlockFocus on the view, bypassing drawRect; or
+handle CGLTexImageIOSurface2D against the OSMesa context instead of
+forwarding. **Needs a visual check first** — the user was watching;
+confirm what (if anything) the window shows before designing.
+
+**GC write barrier (bundled, inert in PowerFox).** `sc->view` store now
+via `objc_assign_strongCast` (objc-auto.h:111; verified exported from
+10.6 libobjc) — view hold is GC-visible in GC processes (System
+Preferences), plain store otherwise. GC-process verification pending.
+`__objc_imageinfo` flag verified in the binary (`02 00 00 00`).
+
+**Traps recorded.** (1) ps pattern `[p]owerfox/Contents/MacOS/powerfox`
+never matches `PowerFox.app/Contents/...` — every kill using it was a
+silent no-op; use `[P]owerFox`. (2) `MOZ_GL_DEBUG=1` makes Gecko call
+glGetError per GL call — too slow under TCG+virgl for init to complete
+in 100s; use `MOZ_GL_SPEW=1` alone (gfxEnv GlSpew, gfxEnv.h:84).
+(3) 10.6 `env` has no `-u`. (4) Modern scp needs `-O` against the
+10.6 sshd.
 
 ### PowerFox architecture: x86_64-only
 
