@@ -774,7 +774,87 @@ affect PowerFox attribution; GC-process verification pending.
       never ran before.
    Negative control for the fix itself: if test_app still reports
    softpipe on the new framework, the setenv is still too late — hunt
-   an earlier Mesa trigger (e.g. a libOSMesa constructor).
+      an earlier Mesa trigger (e.g. a libOSMesa constructor).
+
+**Session 2026-08-13 (continued) — results, all against the
+pre-registrations above:**
+
+- **Predictions 1 and 2 hit exactly.** Old framework bare-env:
+  `GL_VERSION: 3.3 (Compatibility Profile) Mesa 24.3.0-devel`,
+  `GL_RENDERER: softpipe`. New framework, identical command:
+  `GL_VERSION: 2.1`, `GL_RENDERER: virgl (Apple M4 Pro)`, plus
+  `virgl_iokit: get_caps capset_id=2 ver=2 size=1408 copy=1384` — the
+  iokit winsys initializing for the first time in this chain.
+- **Prediction 3's driver half hit:** in PowerFox, canary virgl,
+  `OpenGL version detected: 210`, `renderer: virgl (Apple M4 Pro)`,
+  GLSL 120, six optional symbol misses as before.
+- **Process topology (observed, not inferred):** `powerfox` binary is
+  a 24KB stub. Launch chain: gen-1 (pfwatch child) runs early startup
+  ~74s, exits rc=0, handoff spawns the real browser instance (orphan,
+  ppid 1) which inherits env/stderr. The dock "disappear-restart"
+  the user observed repeatedly is this handoff plus Gecko's own
+  startup-crash recovery (safe-mode relaunch) after the failed
+  startups.
+- **Deadlock #1 (fixed):** compositor thread called our swizzled
+  `setView:` from `BasicCompositor::TryToEndRemoteDrawing`; shim's
+  `[view bounds]` (AppKit, off-main) blocked against the main thread
+  holding the display path while waiting in
+  `SendFlushRendering` for that same composite. Both threads parked
+  30+ min (sample evidence, pids 5326). Fix: no AppKit geometry calls
+  off-main — `setView:` stores the view only; resize detection moved
+  to flushBuffer using `GL_VIEWPORT` (thread-local GL query, no
+  AppKit); `update` no-op'd (it also MakeCurrent'd on the wrong
+  thread).
+- **Deadlock #2 (worked around, cause unresolved):** next build, the
+  compositor blocked in `shim_flushBuffer`'s first-ever
+  `pthread_mutex_lock(&sc->lock)` — no live thread held it (all
+  sampled threads parked elsewhere; zero CGLLockContext calls that
+  run; first acquisition in the context's life). Leading hypothesis
+  recorded as UNEXPLAINED. Fix: trylock-with-skip in both flush
+  sections (resize skip = one late frame; swap skip = dropped frame).
+  In the subsequent run the trylock never fired — lock 0.07ms flat
+  across 8337 frames — the anomaly did not recur once the AppKit
+  call was gone.
+- **`CGLTexImageIOSurface2D` neutralized:** was blind-forwarded to
+  real CGL with our shim_ctx token in the ctx argument (real CGL
+  dereferences it — crash-in-waiting; it fired one line before a
+  silent process death). Now returns kCGLBadContext for shim
+  contexts (logged); Gecko falls back to its upload path.
+- **MILESTONE: 8337 frames composited** in PowerFox through the full
+  substitute→OSMesa→virgl→kext stack. Per-30-frame stats: wall mean
+  124–188ms (5–8 fps), submit 38–88ms, transfer 48–84ms, lock
+  0.07ms. A window appeared for the first time under the substitute
+  (Gecko safe-mode dialog — consequence of the earlier crash loop).
+  It was EMPTY: `blit: (no samples)` — the present path's final
+  draw never runs.
+- **Next frontier (precise):** `shim_present` attaches present_buf to
+  the view and calls `setNeedsDisplay:`, but Gecko's `ChildView`
+  overrides `drawRect:` and draws its own content — our NSView
+  drawRect swizzle never runs for it. Need a main-thread blit that
+  does not depend on drawRect (e.g. lockFocus + NSBitmapImageRep
+  draw, killtest pattern) — the "blit" timing bucket already exists
+  and is instrumented, it just never fires.
+- **Unexplained residuals:** (1) gen-3 process mapped our framework
+  and reached flushBuffer without printing its `+load`/probe lines —
+  contradicts fresh-exec semantics; fork-inheritance is the loose
+  hypothesis. (2) The no-holder mutex block of deadlock #2. (3) The
+  ~3-min-then-silent-exit pattern of deadlocked generations (Gecko
+  hang watchdog suspected, unverified).
+- **GC write-barrier fix** (objc_assign_strongCast for sc->view)
+  deployed in the same builds; inert in non-GC PowerFox as designed;
+  System Preferences (GC process) verification still pending.
+- **Final verification run (post trylock + IOSurface stub):** stable
+  6 minutes, one process alive throughout, log 16 → 610 lines
+  (~40 lines/20s — the 30-frame stats cadence), no restart loop, no
+  silent exits, zero resize-skip/swap-skip firings (lock never
+  contested), `CGLTexImageIOSurface2D … -> kCGLBadContext` logged
+  once and Gecko proceeded. One anomalous earlier launch died
+  post-load with no log/crash trace (unexplained, did not recur).
+  Session ended with the build deployed and stable; the blit fix is
+  the next unit of work.
+- **Offered, unused:** a real Mac mini (`ssh macmini`) runs PowerFox
+  natively — available for a hardware comparison sample if the
+  compositor topology questions resurface.
 
 ### 2026-08-13 — session results (predictions 1-2 hit; then two more bugs, both fixed)
 
@@ -855,6 +935,42 @@ glGetError per GL call — too slow under TCG+virgl for init to complete
 in 100s; use `MOZ_GL_SPEW=1` alone (gfxEnv GlSpew, gfxEnv.h:84).
 (3) 10.6 `env` has no `-u`. (4) Modern scp needs `-O` against the
 10.6 sshd.
+
+### 2026-08-13 late — hardening verified; safe-mode prompt identified
+
+**The 400x128 surface is Gecko's safe-mode prompt** (user-confirmed
+visual: dialog chrome visible, content area not composed). All the
+killed runs made Gecko offer safe mode; the dialog's content widget is
+what the compositor has been rendering all along. The "restart loop"
+was crash-recovery + prompt cycles. The ShowModal parking seen in
+both samples is this modal dialog.
+
+**Hardening deployed and verified (spew8 run):** flushBuffer's resize
+and swap sections converted to trylock-with-skip (contended lock →
+drop frame, never block compositor; skip lines would name a busy/odd
+lock — none fired in this run, so the earlier first-acquisition block
+did not reproduce and stays unexplained, stale-struct/fork-artifact
+being the leading hypothesis). CGLTexImageIOSurface2D removed from
+the blind-forward list: returns kCGLBadContext for shim contexts
+(fired exactly once, 400x128, no crash) so Gecko can take its
+fallback; forwarding had passed the shim token to real CGL — a
+deref of shim_ctx as CGLContextObj.
+
+**One flake:** a first relaunch (spew7) loaded the framework then
+produced nothing and vanished — no crash report, guest healthy,
+identical load-time code to the working build. Unexplained; single
+occurrence, did not reproduce.
+
+**Next step (pre-registered):** wire present_buf → screen. Preferred:
+blit directly in shim_present (main thread, already runs every
+coalesced flush) via `[view lockFocus]` + the NSBitmapImageRep draw +
+`[view unlockFocus]`, bypassing drawRect (ChildView overrides it;
+drawptr count 0 across all runs). Alternative: handle
+CGLTexImageIOSurface2D against the OSMesa context. Prediction: with
+the lockFocus blit, the safe-mode prompt's content area shows
+composed content; test surface is the prompt itself, then Start in
+Normal Mode for the full browser window. Verify visually, then
+confirm drawptr-equivalent evidence in the log.
 
 ### PowerFox architecture: x86_64-only
 
