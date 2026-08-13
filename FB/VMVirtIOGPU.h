@@ -174,7 +174,12 @@ private:
     // Refresh-timeout instrumentation. Throttled to first N submissions so the
     // boot log captures the succeed→fail transition without flooding afterward.
     // Counts persist for the lifetime of the object; bump when extending instrumentation.
-    static const uint32_t SUBMIT_INSTRUMENT_LIMIT = 20;
+    // Bumped from 20 to 200 for per-call cost study — need steady-state data
+    // across ~40 frames, not just the first 4 (which are teardown/setup heavy).
+    // A/B test 2026-08-12: set to 0 to measure IOLog contribution to per-call
+    // cost. If wall drops substantially vs limit=200, the per-call dataset is
+    // inflated by IOLog-to-serial-port overhead and only relative shape survives.
+    static const uint32_t SUBMIT_INSTRUMENT_LIMIT = 0;
     uint32_t m_submit_count;                     // incremented on each submitCommand entry
     uint32_t m_notify_count;                     // incremented on each device notify write
     

@@ -570,29 +570,30 @@ The most plausible explanation is the one offered as hypothesis in the same brea
 
 **Not recorded as a finding.** Same shape as the prior caps-contaminated A/B: a measurement whose sampling boundary wasn't established before the numbers were interpreted. Trace `submitVirglCommandsEx` before drawing any conclusion about which commands dominate.
 
-### Conclusion 2 — per-call costs may be measuring the instrumentation, not the call
+### Conclusion 2 — per-call costs may be measuring the instrumentation, not the call — FALSIFIED 2026-08-12
 
-Cost clustering on identical values across semantically unrelated commands:
+**A/B run with system settled:**
 
-- ~16 ms appears for UPLOAD (0x104), DETACH_BACKING (0x106), RESOURCE_UNREF (0x101)
-- ~26 ms appears for RESOURCE_FLUSH (0x103) and SUBMIT_3D (0x207)
-- ~3 ms appears for several unrelated types
+| Setting | wall | submit | transfer | fps |
+|---|---|---|---|---|
+| limit=200 (IOLog on) | 127 ms | 52 ms | 33 ms | 7.5 |
+| limit=0 (IOLog off) | 130 ms | 55 ms | 32 ms | 7.3 |
 
-Commands with nothing in common landing on identical values means the cost is in something shared, not in the command. The leading candidate is the **ungated IOLog to emulated serial port at serial=5** — known from prior work to cost ~1-2 ms per formatted line. The EXIT OK log fires once per submit and writes a long formatted line; with serial=5 that's a synchronous serial write per call.
+All metrics within 3% across A/B — essentially identical. IOLog-to-serial-port contribution to per-call cost is negligible. **Per-call numbers stand** (~5 ms readback, ~16 ms upload, ~26 ms submit_3d are actuals, not artifacts).
 
-Worse, the per-call timestamps themselves are captured via mach_absolute_time inside the same IOLog-gated block. If the gating IOLog is the dominant cost, the measurement is generating most of what it reports. With the host completing in under 20 µs (poll_iter=0) and no other obvious mechanism for a 16 ms per-call floor, the IOLog confound is a strong candidate.
+Earlier initial A/B (187 ms with limit=0) was contaminated — guest had been up only ~2 mins, load average 11.64, kextd rebuilding caches + mds/mdworker indexing. With system settled (load 2.52, kextd/mds/mdworker all 0.0% CPU in S state), both A and B converge to ~127-130 ms. Lesson re-confirmed: **system-settle precondition is not optional.** Rules already call this out.
 
-**Action: IOLog gate A/B first, ahead of the bypass trace.** Run killtest with `SUBMIT_INSTRUMENT_LIMIT=0` (no per-submit IOLog), compare wall time against the 127 ms baseline. If wall drops substantially, the absolute per-call numbers here are inflated and only the relative shape might survive.
-
-### Solid: redundant transfer_get downgraded to ~5 ms (not ~26 ms)
-
-The one conclusion from the per-call data that survives both confounds: the redundant `transfer_get` is a `0x105` (TRANSFER_FROM_HOST_2D), which even under the inflated-cost reading is in the cheapest cluster. Eliminating it saves ~5 ms against a 127 ms wall — under 4%. **Demoted from optimization lever to correctness cleanup.** Still worth doing for hygiene, no longer on the critical path.
+Cost clustering on ~16 ms / ~26 ms / ~3 ms across semantically unrelated commands is still real and still unexplained — but it's not IOLog. Likely an underlying scheduling/quantization effect on this transport (TCG scheduler tick, virtqueue transit floor, MMIO doorbell cost). Real per-call work, real overhead, just shared across call types rather than command-specific.
 
 ### Open items (reprioritized)
 
-1. **IOLog gate A/B** — determines whether the entire per-call dataset is real. Cheap, already designed.
-2. **Trace `submitVirglCommandsEx`** — settles the bypass question AND the older contradiction (per-call submit ~26 ms while T0→T1 <1 ms with transfer_put supposedly inside it). Those are probably the same finding.
-3. **Redundant transfer_get** — ~5 ms, correctness cleanup not lever. Defer until cost model is trustworthy.
+1. ~~IOLog gate A/B~~ — DONE, falsified. Per-call data trusted.
+2. **Trace `submitVirglCommandsEx`** — still pending. Determines whether 3D commands bypass `submitCommand`'s instrumentation. With per-call data now trusted, this settles whether the 3D submit cost is even being measured.
+3. **Redundant transfer_get** — ~5 ms, correctness cleanup not lever. Defer.
+
+### Solid: redundant transfer_get downgraded to ~5 ms (not ~26 ms)
+
+The one conclusion from the per-call data that survives both confounds: the redundant `transfer_get` is a `0x105` (TRANSFER_FROM_HOST_2D), in the cheapest cluster. Eliminating it saves ~5 ms against a 127 ms wall — under 4%. **Demoted from optimization lever to correctness cleanup.** Still worth doing for hygiene, no longer on the critical path.
 
 ## IOSleep spin — 2026-08-12 (verified)
 
