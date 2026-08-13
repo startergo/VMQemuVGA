@@ -1074,20 +1074,48 @@ kIOReturnTimeout, 11:37:04 (during spew14's window).
 - e10s: OFF (pref persisted, no plugin-container ever spawned with a
   window open) — not the gate.
 
-**Leading open hypothesis:** multiple virgl_iokit_winsys instances
-(one IOConnect per OSMesa context); the failing submits belong to a
-different instance/context than the succeeding ones. Unresolved:
-which validation path returns BadArgument — every visible kext path
-(scalar count, NULL/zero size, 1MB cap) is excluded by the winsys's
-call shape.
+**Leading open hypothesis — FALSIFIED (final cross-run check):**
+submit failures are NOT the black-window discriminator. FAIL counts
+per run: spew13 (dialog RENDERED CORRECTLY) 1080/1565 lines;
+spew14 1; spew15 98; spew16 761; spew17 (empty-frame-guard build)
+3532/4343 — 81% of log volume. The failures are tolerated churn:
+the winsys returns -1, Mesa drops the batch, the next frame
+rebuilds. Rendering succeeded in spew13 WITH 1080 of them, and the
+current run's machinery is healthy (blit-skips, strips, viewports)
+under 3532 of them. Which kext path returns BadArgument remains
+unidentified (all visible paths excluded by the winsys's call
+shape) — a correctness mystery worth solving for TCG performance
+(every failed submit is lost work), but not the black cause.
 
-**Pre-registered next step:** instrument the winsys FAIL log with
-ctx_id + cdw (user-space, needs Mesa rebuild via cross-compat
-build-10.6.sh) and add the ctx id to the kext's selector IOLog
-(needs kext rebuild + reboot). That pair attributes every failure to
-a context and a size, which localizes the validation wall. Also
-worth checking: UTM debug log for host-side virglrenderer errors in
-the failure windows (the one Timeout hints at host stalls).
+**Empty-frame guard deployed and verified (spew17):** shim_blit
+skips frames whose first pixel has alpha==0 (NSCompositeCopy would
+otherwise paint transparent-black over Gecko's own software
+painting — the observed white-then-black). User-confirmed: window
+now stays WHITE (view default background; Gecko paints nothing via
+software either — "all white, no toolbar buttons"). blit-skip
+lines fire as designed.
+
+**The frontier, stated precisely:** the main window's compositor
+layer tree stays empty (frames RGBA(0,0,0,0); no window-sized
+IOSurface upload; strips upload fine; startup complete; main
+thread healthy in the event loop driving the display cycle through
+our swizzle; e10s off; single process). Small surfaces (the
+400×128 dialog, 1280×27/15×15/4×4 strips) flow end-to-end. What
+differs about the main window's content pipeline upstream of the
+compositor is unidentified.
+
+**Pre-registered next steps (in order):**
+1. Gecko-side: determine the main window's layer manager and why
+   it submits no transactions — via prefs/env that force
+   software-only layers (`layers.acceleration.disabled=true`,
+   `layers.offmainthreadcomposition.disabled=true`) as a
+   diagnostic, watching for ANY painted output (the software
+   fallback would paint via CGContext and the white window would
+   gain content — with the empty-frame guard, it now CAN).
+2. Winsys FAIL instrumentation (ctx_id + cdw on the FAIL line,
+   Mesa rebuild) — perf investigation, separate from the black.
+3. Check the UTM host debug log for virglrenderer errors in the
+   failure windows (the one Timeout hints at host stalls).
 
 **Next step — CORRECTED (lockFocus was a falsified route, proposed in
 error three times above):** the presentation fix is a ChildView-class
