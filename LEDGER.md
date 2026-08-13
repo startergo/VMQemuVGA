@@ -1031,6 +1031,64 @@ from a failed subsystem.
    (CompositorOGL vs BasicCompositor — the strips-vs-big-surface
    upload asymmetry hints different input paths per surface).
 
+### 2026-08-13 night — black window chased to virgl submission failures
+
+**User corrections accepted and recorded:**
+- The e10s-off generation did NOT die — my "alive: 0" ps read was an
+  instrument error (mechanism unknown); the process (7759) was alive
+  7+ min at 21.9% CPU and never even ran the stub handoff. The
+  "silent death #3" claim is RETRACTED; the refresh-era death needs
+  re-examination through the same lens. Pattern rule: treat
+  single-shot ps emptiness as suspect; PowerFox restarts switch
+  processes, and generation gaps mimic death.
+- Main-thread sample (7759): startup COMPLETED — event loop running;
+  display cycle loops through our shim_childViewDrawRect: correctly
+  (call-through → ChildView doDrawRect → PaintWindow →
+  SendFlushRendering → parked ~43% of samples waiting for the
+  compositor's flush reply; replies flow, frames advance). The
+  present machinery is healthy end to end.
+
+**The black window's proximate cause: virgl submission failures.**
+`virgl_iokit: 0x6008 submitVirglCommandsEx FAIL 0xe00002c2` —
+decoded: 0xe00002c2 = kIOReturnBadArgument (10.6 IOReturn.h).
+Counts per run: spew13 (dialog RENDERED) 1080, spew14 1, spew15 98,
+spew16 721 (continuous from first flush, back-to-back). The winsys
+resets cbuf->cdw on failure, dropping the batch; the next frame
+fails again — a persistent failure loop. One kernel-side
+executeCommands failure: `ctx=0x11c size=56 FAIL 0xe00002d6` =
+kIOReturnTimeout, 11:37:04 (during spew14's window).
+
+**Hypotheses tested and killed:**
+- "1MB kext safety cap rejects big batches": winsys command buffer
+  max is VIRGL_MAX_CMDBUF_DWORDS = 66560 dwords ≈ 260KB — cannot
+  reach the cap.
+- "Calls never reach the kext (framework/stale connection)":
+  kernel.log shows selector=0x6008 arrivals at 11:55:34 INSIDE
+  spew16's failure window with no internal-failure logs — so some
+  calls arrive and succeed while others get BadArgument.
+- "No window-sized IOSurface upload" (earlier claim): was drawn from
+  a 5-line-capped log — instrument error. Fixed: running counter +
+  unconditional logging for w>=1000. With correct instrumentation:
+  uploads are 1280×27, 15×15, 4×4 only — the original observation
+  stands, now on valid evidence.
+- e10s: OFF (pref persisted, no plugin-container ever spawned with a
+  window open) — not the gate.
+
+**Leading open hypothesis:** multiple virgl_iokit_winsys instances
+(one IOConnect per OSMesa context); the failing submits belong to a
+different instance/context than the succeeding ones. Unresolved:
+which validation path returns BadArgument — every visible kext path
+(scalar count, NULL/zero size, 1MB cap) is excluded by the winsys's
+call shape.
+
+**Pre-registered next step:** instrument the winsys FAIL log with
+ctx_id + cdw (user-space, needs Mesa rebuild via cross-compat
+build-10.6.sh) and add the ctx id to the kext's selector IOLog
+(needs kext rebuild + reboot). That pair attributes every failure to
+a context and a size, which localizes the validation wall. Also
+worth checking: UTM debug log for host-side virglrenderer errors in
+the failure windows (the one Timeout hints at host stalls).
+
 **Next step — CORRECTED (lockFocus was a falsified route, proposed in
 error three times above):** the presentation fix is a ChildView-class
 drawRect swizzle, not a new draw mechanism. lockFocus/unlockFocus
