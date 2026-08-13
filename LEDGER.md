@@ -547,6 +547,100 @@ Build script now writes the interpolated cross file into `build-106/` rather tha
 - `glGetString(GL_RENDERER)` consistently returns "virgl (Apple M4 Pro)" — v2 caps fetched
 - CGL shim's GL routing works for two-level-namespace apps (the original split-dispatch bug, fixed via `p_gl*` routing)
 
+## Phase 2 viability study — 2026-08-12
+
+### Arc
+
+After IOSleep spin landed (killtest at 7.5 fps, wall 127 ms), the
+investigation shifted to Phase 2: making real apps (PowerFox, Flurry)
+reach Mesa/virgl. The killtest is no longer the right target — its
+workload (800×600 full-surface readback every frame) is a synthetic
+worst case, and the remaining per-call cost is TCG transit, not a bug.
+
+### Substitute framework gate test — PASSED
+
+Minimal 2-symbol substitute framework (stub `glClear` + `CGLCreateContext`)
+deployed to guest. Test binary links the real OpenGL.framework's
+install_name. With `DYLD_FRAMEWORK_PATH=/tmp/subst_test`, dyld loaded
+the SUBSTITUTE, not the real framework:
+
+```
+dyld: loaded: /tmp/subst_test/OpenGL.framework/Versions/A/OpenGL
+SUBSTITUTE: glClear called (mask=0x4000) — stub
+test_app: glClear returned
+```
+
+DYLD_FRAMEWORK_PATH overrides absolute install_names on 10.6's dyld.
+The substitute wins at launch; anything that later dlopens by absolute
+path gets the already-loaded image.
+
+### But substitute framework is the wrong mechanism — interposition wins
+
+Census with host `nm` (guest's 10.6 `nm` reports "malformed object
+(unknown load command 42)" on modern Mach-O — census was invalid
+until re-run on host):
+
+| Component | CGL static | gl* static |
+|---|---|---|
+| XUL | **10** | **21** |
+| QuartzCore | **107** | 0 |
+| CoreVideo | **51** | 0 |
+
+(CGLayer* symbols — CGLayerCreateWithContext, CGLayerGetContext,
+CGLayerRelease — are CoreGraphics Layer functions, NOT OpenGL CGL.
+False positives from `_CGL` grep. Corrected: XUL has 10 real CGL,
+not 13.)
+
+A substitute framework must export ALL of QuartzCore's 107 + CoreVideo's
+51 = **160+ CGL symbols at load time**, or those frameworks fail to
+launch and PowerFox won't start. Most of those are for their own internal
+compositing — we'd implement 160+ symbols to satisfy a load-time
+requirement we don't want to service.
+
+Interposition covers XUL's 10 CGL + 21 gl* = **31 symbols** with no
+load-time obligation. Unmatched symbols simply aren't interposed —
+QuartzCore's launch isn't affected. Runtime exposure is the same either
+way (if QuartzCore calls an interposed gl*, it reaches Mesa), but
+interposition adds no load-time failure mode. **Interposition strictly
+dominates.**
+
+### Decision: scale Phase 1 to XUL, not substitute framework
+
+Generate the interpose list from `nm -u` on XUL (same pattern as
+killtest's 17-symbol list). Existing interpose covers 17 gl* + 4 CGL.
+XUL adds:
+
+- **12 new gl*** (all verified in libOSMesa):
+  glBindFramebufferEXT, glBindTexture, glCheckFramebufferStatusEXT,
+  glDeleteFramebuffersEXT, glDeleteTextures, glFramebufferTexture2DEXT,
+  glGenFramebuffersEXT, glGenTextures, glPixelStorei, glScalef,
+  glTexParameteri, glTranslatef
+
+- **8 new CGL** (absent from libOSMesa — need implementations):
+  CGLChoosePixelFormat, CGLCreateContext, CGLGetCurrentContext,
+  CGLLockContext, CGLReleasePixelFormat, CGLDestroyPixelFormat,
+  CGLSetCurrentContext, CGLUnlockContext
+
+The CGL functions mirror the NSOpenGLContext swizzle but at the C-level
+API. The existing `shim_registry` + `shim_ctx` infrastructure is reusable.
+
+### PowerFox architecture: x86_64-only
+
+Guest's PowerFox.app confirmed x86_64-only (main binary + plugin-container
++ XUL). No i386 slice. Mesa's x86_64 cross-build matches. No i386 concern
+for the target workload.
+
+Flurry (via System Preferences) is a separate nice-to-have that would
+need i386 Mesa or forced x86_64 launch. Not blocking PowerFox.
+
+### Open: Flurry needs CGLQueryRendererInfo + CGLDescribeRenderer
+
+Flurry's 5 CGL symbols include CGLQueryRendererInfo and CGLDescribeRenderer
+(capability query). These determine what GL features Flurry enables. Need
+real implementations, not stubs returning zero. The prior "Gecko doesn't
+call them" framing doesn't apply to Flurry — but Flurry is secondary to
+PowerFox.
+
 ## Per-call cost study — 2026-08-12 (CONFOUNDED — pending A/B)
 
 ### What was measured
