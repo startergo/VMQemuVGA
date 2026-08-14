@@ -28,6 +28,7 @@
 		/* Phase 3 Build Files */
 		PH3B01 /* VMMetalBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3002 /* VMMetalBridge.cpp */; };
 		VMCGL374572 /* VMCGLContext.cpp in Sources */ = {isa = PBXBuildFile; fileRef = VMCGLEA858B /* VMCGLContext.cpp */; };
+		VMASC01 /* VMAccelSurfaceClient.cpp in Sources */ = {isa = PBXBuildFile; fileRef = VMASC02 /* VMAccelSurfaceClient.cpp */; };
 		PH3B01B /* VMOpenGLBridge.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3003B /* VMOpenGLBridge.cpp */; };
 		PH3B02 /* VMQemuVGAAccelerator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3008 /* VMQemuVGAAccelerator.cpp */; };
 		PH3B02M /* VMMetalPlugin.cpp in Sources */ = {isa = PBXBuildFile; fileRef = PH3008M /* VMMetalPlugin.cpp */; };
@@ -74,6 +75,8 @@
 		VMCGL177E1A /* VMCGLContext.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMCGLContext.h; sourceTree = "<group>"; };
 		PH3002 /* VMMetalBridge.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMMetalBridge.cpp; sourceTree = "<group>"; };
 		VMCGLEA858B /* VMCGLContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMCGLContext.cpp; sourceTree = "<group>"; };
+		VMASC02 /* VMAccelSurfaceClient.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMAccelSurfaceClient.cpp; sourceTree = "<group>"; };
+		VMASC03 /* VMAccelSurfaceClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMAccelSurfaceClient.h; sourceTree = "<group>"; };
 		PH3003 /* VMOpenGLBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMOpenGLBridge.h; sourceTree = "<group>"; };
 		PH3003B /* VMOpenGLBridge.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = VMOpenGLBridge.cpp; sourceTree = "<group>"; };
 		PH3004 /* VMIOSurfaceManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VMIOSurfaceManager.h; sourceTree = "<group>"; };
@@ -138,6 +141,7 @@
 				PH3002 /* VMMetalBridge.cpp */,
 				PH3003B /* VMOpenGLBridge.cpp */,
 				VMCGLEA858B /* VMCGLContext.cpp */,
+				VMASC02 /* VMAccelSurfaceClient.cpp */,
 				PH3008 /* VMQemuVGAAccelerator.cpp */,
 				PH3008M /* VMMetalPlugin.cpp */,
 				PH3010 /* VMVirtIOGPU.cpp */,
@@ -194,6 +198,7 @@
 				PH3001 /* VMMetalBridge.h */,
 				PH3003 /* VMOpenGLBridge.h */,
 				VMCGL177E1A /* VMCGLContext.h */,
+				VMASC03 /* VMAccelSurfaceClient.h */,
 				PH3004 /* VMIOSurfaceManager.h */,
 				PH3005 /* VMCoreAnimationAccelerator.h */,
 				PH3006 /* VMPhase3Manager.h */,
@@ -269,6 +274,7 @@
 				PH3B01 /* VMMetalBridge.cpp in Sources */,
 				PH3B01B /* VMOpenGLBridge.cpp in Sources */,
 				VMCGL374572 /* VMCGLContext.cpp in Sources */,
+				VMASC01 /* VMAccelSurfaceClient.cpp in Sources */,
 				PH3B02 /* VMQemuVGAAccelerator.cpp in Sources */,
 				PH3B02M /* VMMetalPlugin.cpp in Sources */,
 				PH3B03 /* VMVirtIOGPU.cpp in Sources */,

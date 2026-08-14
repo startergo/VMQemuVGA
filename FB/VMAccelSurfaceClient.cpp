@@ -329,21 +329,32 @@ IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 
 //==============================================================================
 // Surface Operation Handlers
 //==============================================================================
+// MIG-PROBE HARDENING (2026-08-13): every handler except GetState returns
+// kIOReturnUnsupported. The November crash cause (commit 33fe55b disable)
+// was lock handlers returning SUCCESS without mapping memory — WindowServer
+// dereferenced garbage at composition time. Unsupported promises nothing,
+// so WindowServer takes its software fallback. The handler-entry IOLog is
+// the kernel-reach proof the MIG probe needs: a MIG rejection dies at the
+// IPC boundary with 0x10000003 and produces NO kernel log; any handler log
+// line proves the call crossed the boundary. GetState is the exception —
+// it is WindowServer's first call (0-in/1-out), returns idle, and is the
+// known-good control from the d98 experiments.
+//
+// Old-style 6-parameter IOMethod signature: p1..p6 carry scalar
+// inputs/outputs cast as void pointers.
 
-// Handler implementations for IOAccelSurface operations (old-style 6-parameter signature)
-// p1-p6 contain scalar inputs/outputs cast as void pointers
 IOReturn CLASS::readLockOptions(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
     uint32_t options = (uint32_t)(uintptr_t)p1;
-    IOLog("VMAccelSurfaceClient: ReadLockOptions(0x%x)\n", options);
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: ReadLockOptions(0x%x) -> Unsupported\n", options);
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::readUnlockOptions(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
     uint32_t options = (uint32_t)(uintptr_t)p1;
-    IOLog("VMAccelSurfaceClient: ReadUnlockOptions(0x%x)\n", options);
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: ReadUnlockOptions(0x%x) -> Unsupported\n", options);
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::getState(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
@@ -361,93 +372,93 @@ IOReturn CLASS::getState(void *p1, void *p2, void *p3, void *p4, void *p5, void 
 IOReturn CLASS::writeLockOptions(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
     uint32_t options = (uint32_t)(uintptr_t)p1;
-    IOLog("VMAccelSurfaceClient: WriteLockOptions(0x%x)\n", options);
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: WriteLockOptions(0x%x) -> Unsupported\n", options);
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::writeUnlockOptions(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
     uint32_t options = (uint32_t)(uintptr_t)p1;
-    IOLog("VMAccelSurfaceClient: WriteUnlockOptions(0x%x)\n", options);
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: WriteUnlockOptions(0x%x) -> Unsupported\n", options);
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::read(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: Read stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: Read -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::setShapeBacking(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetShapeBacking stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: SetShapeBacking -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::setIDMode(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetIDMode stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: SetIDMode -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::setScale(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetScale stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: SetScale -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetShape stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: SetShape -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::flush(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: Flush stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: Flush -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::queryLock(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: QueryLock stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: QueryLock -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::readLockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: ReadLock stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: ReadLock -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::readUnlockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: ReadUnlock stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: ReadUnlock -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::writeLockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: WriteLock stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: WriteLock -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::writeUnlockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: WriteUnlock stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: WriteUnlock -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::control(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: Control stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: Control -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::setShapeBackingAndLength(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetShapeBackingAndLength stub\n");
-    return kIOReturnSuccess;
+    IOLog("VMAccelSurfaceClient: SetShapeBackingAndLength -> Unsupported\n");
+    return kIOReturnUnsupported;
 }
 
 

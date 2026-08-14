@@ -13,6 +13,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <mach/mach_time.h>
 #include <kern/clock.h>
+#include <pexpert/pexpert.h>
 
 #define CLASS VMQemuVGAAccelerator
 #define super IOAccelerator
@@ -356,39 +357,42 @@ IOReturn CLASS::newUserClient(task_t owningTask, void* securityID,
     }
     
     // Type 0 - kIOAccelSurfaceClientType for WindowServer 2D operations
-    // TEMPORARILY DISABLED: Surface client implementation incomplete - causes WindowServer crashes
-    // WindowServer will fall back to software rendering (which works perfectly)
+    // GATED on boot-arg vm-accel-surface=1 (2026-08-13 MIG probe).
+    // The November-era disable (commit 33fe55b) exists because stub lock
+    // handlers returned SUCCESS without mapping memory — WindowServer
+    // dereferenced garbage at composition time and crashed. The handlers
+    // now return kIOReturnUnsupported (no mapping ever promised), so
+    // WindowServer should take its software fallback on the probe boot;
+    // the boot-arg gate keeps ordinary boots byte-identical to the
+    // disabled state regardless.
     if (type == 0) {
-        IOLog("VMQemuVGAAccelerator: VMAccelSurfaceClient disabled - WindowServer will use software rendering\n");
-        IOLog("VMQemuVGAAccelerator: (Surface lock operations need proper memory mapping implementation)\n");
-        return kIOReturnUnsupported;
-        
-        /* ORIGINAL CODE - DISABLED UNTIL MEMORY MAPPING IS IMPLEMENTED:
-        VMAccelSurfaceClient* surface_client = VMAccelSurfaceClient::withTask(owningTask);
+        int surface_gate = 0;
+        if (!PE_parse_boot_argn("vm-accel-surface", &surface_gate,
+                                sizeof(surface_gate))) {
+            IOLog("VMQemuVGAAccelerator: type 0 gated off "
+                  "(no vm-accel-surface boot-arg) - software fallback\n");
+            return kIOReturnUnsupported;
+        }
+        IOLog("VMQemuVGAAccelerator: type 0 GATED ON (vm-accel-surface=%d) "
+              "- creating VMAccelSurfaceClient\n", surface_gate);
+        // withTask() already ran initWithTask(owningTask, NULL, 0, NULL)
+        VMAccelSurfaceClient* surface_client =
+            VMAccelSurfaceClient::withTask(owningTask);
         if (!surface_client) {
             return kIOReturnNoMemory;
         }
-        
-        if (!surface_client->initWithTask(owningTask, securityID, type, nullptr)) {
-            surface_client->release();
-            return kIOReturnError;
-        }
-        
         if (!surface_client->attach(this)) {
             surface_client->release();
             return kIOReturnError;
         }
-        
         if (!surface_client->start(this)) {
             surface_client->detach(this);
             surface_client->release();
             return kIOReturnError;
         }
-        
         *handler = surface_client;
-        IOLog("VMQemuVGAAccelerator: ✅ VMAccelSurfaceClient created successfully\n");
+        IOLog("VMQemuVGAAccelerator: VMAccelSurfaceClient created\n");
         return kIOReturnSuccess;
-        */
     }
     
     // Type 1 - CGL context user client
