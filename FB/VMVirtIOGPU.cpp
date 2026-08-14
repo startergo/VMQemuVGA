@@ -6816,6 +6816,10 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
         // VirtGLGL userspace library interface
         case 0x3000: // Submit virgl commands
             IOLog("VMVirtIOGPUUserClient: SubmitCommands selector=0x3000\n");
+            // CAUTION: same IOKit 4096-byte boundary as 0x6008 — inputs
+            // >= 4096 bytes arrive as structureInputDescriptor with
+            // structureInput NULL and will fail here. This legacy 0x3000
+            // path is unexercised; fix here too if it is ever adopted.
             if (args->structureInput && args->structureInputSize > 0) {
                 return submitVirglCommands(args->structureInput, args->structureInputSize);
             }
@@ -7114,15 +7118,112 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
         }
 
         case 0x6008: { // submitVirglCommandsEx — like 0x3000 but takes ctx_id
-            IOLog("VMVirtIOGPUUserClient: submitVirglCommandsEx selector=0x6008\n");
-            // structureInput (not structureInputDescriptor) — IOKit copies the
-            // bytes into kernel memory; we wrap them with withAddress. Matches
-            // the existing 0x3000 path at line 6659+7162.
-            if (args->scalarInputCount >= 1 && args->scalarInput &&
-                args->structureInput && args->structureInputSize > 0) {
-                return submitVirglCommandsEx((uint32_t)args->scalarInput[0],
-                                              args->structureInput,
-                                              (uint32_t)args->structureInputSize);
+            // IOKit structure-input boundary: inputs < 4096 bytes are copied
+            // inline and arrive as args->structureInput; at/above 4096 the
+            // kernel passes args->structureInputDescriptor and leaves
+            // structureInput NULL. The old code required structureInput
+            // non-NULL, so every batch >= 4KB returned kIOReturnBadArgument
+            // from an UNLOGGED early return — silent rejection of exactly
+            // the large compositor batches (observed 2026-08-13: 0x6008
+            // BadArgument storms; killtest never saw it because its max
+            // buffer was 487 dwords ≈ 1948 bytes, always inline).
+            //
+            // First-run instrumentation (this branch has never executed):
+            // per-path counters gated to first 20 calls each, plus an
+            // ungated MISMATCH self-check. SUBMIT_3D returns 0x1100
+            // unconditionally, so a descriptor path that maps without
+            // prepare(), reads the wrong length, or reads before the data
+            // is complete produces garbage indistinguishable from success —
+            // the mismatch self-check is the only way to catch it without
+            // a debugger. MISMATCH logs are NOT gated.
+            static uint32_t s_inline_seen = 0;
+            static uint32_t s_desc_seen = 0;
+            static uint32_t s_mismatch_seen = 0;
+            if (args->scalarInputCount >= 1 && args->scalarInput) {
+                if (args->structureInput && args->structureInputSize > 0) {
+                    if (s_inline_seen < 20) {
+                        s_inline_seen++;
+                        IOLog("VMVirtIOGPUUserClient: 0x6008 INLINE "
+                              "ctx=%u size=%llu count=%u\n",
+                              (uint32_t)args->scalarInput[0],
+                              (unsigned long long)args->structureInputSize,
+                              s_inline_seen);
+                    } else {
+                        s_inline_seen++;
+                    }
+                    return submitVirglCommandsEx((uint32_t)args->scalarInput[0],
+                                                  args->structureInput,
+                                                  (uint32_t)args->structureInputSize);
+                }
+                if (args->structureInputDescriptor) {
+                    // structureInputSize may read 0 in descriptor form;
+                    // the descriptor's own length (dsize) is authoritative.
+                    // A disagreement between the two (when both nonzero) is
+                    // the most likely first-run defect of this branch.
+                    uint32_t dsize =
+                        (uint32_t)args->structureInputDescriptor->getLength();
+                    if (dsize == 0) {
+                        s_mismatch_seen++;
+                        IOLog("VMVirtIOGPUUserClient: 0x6008 DESCRIPTOR "
+                              "MISMATCH dsize=0 (descriptor reports zero "
+                              "length) ctx=%u declared=%llu mismatch=%u\n",
+                              (uint32_t)args->scalarInput[0],
+                              (unsigned long long)args->structureInputSize,
+                              s_mismatch_seen);
+                    } else if (args->structureInputSize != 0 &&
+                               args->structureInputSize != dsize) {
+                        s_mismatch_seen++;
+                        IOLog("VMVirtIOGPUUserClient: 0x6008 DESCRIPTOR "
+                              "MISMATCH dsize=%u declared=%llu disagree "
+                              "ctx=%u mismatch=%u\n",
+                              dsize,
+                              (unsigned long long)args->structureInputSize,
+                              (uint32_t)args->scalarInput[0],
+                              s_mismatch_seen);
+                    } else if (s_desc_seen < 20) {
+                        s_desc_seen++;
+                        IOLog("VMVirtIOGPUUserClient: 0x6008 DESCRIPTOR "
+                              "ctx=%u size=%u declared=%llu count=%u\n",
+                              (uint32_t)args->scalarInput[0],
+                              dsize,
+                              (unsigned long long)args->structureInputSize,
+                              s_desc_seen);
+                    } else {
+                        s_desc_seen++;
+                    }
+                    IOReturn pr = args->structureInputDescriptor->prepare();
+                    if (pr != kIOReturnSuccess)
+                        return pr;
+                    IOMemoryMap *dmap = args->structureInputDescriptor->map();
+                    if (!dmap) {
+                        args->structureInputDescriptor->complete();
+                        return kIOReturnVMError;
+                    }
+                    IOReturn ret = submitVirglCommandsEx(
+                        (uint32_t)args->scalarInput[0],
+                        (void *)dmap->getVirtualAddress(), dsize);
+                    dmap->release();
+                    args->structureInputDescriptor->complete();
+                    return ret;
+                }
+            }
+            // This early-return is the previously-unidentified source of
+            // the 0x6008 BadArgument storm. Log it so any future occurrence
+            // is visible (gated to first 20).
+            {
+                static uint32_t s_badarg_seen = 0;
+                if (s_badarg_seen < 20) {
+                    s_badarg_seen++;
+                    IOLog("VMVirtIOGPUUserClient: 0x6008 BADARGUMENT early "
+                          "return scalar=%u structNull=%u descNull=%u "
+                          "count=%u\n",
+                          (uint32_t)args->scalarInputCount,
+                          args->structureInput ? 0 : 1,
+                          args->structureInputDescriptor ? 0 : 1,
+                          s_badarg_seen);
+                } else {
+                    s_badarg_seen++;
+                }
             }
             return kIOReturnBadArgument;
         }
