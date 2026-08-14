@@ -16,7 +16,330 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-13
+Last updated: 2026-08-14 (MIG probe PASS — surface transport open; coupling question is the gate)
+
+---
+
+## 2026-08-14 — MIG probe PASS; surface-client transport verified open
+
+### Verdict (pre-registered outcome #1)
+
+**PASS, unambiguous, fully attributed.** Every non-control
+scalar call crossed the 10.6 IPC boundary and reached kernel
+code; zero `0x10000003` (MIG_BAD_ARGUMENTS) anywhere.
+
+Probe raw results (`/Users/sl/probe_accel_surface_mig`, guest,
+10:27:33, same connection):
+
+| call | sel | shape | kr | meaning |
+|---|---|---|---|---|
+| GetState (ctrl) | 2 | 0/1 | 0x0 | success, out[0]=0x1 (idle bit) |
+| WriteLockOptions | 3 | 1/0 | 0xe00002c7 | handler's own Unsupported |
+| WriteUnlockOptions | 4 | 1/0 | 0xe00002c7 | same |
+| ReadLockOptions | 0 | 1/0 | 0xe00002c7 | same |
+| Flush | 10 | 0/0 | 0xe00002c7 | same |
+| ReadLock | 12 | 0/0 | 0xe00002c7 | same |
+| SetIDMode | 7 | 2/0 | 0xe00002c7 | same |
+| SetShape | 9 | 2/0 | 0xe00002c7 | same |
+
+Attribution check (the important part): `0xe00002c7` is also
+what kernel dispatch returns if `getTargetAndMethodForIndex`
+returns NULL — same code, different meaning. The kernel log
+discriminates: for EVERY selector, all three lines fired —
+`getTargetAndMethodForIndex index=N`, `Returning method N
+(count0=X, count1=Y)` with the table's correct per-entry counts,
+AND the handler-entry log (`WriteLockOptions(0x0) -> Unsupported`,
+`Flush -> Unsupported`, `SetIDMode -> Unsupported`, …). The
+returns are the handlers' own kIOReturnUnsupported by design;
+the dispatch chain resolved and invoked each handler.
+
+**What this settles (phrased to the evidence):**
+- Pure old-style dispatch (no `externalMethod()` override +
+  populated `IOExternalMethod` table with count0/count1) works
+  on 10.6 for every argument shape tested (0/1, 1/0, 0/0, 2/0).
+- **Whatever failed in d98 is unexplained and no longer
+  matters.** The probe establishes that THIS configuration
+  works; it does not establish what broke THAT one — the d98
+  binary came from a build path that isn't this project's and
+  cannot be reconstructed. The note's catch-22 mechanism is
+  CONSISTENT with the result, not demonstrated by it. (Earlier
+  draft of this entry said "CONFIRMED as the d98-era cause" —
+  over-claim, corrected per review; do not inherit it.)
+- The no-receiver alternative is falsified for TODAY's build
+  only.
+- **The gate moves to the coupling question**: will WindowServer
+  composite a surface whose producer is not GLD? That second
+  probe (content in surface → WindowServer shows it) decides
+  whether the presentation split pays.
+
+### Archaeology (why the note's evidence was about a binary nobody has)
+
+- `VMAccelSurfaceClient.cpp`: created in exactly ONE commit
+  (`ff9f3d8` "Milestone B"), never edited since — pristine.
+- `git log -S "VMAccelSurfaceClient"` on `project.pbxproj`:
+  EMPTY across all history. The file was never compiled by this
+  project at any commit. The November d98/d99 logs came from a
+  build path that isn't this repo's.
+- Consequence adopted into the pre-registration: results
+  attribute to today's build only. The build itself was the
+  first-ever compile of the file (one benign C99-designator
+  warning; binary grew 0xe7000 → 0xe9000).
+
+### What was built this session for the probe
+
+1. `VMAccelSurfaceClient.cpp` wired into `project.pbxproj`
+   (4 placements, mirroring VMCGLContext.cpp entries).
+2. Type-0 branch in `VMQemuVGAAccelerator::newUserClient`
+   re-enabled, **gated on boot-arg `vm-accel-surface=1`** via
+   `PE_parse_boot_argn` — ordinary boots return Unsupported
+   exactly as before; only deliberate probe boots expose the
+   client. (Recovery if a probe boot goes bad: NVRAM/config.plist
+   on the ESP, not guest filesystem surgery.)
+3. Handlers hardened: every handler except GetState returns
+   `kIOReturnUnsupported` (November crash cause was
+   success-without-mapping; Unsupported promises nothing so
+   WindowServer falls back). Handler-entry IOLog = kernel-reach
+   proof. GetState returns idle (WindowServer's first call).
+4. `probe/probe_accel_surface_mig.c` — 8.6MB-free single-file
+   probe, cross-compiled x86_64 against the 10.6 SDK.
+
+### Boot-arg facts (newly established)
+
+- **OpenCore's config.plist is authoritative for boot-args**:
+  `NVRAM > Delete` lists `boot-args` (GUID
+  `7C436110-AB2A-4BBB-A880-FE41995C9F82`), so OpenCore deletes
+  the NVRAM var and re-injects from `NVRAM > Add` each boot. A
+  guest-side `nvram boot-args=` write is dead on reboot.
+- ESP automounts **inside the guest** at `/Volumes/EFI-LEGACY`
+  (resolves the doc TODO in `docs/opencore-testing.md` —
+  in-guest, NOT host-side). Writable msdos; edit via
+  `/usr/libexec/PlistBuddy`, then `sync` (async mount).
+- Applied for the probe, then **REMOVED same session**: the
+  gate arg was in config.plist only for the probe boot. As of
+  session end the plist is back to
+  `-v keepsyms=1 debug=0x12a vsmcgen=1 msgbuf=1048576 serial=5`
+  (verified, lint OK, synced) — the NEXT boot is byte-identical
+  to every ordinary boot this project has measured on. The
+  currently-running boot still has the gate in-kernel (harmless:
+  all handlers return Unsupported; not a measurement run).
+  Re-add the arg for the coupling probe and remove it again
+  after. Rationale: a always-on gate is a fourth confound
+  alongside vCPU count, background load, and cache state.
+- **First-boot-of-new-cache caveat**: the probe boot was
+  cacheless; kextd rebuilt the cache post-boot WITH the surface
+  client compiled in. The next boot is the first to LOAD that
+  cache — any cache defect surfaces then, not now.
+- Near-miss recorded (and now codified in build-install rules):
+  my first install script would have OVERWRITTEN boot-args with
+  a remembered subset, dropping `serial=5`/`vsmcgen=1`. The
+  expect timeout accidentally prevented it. Read the live value,
+  append, write back the full string.
+
+### Instrument errors made and corrected this session (recorded per rules)
+
+1. **`ps -u sl` cannot see root processes.** The killed-but-
+   surviving root kextcache (from my own expect-timeout'd
+   install) was invisible to my "no kextcache running" check.
+   Use `ps aux` filtered, not `ps -u sl`.
+2. **kextd auto-respawns kextcache after cache deletion.** The
+   rules' "cache dir stayed empty until run by hand" did NOT
+   hold this boot: every kill+rm cycle triggered regeneration
+   within ~2 min (pids 2579/2741/2746/2747 spawned by kextd).
+   Cacheless-assert does not stick on this guest as configured.
+3. **Orphaned PowerFox at 22% CPU for 3+h** (from the artifact
+   run) plus syslogd 4.2% (serial=5 firehose) and ARDAgent
+   build_hd_index → load 7.7 on 1 vCPU → kextcache crawled
+   (13s CPU over 2h15m) and every reboot queued behind its
+   root-volume lock. My own forgotten test process violated
+   the ledger's system-settle precondition. Kill test apps
+   before install/reboot work.
+4. **Detached reboots die with the pty.** `nohup … reboot &`
+   over `ssh -t` died at session teardown twice. What works:
+   `shutdown -r now` as the FINAL FOREGROUND line of the in-
+   session script — once committed ("Shutdown NOW!" broadcast),
+   init drives it without my tty. The earlier failure shape
+   was session-death racing a still-WAITING shutdown.
+5. **Script self-match kill bug**: `cleanup_and_reboot.sh`
+   matched my own `[r]eboot` grep and killed itself. Neutral
+   script names + `$$` exclusion.
+6. **Framebuffer type-0 ≠ accelerator type-0.**
+   `VMVirtIOFramebuffer::newUserClient(type=0)` is IOFramebuffer's
+   standard client (delegates to super) — a different path from
+   `VMQemuVGAAccelerator::newUserClient(type=0)` (the surface
+   client). Don't read a framebuffer type-0 log line as the
+   surface gate.
+
+### Deployment state at this writing
+
+- Kext `a147a91119a42019f8118591d150c3b3` installed, loaded
+  (kextstat 8.0.0d82, size 0xe9000), gate ON, probe PASS.
+- Guest booted cacheless; kextd will have rebuilt the cache
+  post-boot (two-boot-delay note applies).
+- Probe + helper scripts live under `/Users/sl/` (home persists
+  across reboots; `/tmp` does NOT — re-stage after every reboot).
+
+### Artifact-thread state (parked, same session — recorded so it isn't lost)
+
+PowerFox main window renders REAL WEB CONTENT through the full
+chain (descriptor-path fix verified this session: main-window
+batches 5052/5220/8648 bytes all cross the ≥4096 boundary via
+DESCRIPTOR path; BADARGUMENT 0; MISMATCH 0; killtest control
+all-inline 64..2004 bytes unchanged, pixel RGBA(26,26,31,255)).
+Remaining artifact class: **rectangles of correct content
+composited at wrong destinations** — nav strip doubled at offset,
+"New Tab" twice at different x, left-clipped text at consistent
+x ("tions on installing…"). User-verified discriminations:
+- resize → clears; incremental repaint → returns (partial-damage
+  class confirmed).
+- **Single-buffer test FALSIFIED guest-side buffer staleness**:
+  `SHIM_SINGLE_BUF=1` (render_buf == present_buf, swap no-op,
+  double-free guarded in cgl_shim.mm) — artifacts persisted.
+- **GL_UNPACK pixel-store leak found and fixed** in
+  `CGLTexImageIOSurface2D` (substitute_cgl.c): ALIGNMENT=1 was
+  left installed after every IOSurface upload and ROW_LENGTH was
+  reset to hardcoded 0 — context-global state leaking into
+  Gecko's own texture uploads. Now saved/restored (both params).
+  Deployed md5 `0613591a1575faad660840eea5ad0baa`. Effect:
+  content became crisp (footer links, search field, text box
+  correct) — the leak was real and harmful. Chrome (strip
+  composites) still fragmentary.
+- ROW_LENGTH units verified correct in the DEPLOYED binary by
+  disassembly (divq by bpp at 0x627c–0x6288 + save/restore
+  calls) — byte-pass-through and rowlen=width both ruled out.
+- Leading hypothesis: **composite destination coordinates**
+  (duplication = two draws, which stride smears cannot produce;
+  fullscreen quads immune, subrect quads hurt — matches the
+  content-clean/chrome-mangled split).
+- Pre-registered diagnostic: env-gated pattern-fill on IOSurface
+  uploads (row-index color bars). Shear → stride fault in Mesa's
+  virgl unpack; clean-but-duplicated → composite destinations
+  confirmed, next step vertex-side interpose.
+
+### Scope of the MIG proof + the two redesign axes (settled this session)
+
+**Proof scope — closed loop.** The probe called OUR selectors
+against OUR table: it proves old-style dispatch functions and
+published counts are honoured. It does NOT prove 10.6's CGS
+adopts this numbering — that only closes when WindowServer
+itself invokes a selector and the handler fires. The Catalina
+explanation (below) makes the numbering question live in
+principle; the enum diff closes it anyway:
+
+**Axis 1 — API shape: RESOLVED, numbering matches.** The kext
+compiles against the MODERN SDK (MacOSX26.5), so the table's
+enum comes from that header. Diffed both SDKs'
+`IOAccelSurfaceConnect.h` `eIOAccelSurfaceMethods`: identical
+order and membership (ReadLockOptions…SetShapeBackingAndLength,
+NumSurfaceMethods=18). The kext publishes exactly the selector
+numbers 10.6 CGS would call. **The redesign reduces to backing
+only.**
+
+**Axis 2 — VMVirtIOGPUAccelerator zero instances: cause (3).**
+Construction site `VMVirtIOFramebuffer.cpp:496`:
+`OSTypeAlloc(VMQemuVGAAccelerator)` — the framebuffer hard-
+instantiates the BASE class on the virtio path; no plist
+personality involved (not causes 1 or 2). Nominally a one-line
+re-parent, with two caveats found: the subclass OVERRIDES
+`newUserClient` (fixed-ID client — the verified type-0 surface
+gate lives in the BASE's newUserClient, so the swap changes
+client dispatch) and `start` (holds `m_virtio_gpu_device`,
+suggesting it expects VMVirtIOGPU as provider, while the base
+attaches to the framebuffer). Dual-instance hazard does NOT
+apply today (single construction site) but stands as a design
+rule for the redesign: when the subclass registers, the base
+must stop matching virtio.
+
+**Redesign shape (agreed, not built):** surface backing as a
+virtual method on the accelerator — QXL impl returns a VRAM BAR
+address, virtio impl returns a 3D-resource-backed guest buffer;
+the surface client stays device-agnostic above it. WriteLock's
+memory source is decided there.
+
+**November logs explanation (USER-ATTESTED):** the user
+confirms the file was extensively tested on the CATALINA guest —
+explains logs existing for a file never compiled in this
+project, consistent with all git evidence, and confirms the
+notes are stale for this target. Consequences recorded: the
+d98-era failure mechanism is a lost binary's story (see verdict
+phrasing above), and the user's standing directive is that this
+file is the OLD design and **needs redesign** for virtio, not
+revival.
+
+### Next (pre-registered)
+
+**Coupling probe — the decisive one for the presentation split.**
+Put content into a surface and see whether WindowServer composites
+it. Pass = WindowServer shows the content (visual check, not a
+success log). **Intermediate decisive evidence available before
+any content: a handler-entry log line for a call WE DID NOT
+MAKE.** The MIG probe was a closed loop (our userspace, our
+selectors, our table); the enum diff closed numbering, but
+nothing has yet exercised the CGS→client direction. The first
+getTargetAndMethodForIndex/handler line from a non-probe caller
+proves WindowServer adopted the API — that observation precedes
+and de-risks the content step.
+
+**The probe needs a requester (pre-probe design note, 2026-08-14).**
+What would make CGS call at all? On 10.6 the surface gets bound
+through `_CGSAddSurface`/`_CGSBindSurface`, and something must
+INITIATE that — normally the GL path when a context attaches to
+a window. If nothing in the guest ever asks for a surface on our
+accelerator, silence proves only that nobody requested one, not
+that WindowServer refused. Without a requester, absence is
+ambiguous and the GLD hypothesis gets promoted on weak evidence.
+Requester options: drive the CGS trio directly from userspace
+(reachable — the earlier AppKit analysis enumerated
+_CGSAddSurface/_CGSBindSurface/_CGSFlushSurface as callable), or
+find what prompts AppKit to request one.
+
+**Fail branch — CORRECTED (2026-08-14 review).** The original
+pre-registered text read "Fail = WindowServer ignores/errors →
+the split is dead on 10.6 without reverse-engineering Apple's
+surface client." Kept here as history, but it conflated two
+different dead ends. Reverse-engineering Apple's surface client
+was the fallback if the DISPATCH layer could not be made to work
+— that fallback is CLOSED, by the MIG PASS and by the enum diff;
+the transport and API-shape axes are settled. What can still kill
+the split is the coupling question, and the thing that would be
+needed there is **GLD, not the surface client**: if WindowServer
+only composites surfaces whose producer went through a GLD
+plugin, no amount of surface-client work substitutes for it.
+Accurate statement: transport and API shape are closed; the
+remaining way the split dies is WindowServer requiring a
+GLD-side producer — a different and larger obstacle than the one
+the struck line described. Fail outcome = the readback
+presentation path stays.
+
+**Backing strategy for the probe (user insight, recorded):**
+WriteLock's contract is handing userspace an address — and that
+exact shape is ALREADY proven on virtio: `probe_attach_backing_test`
+(2026-08-10) verified ATTACH_BACKING with unaligned userspace
+memory, 5-segment scatter list, 4096/4096 dwords byte-exact,
+wiring held across a guest write. So: surface backed by a
+userspace allocation attached as a virtio 3D resource reuses
+verified machinery — WriteLock returns the pointer, the resource
+is already attached, Flush becomes TRANSFER_TO_HOST plus whatever
+the scanout needs. Backing is plumbing between two proven pieces,
+not new mechanism. The genuinely unknown part is the coupling
+itself. Note the probe re-enters the configuration the November
+disable guarded against (WriteLock returning real memory) —
+boot-arg gate is the only protection; decide backing BEFORE
+making WriteLock real.
+
+**Re-parent status: cause found, not yet acted on.**
+`VMVirtIOGPUAccelerator` registers zero instances because
+`VMVirtIOFramebuffer.cpp:496` constructs the base class — not a
+matching problem. Making the subclass instantiate requires: (a)
+the construction-site swap, (b) reconciling its overridden
+`newUserClient` (fixed-ID client — the verified type-0 gate
+lives in the BASE's newUserClient) and its `start` provider
+expectation (`m_virtio_gpu_device` vs the framebuffer the base
+attaches to), and (c) ensuring the base stops matching virtio
+once the subclass registers (the dual-instance hazard — this
+project's virtqueue-race precedent). Design split agreed: surface
+backing as a virtual method (QXL impl: VRAM BAR address; virtio
+impl: 3D-resource-backed guest buffer); surface client stays
+device-agnostic above it.
 
 ---
 
@@ -1074,7 +1397,12 @@ kIOReturnTimeout, 11:37:04 (during spew14's window).
 - e10s: OFF (pref persisted, no plugin-container ever spawned with a
   window open) — not the gate.
 
-**Leading open hypothesis — FALSIFIED (final cross-run check):**
+**Leading open hypothesis — FALSIFIED (final cross-run check) —
+TWO CLAIMS PARTIALLY RETRACTED 2026-08-13 night-2; see the
+"BadArgument source identified" subsection below for the replacement.**
+Original text preserved so the reasoning trail stays auditable; the
+two retracted claims are marked inline.
+
 submit failures are NOT the black-window discriminator. FAIL counts
 per run: spew13 (dialog RENDERED CORRECTLY) 1080/1565 lines;
 spew14 1; spew15 98; spew16 761; spew17 (empty-frame-guard build)
@@ -1082,10 +1410,33 @@ spew14 1; spew15 98; spew16 761; spew17 (empty-frame-guard build)
 the winsys returns -1, Mesa drops the batch, the next frame
 rebuilds. Rendering succeeded in spew13 WITH 1080 of them, and the
 current run's machinery is healthy (blit-skips, strips, viewports)
-under 3532 of them. Which kext path returns BadArgument remains
-unidentified (all visible paths excluded by the winsys's call
-shape) — a correctness mystery worth solving for TCG performance
-(every failed submit is lost work), but not the black cause.
+under 3532 of them. **[RETRACTED 2026-08-13 night-2: this
+"tolerated churn" framing is the load-bearing premise that fell.
+It assumed the failures were spurious — and that assumption was
+never tested against the size of the failing batches. Under the
+new hypothesis, main-window compositor batches exceed 4096 bytes
+continuously, so every draw is dropped and only clears survive,
+which is exactly the all-zeros readback with glError=0x0 observed
+on the main window. spew13's dialog rendered because the dialog's
+batches were under 4096; the main-window draws were not in the
+same population. The churn was only ever "tolerated" on surfaces
+small enough to land in the inline path.]** Which kext path returns
+BadArgument remains unidentified (all visible paths excluded by the
+winsys's call shape) **[RETRACTED 2026-08-13 night-2: IDENTIFIED.
+The path is the implicit `return kIOReturnBadArgument;` at the
+bottom of case 0x6008 in `externalMethod`, fired when IOKit delivers
+the batch via `structureInputDescriptor` (≥ 4096 bytes per IOKit's
+inline/descriptor boundary), leaving `args->structureInput` NULL —
+the old `if (args->structureInput && …)` gate at the top of the
+case skipped both branches and fell through. Killtest never saw it
+because its largest batch was 487 dwords ≈ 1948 bytes, always
+inline. Fix in flight: uncommitted +48/-8 diff in
+`FB/VMVirtIOGPU.cpp` handles the descriptor path.]** — a
+correctness mystery worth solving for TCG performance (every failed
+submit is lost work), but not the black cause
+**[RETRACTED 2026-08-13 night-2: see replacement hypothesis below;
+the "not the black cause" conclusion rested on the retracted
+"tolerated churn" premise]**.
 
 **Empty-frame guard deployed and verified (spew17):** shim_blit
 skips frames whose first pixel has alpha==0 (NSCompositeCopy would
@@ -1142,6 +1493,174 @@ The kCGLBadContext on CGLTexImageIOSurface2D remains its own datum:
 Gecko has a native present path it expects to work; the drawRect
 blit bypasses rather than fixes it — revisit if native compositing
 is ever wanted.
+
+### 2026-08-13 night-2 — BadArgument source identified; submit failures re-entered as black-window candidate
+
+**This subsection supersedes the "Leading open hypothesis —
+FALSIFIED" claims above.** It is written before the verification
+run, per the project rule that the ledger must not inherit a
+wrong version of why something worked.
+
+**Path identified.** `0x6008 submitVirglCommandsEx FAIL 0xe00002c2`
+originates from the implicit `return kIOReturnBadArgument;` at the
+bottom of `case 0x6008` in `VMVirtIOGPUUserClient::externalMethod`
+(`FB/VMVirtIOGPU.cpp` around the case 0x6008 block). IOKit switches
+from inline to descriptor delivery at the 4096-byte boundary: inputs
+< 4096 bytes are copied into kernel memory and exposed as
+`args->structureInput`; at/above 4096 the kernel passes
+`args->structureInputDescriptor` and leaves `structureInput` NULL.
+The old case body required `args->structureInput` non-NULL to enter
+either branch, so any batch ≥ 4 KB skipped both branches and fell
+through to the trailing BadArgument. No log line fired — the
+failure was silent on the kext side; the winsys saw -1, reset
+`cbuf->cdw`, and dropped the batch.
+
+**Killtest never triggered it.** Killtest's largest batch was 487
+dwords ≈ 1948 bytes (LEDGER per-call cost study), always inline.
+That is why the failure path was never exercised in any verified
+run on the killtest, and why spew13's dialog (small compositor
+surface, 400×128) rendered correctly despite logging 1080
+BadArgument lines: the dialog's own batches were inline. The
+1080 failures were on the OTHER calls of the same run —
+strip-sized transfers, etc. — never on the dialog's draw.
+
+**Replacement hypothesis for the black window.** Under the
+new framing, the main window's compositor batches exceed 4096
+bytes continuously (the observed all-zeros readback is a
+window-sized 1280×843 surface with no content), so every main-
+window draw hits the descriptor path and is dropped, while clears
+and small strips (1280×27, 15×15, 4×4 — all under 4 KB inline)
+flow normally. This matches the exact symptom signature: black
+content area, strips upload fine, healthy main-thread event loop,
+no crash, e10s off. The "tolerated churn" that the prior
+falsification observed was real but was being measured on the
+wrong population — small surfaces where the churn is genuinely
+harmless. The main window was never in that population.
+
+**Fix in flight.** +48/-8 uncommitted diff in
+`FB/VMVirtIOGPU.cpp` adds a descriptor-path branch that calls
+`prepare()`/`map()`/`getVirtualAddress()`/`release()`/`complete()`
+and forwards to `submitVirglCommandsEx` with the descriptor's
+authoritative `getLength()`. Pass condition pre-registered below.
+
+**Pass condition is PIXELS, not silence.** `SUBMIT_3D` returns
+`0x1100` unconditionally (LEDGER rule: 0x1100 means "QEMU parsed
+it", never host accepted). A descriptor path that maps without
+prepare(), reads the wrong length, or reads before the data is
+complete produces garbage indistinguishable from success. The
+BadArgument storm dropping to zero only proves the early return
+is gone. ONLY the main window showing content proves the commands
+arrived intact.
+
+**Logging on the new branch (it has never executed).** Per
+reviewer directive: log which delivery shape each call took
+(inline vs descriptor) and the length actually read against the
+length declared. A mismatch there is the most likely first-run
+defect and is invisible otherwise. Both logs gated to first N
+calls per project IOLog discipline; a self-check `MISMATCH` line
+fires prominently if `dsize == 0` or
+`(structureInputSize != 0 && structureInputSize != dsize)`.
+
+**Deployed-kext check — OBSERVED STATE, not the pre-registered
+comparison.** Guest was rebooted mid-session (QEMU pid 43170 →
+69142; uptime 3m at first ssh). On reboot, `/System/Library/
+Extensions/VMQemuVGA.kext` was ABSENT — not at the canonical
+path, not at `/Library/Extensions/`, not in `kextstat`. Boot log
+shows no VMQemuVGA load attempt (nothing to load); `IONDRVSupport`
+is the active framebuffer, almost certainly driving virtio-vga-gl's
+VGA-compat plane (basic VGA, no acceleration). ssh host key was
+re-added to known_hosts (host key rotated since last session).
+
+This moots the "deployed == HEAD" pre-registration: there is no
+deployed kext to compare. The relevant baseline is now "guest has
+never run any version of this code in this boot state." Host build
+md5 (with the descriptor-path diff) is
+`70328ed492cc322546c3790d02224e7b`; the previously-noted prior
+md5 `d4959ba77634b3bbffa06652c932a457` was a different build state
+that no longer exists in `build/Release` (overwritten by the
+rebuild).
+
+**Why the kext was absent — RESOLVED (user statement, not
+inferred).** The user deleted the kext via the recovery procedure
+documented in `.claude/rules/build-install.md` lines 154-157
+(`V=/Volumes/MacintoshHD; sudo rm -rf "$V/System/Library/
+Extensions/VMQemuVGA.kext"; sudo rm -rf "$V/System/Library/Caches/
+com.apple.kext.caches"; sudo touch "$V/System/Library/Extensions"`)
+because the prior build was not booting. This was communicated
+twice via the IDE selection of those exact lines and once in plain
+text; I missed the signal both times initially and wrongly recorded
+the absence as an unexplained residual. Retracting that framing.
+
+**Implication — prior build broke boot (NEW ITEM, not residual).**
+The kext committed at HEAD (without the descriptor-path diff) was
+installed across many sessions (LEDGER: RED WINDOW, killtest,
+PowerFox safe-mode dialog rendered). At some point after those
+verifications it stopped booting, badly enough that the user had
+to use the slclean recovery procedure. The new build (with the
+descriptor-path diff) **booted cleanly on the first try after
+install** — kextstat confirms load, md5 matches, WindowServer
+servicing framebuffer at 1680×1050. Whatever was breaking boot
+before is not present in this build, OR was in code my changes
+happened to perturb. Not claiming the descriptor-path fix *caused*
+the boot recovery — that's untested. But the boot recovery is a
+real observation that needs explaining: identify what in HEAD's
+pre-descriptor-diff state was breaking boot, separate from the
+descriptor-path question. This is a new open item, not a residual
+on the absence.
+
+**`/tmp` self-cleans on reboot — normal 10.6 behavior.** Recorded
+because I treated the missing killtest_shim / Mesa libs / substitute
+framework as evidence of "guest was wiped" — wrong. `/tmp` clears
+on reboot on this guest; re-staging `/tmp` from the host build
+artifacts is the normal pre-test step, not a recovery operation.
+
+**Pre-registered predictions (written before the run, REVISED for fresh-install baseline):**
+
+1. **[RETRACTED — moot per observed-state note above]** Fresh HEAD
+   build md5 comparison — no deployed kext to compare against.
+2. **[RETRACTED — moot]** Deployed-on-guest md5 comparison — same.
+3. **Install succeeds on fresh `/S/L/E/`.** `kextcache -system-caches`
+   builds the boot cache cleanly; `kextutil -n -t` (or, on this
+   guest, the equivalent 10.6 tool) reports no validation errors;
+   `Startup/Extensions.mkext` and `kernelcache_x86_64.<hash>` exist
+   with fresh mtime + plausible size per build-install rules.
+4. **After reboot, kext loads.** `kextstat | grep VMVirtIO` shows
+   the kext loaded; kernel.log shows the kext's `start()` log
+   lines; `md5 /S/L/E/VMQemuVGA.kext/Contents/MacOS/VMQemuVGA`
+   equals the host build md5 `70328ed492cc322546c3790d02224e7b`.
+5. **Killtest run (control) unchanged.** All batches are inline
+   (< 4096 bytes — killtest max was 487 dwords ≈ 1948 bytes). The
+   INLINE-path log fires 20 times then suppresses. DESCRIPTOR-path
+   log does NOT fire. MISMATCH log does NOT fire. BadArgument log
+   does NOT fire. Rendering byte-identical to prior verified
+   killtest output.
+6. **PowerFox main-window run (the test).** DESCRIPTOR-path log
+   fires for some calls (the main window's compositor batches are
+   predicted ≥ 4096 bytes continuously). INLINE-path log also
+   fires for smaller surfaces (strips, etc.). BadArgument count
+   drops from the thousands-per-run baseline observed in spew13-17
+   to zero. MISMATCH log does NOT fire (dsize agrees with declared
+   size — first-run proof the length-read-vs-length-sent invariant
+   holds; if it fires, that's the new frontier).
+7. **Pass condition (pixels):** main window content area shows
+   Gecko UI (toolbar, page content — not the safe-mode dialog
+   which is the known-rendering case, the actual browser window).
+   If the window is still white/black with alpha==0 readback, the
+   fix landed but did not change the symptom — the "tolerated
+   churn on the wrong population" hypothesis is wrong, and the
+   black window has a different upstream cause (return to the
+   Gecko layer-manager diagnostic, pre-registered step #1 above).
+8. **If pixels appear but are visually wrong** (corrupted, partial,
+   off-by-one), suspect the descriptor length or completion
+   ordering — the MISMATCH self-check is designed for this.
+
+**Open question the fix does not address.** Why the main window's
+compositor produces batches ≥ 4 KB continuously while the safe-
+mode dialog produces batches < 4 KB is unidentified. The fix lets
+the batches through; it does not explain their size distribution.
+That is Gecko layer-manager territory (pre-registered step #1) and
+remains relevant regardless of the pixel outcome — the size
+distribution tells us which layer manager is in use.
 
 ### PowerFox architecture: x86_64-only
 
