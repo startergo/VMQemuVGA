@@ -38,7 +38,7 @@ unmodified system.**
   ApplicationServices -framework CoreFoundation`.
 - Build shim (recorded, reproducible): `IOAccelSurfaceControl.h` is in
   no 10.6-era SDK header set — taken from the 10.2.8 SDK
-  (`leopard-webkit-build/sdk/MacOSX-SDKs/`) into
+  (`~/leopard-webkit-build/sdk/MacOSX-SDKs/`) into
   `/tmp/accelhdr/IOKit/graphics/`, extended with prototypes for
   `IOAccelSetSurfaceFramebufferShapeWithBackingAndLength`,
   `IOAccelWrite(Un)LockSurfaceWithOptions` — private API present in the
@@ -103,7 +103,7 @@ in the Build section above.
 **Context.** VMsvga2-modern's ledger (Q3) established the worked example's
 coupling machinery; this diff checks this project's accelerator visibility
 against it. All findings are source reads of the live tree
-(`/Users/macbookpro/VMQemuVGA`); nothing booted. Recorded in both ledgers.
+(this checkout); nothing booted. Recorded in both ledgers.
 
 ### Re-ranked later same day: the gate is the suppression, not the properties
 
