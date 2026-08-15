@@ -261,6 +261,33 @@ this project — VMsvga2GA (MIT-style headers) is the only worked example
 of the table, and `readfb.c` is the test client. Sequence any plugin work
 after the WindowServer probe; do not block the probe on it.
 
+### readfb.c as staged arbiter — step 0, before any driver change (user, 2026-08-14)
+
+More than a template: a **staged arbiter that runs against the current
+kext, unmodified**. Its first call is `IOAccelFindAccelerator(FB)` —
+exactly the consumer of the FB trio. Cross-compile for 10.6 with the
+existing toolchain and run it as-is. **Pre-registered expectation: it
+fails at that first call today**, which converts the personality
+diagnosis from inference to observation — no kext change, no boot-arg
+gate, no risk to the working software path.
+
+The failure-point ladder (each failure names the next piece of work,
+better than a binary pass/fail on selector traffic):
+
+1. **Fails at `IOAccelFindAccelerator`** → the FB trio is the gate, as
+   diagnosed. (Expected today.)
+2. **Gets past it, fails at `IOCreatePlugInInterfaceForService`** → step 1
+   of the fix order worked; the missing GA plugin is the next gate —
+   exactly where the sequencing puts it. (The FB also lacks
+   `IOCFPlugInTypes`, so today's run could not distinguish trio-missing
+   from plugin-missing anyway — and doesn't need to, since it fails at
+   the earlier call first.)
+3. **Gets past that** → both channels are live.
+
+And because it is Apple's own consumer, a failure in it is evidence
+about the driver, not about the probe — which no hand-written prober can
+claim.
+
 ---
 
 ### Verdict (pre-registered outcome #1)
