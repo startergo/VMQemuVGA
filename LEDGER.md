@@ -16,7 +16,184 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-14 (MIG probe PASS — surface transport open; coupling question is the gate)
+Last updated: 2026-08-14 (personality diff vs VMsvga2 run — FB-side accel trio incomplete/mistyped, IOCFPlugInTypes absent; entry below)
+
+---
+
+## 2026-08-14 — Personality diff vs VMsvga2 (cross-tree read, no boot)
+
+**Context.** VMsvga2-modern's ledger (Q3) established the worked example's
+coupling machinery; this diff checks this project's accelerator visibility
+against it. All findings are source reads of the live tree
+(`/Users/macbookpro/VMQemuVGA`); nothing booted. Recorded in both ledgers.
+
+### Re-ranked later same day: the gate is the suppression, not the properties
+
+The personality diff below stands, but its priority was wrong. Reading the
+enclosing function of `VMVirtIOFramebuffer.cpp:1796-1803`:
+
+- It is **`VMVirtIOFramebuffer::isConsoleDevice()`** (`:1789-1811`), an
+  `override` (`VMVirtIOFramebuffer.h:150`) called by IOGraphicsFamily
+  itself — not by any code in this driver. It runs on the console-claim
+  path, i.e. on every guest, **with no OS-version guard**: the Catalina
+  workaround is unconditional and therefore also runs on 10.6.
+- It writes `IODisplayAccelerated=false`, `IOGraphicsAccelerator=false`,
+  `IOAcceleratorFamily=false` on the FB — the same keys `start()`'s 3D
+  block writes (`:383-394`), so last-writer-wins applies and the console
+  claim can clobber the start-time claims.
+- Decisive aggravator: the 3D block's own comment records
+  **`functional_3d` is currently always false** (`:375`), and its published
+  values follow `functional_3d`, not transport. So **both** paths currently
+  publish accelerator=false on the 10.6 guest. The FB never claims
+  acceleration at all.
+
+**Consequence:** Phase A's silence (WindowServer created a CGS surface,
+never opened a client) is explained at the top level without any property
+subtlety — a framebuffer that declares itself unaccelerated has nothing
+for CGS to instantiate. The `IOAccelTypes` string-vs-number and
+`IOCFPlugInTypes` findings below are real but are **downstream**; testing
+them before lifting the suppression would attribute the null result to the
+wrong variable.
+
+**Fix order (pre-registered; revised later same day — step 1 is TWO
+changes, not one):** lifting the suppression alone changes nothing, because
+with `functional_3d` always false, `start()`'s 3D block publishes
+accelerator=false too — both paths agree on "no acceleration" under any
+ordering. Step 1 is therefore: (1a) conditionalize `isConsoleDevice()` —
+**and the conditional must be idempotent**, since the console-claim path
+may fire more than once; **and it must preserve the current behaviour on
+Catalina**, whose WindowServer crash is real history, not an unguarded
+revert; (1b) give the published claims a path to true that is explicitly
+**a boot-arg-gated probe, not a shipping value**. Then 2) the FB-side trio
+in path-string form + `IOCFPlugInTypes`; 3) reconcile the three
+accelerator-ish nubs **before** the experiment, else a positive result is
+unattributable (see finding 3); 4) hygiene below.
+
+**Probe vs shipping value — keep the distinction explicit (user,
+2026-08-14).** `functional_3d` was correctly held false while the 3D path
+was unproven. That era is over in the per-process sense: Mesa renders
+through virgl and PowerFox draws real web content (user-attested project
+state). But WindowServer still cannot reach any of it — the shim is
+per-process via `DYLD_FRAMEWORK_PATH`. So publishing accelerated=true to
+WindowServer is a claim nothing behind it can yet honour. Acceptable for a
+boot-arg-gated experiment; **the gate must not quietly become the default
+later.** Record any flip of the published value as a probe in the boot
+args used, and revisit what "functional" means for WindowServer once a
+system-wide path exists.
+
+**`functional_3d` is the pivot of the whole probe — do not flatten it
+(user, 2026-08-14).** Its honest value depends on which consumer is asking:
+per-process 3D is real, WindowServer-reachable 3D is not. That distinction
+currently lives in **one boolean**, which is exactly the kind of thing that
+gets flattened by someone tidying up. The boot-arg gate is what keeps the
+distinction honest; any refactor that merges the probe gate into
+`functional_3d` (or vice versa) loses the ability to say what "functional"
+means, and for whom.
+
+**Probe design, final (user, 2026-08-14).** The probe knowingly does what
+this codebase's own comment warns against (`VMVirtIOFramebuffer.cpp:377-379`:
+"advertise a capability you can't deliver, consumers stop falling back to
+the working software renderer") — acceptable gated, indefensible as a
+default. **Three pre-registered outcomes, not two:**
+1. **Selector traffic appears** — WindowServer opens the surface client
+   and calls `set_id_mode`/`set_shape*`/`write_lock`/`surface_control`/
+   `surface_flush` (QuickTime paths add `swap_surface`). Coupling question
+   answered affirmatively; property fix is on the causal path.
+2. **Silence persists** — with claims published in the VMsvga2 form,
+   WindowServer still opens nothing; something else gates discovery.
+3. **The working path breaks** — desktop degrades or WindowServer fails.
+   **Discriminator from general instability:** `crsr=0` software
+   compositing and the `drawRect:` presentation route are both independent
+   of these properties — if the desktop degrades while those are
+   unchanged, WindowServer's own compositing decision is the variable, not
+   anything in the shim.
+
+**Probe-run boot protocol (user, 2026-08-14).** The probe is the first
+driver change in a while and the guest has accumulated state. The boot
+that tests it must be **fresh, cached, quiesced, single-vCPU**: four
+separate confounds have already invalidated runs on this project, and a
+null result on a probe whose whole value is "did selectors appear" is
+exactly the shape a confound would produce indistinguishably. Treat any
+result from a non-conforming boot as no result.
+
+**Positive control may be documentary, not live.** A known-good
+accelerated 10.6 machine may not be reachable. If not:
+`VMsvga2Accel.cpp:592-604` is the next best thing — a driver that once
+satisfied this exact contract, so its published property set (FB-side
+`IOAccelTypes` path string / `IOAccelIndex` / `IOAccelRevision`,
+`IOCFPlugInTypes` copy, `AccelCaps`) is a specification even without a
+running instance. Diff against it rather than nothing.
+
+**Hygiene (flagged separately):** `IOGLBundleName = "com.apple.kpi.iokit"`
+at `VMVirtIOGPU.cpp:6196` is a kernel bundle identifier in a field naming a
+userspace GLD bundle. Cannot ever have been intentional; remove on sight.
+
+**Constant verified against the 10.6 artifact** (not MacKernelSDK, which is
+a modern reconstruction): real 10.6 SDK
+`IOKit.framework/Headers/graphics/IOGraphicsInterfaceTypes.h:34-35` —
+`kCurrentGraphicsInterfaceVersion = 1`, `kCurrentGraphicsInterfaceRevision
+= 2`. The predicted `IOAccelRevision=2` and GA interface `version=1` are
+confirmed era-correct.
+
+### Findings (ranked)
+
+1. **`IOAccelTypes` is never set on the framebuffer, and the accelerator
+   nubs set it as a number, not a string.** The worked example sets
+   FB.`IOAccelTypes` = **IOService-plane path string** of the accelerator
+   (`VMsvga2Accel.cpp:597-598`); the keys are documented for
+   `IOAccelFindAccelerator()` (`IOGraphicsInterfaceTypes.h:293-297`).
+   Here: the FB sets only `IOGLBundleName="GLEngine"` + `IOAccelIndex=0`,
+   and only inside `if (has_3d_support)` (`VMVirtIOFramebuffer.cpp:383-394`);
+   `IOAccelTypes=7` **numeric** appears on the accelerator nubs
+   (`VMQemuVGAAccelerator.cpp:265`, `VMVirtIOGPU.cpp:479`). If CGS reads
+   the FB property expecting a path, nothing points at our accelerator.
+   Sharpest candidate for "WindowServer created a surface but never opened
+   a client."
+2. **`IOCFPlugInTypes` absent everywhere** (grep zero hits in `FB/`,
+   `Info-FB.plist`, `GLPlugin/`). The worked example publishes
+   `ACCF0000-0000-0000-0000-000a2789904e` on the accelerator personality
+   **and copies it onto the FB** at runtime.
+3. **Three accelerator-ish nubs with conflicting values**:
+   `VMQemuVGAAccelerator` (FB-attached+registered,
+   `VMVirtIOFramebuffer.cpp:521-526`, `IOGLBundleName="VMVirtIOGLEngine"`),
+   `VMVirtIOGPUAccelerator` (`VMVirtIOGPU.cpp:461-515`,
+   `IOGLBundleName="GLEngine"`, `IOOpenGLRenderer=true`), `VMMetalPlugin`
+   (`VMMetalPlugin.cpp:87-89`, `IOAccelTypes=2`, revision 1). Plus
+   `IOGLBundleName="com.apple.kpi.iokit"` at `VMVirtIOGPU.cpp:6196`
+   (a kernel bundle ID used as a GLD name) and a site commenting the key
+   REMOVED at `VMVirtIOFramebuffer.cpp:1802`.
+4. **`AccelCaps` absent**; worked example sets `AccelCaps=3` when QE is on
+   (`VMsvga2Accel.cpp:603-604`).
+5. **Catalina-crash suppression shares the path with the 10.6 guest**:
+   `VMVirtIOFramebuffer.cpp:1796-1803` forces `IOAcceleratorFamily=false`
+   etc. in `isConsoleDevice()`. Whatever runs for 10.6 also carries these.
+
+### Prediction (pre-registered)
+
+Minimal likely fix shape, from the worked example only: on the FB at
+runtime, set `IOAccelTypes` = path string of the (single) accelerator nub,
+`IOAccelIndex=0` (32-bit), `IOAccelRevision=2`
+(=kCurrentGraphicsInterfaceRevision); publish `IOCFPlugInTypes` +
+`AccelCaps=3` if QE is wanted; one coherent `IOGLBundleName` (or none).
+**Arbiter before any code change**: `ioreg` on the 10.6 guest vs a
+known-good accelerated 10.6 machine (real GMA950 or darwin.iso VMwareGfx) —
+confirm which object carries the trio and its types. Do not treat numeric
+`IOAccelTypes=7` as harmless: if CGS parses it as a path, the failure is
+silent.
+
+### Addendum (same day, from reading VMsvga2's GA plugin)
+
+The failure chain for finding #1 is now concrete in userspace: VMsvga2's
+GA plugin (the IOGraphicsAccelerator CFPlugIn that apps instantiate) opens
+with `IOAccelFindAccelerator(fb_service, &accelerator, &fbIndex)` followed
+by `IOServiceOpen(accelerator, self, 2)` (`VMsvga2GA.cpp:216-219`). That
+call is the documented consumer of the FB-side `IOAccelTypes`/`IOAccelIndex`
+keys — no trio in path-string form, no plugin start, no 2D context, no
+`AllocateSurface`. Two further contract details for any GA-equivalent here:
+`IOGraphicsAcceleratorInterface.__gaInterfaceReserved[0]` and `[1]` are
+load-bearing (WaitSurface and SetSurface live in the reserved slots,
+`VMsvga2GA.cpp:1109-1110`), and `surface->accessFlags = 2` must be set
+after LockSurface or QuickTime-class clients fail (`VMsvga2GA.cpp:602-606`).
 
 ---
 
@@ -264,6 +441,121 @@ d98-era failure mechanism is a lost binary's story (see verdict
 phrasing above), and the user's standing directive is that this
 file is the OLD design and **needs redesign** for virtio, not
 revival.
+
+## 2026-08-14 (later) — coupling Phase A: SILENT outcome; capability gating is the suspect
+
+**Phase A run (same boot as the MIG probe — gate still armed in
+the running kernel; no reboot needed for this phase).**
+
+Requester: `probe/probe_cgs_requester.m` — AppKit window (real
+window number 17), CGS trio via dlsym, NO IOKit calls of its own,
+so any surface-client kernel line during its run is
+WindowServer-originated by construction.
+
+CGS signatures recovered from the guest's CoreGraphics binary by
+disassembly (no public header exists; recorded here):
+- `CGSAddSurface(cid, wid, uint32_t *out_sid)` — 3 args; out
+  NULL-checked, initialized before the IPC
+- `CGSBindSurface(cid, wid, sid, a4, a5, a6)` — 6 args; sid!=0
+  checked. The 3 trailing args are the GL-side association — the
+  GLD-coupling locus, separable from adoption
+- `CGSFlushSurface(cid, wid, sid)` — tail-calls
+  `CGSFlushSurfaceWithOptions(..., option=1)`
+- `CGSOrderSurface(cid, wid, sid, mode, rel)` — ≥5 args
+- Also present: GetSurfaceBinding/Count/List,
+  SetSurfaceShape/Bounds/Opacity/ColorSpace/Property, MoveSurface,
+  RemoveSurface, FlushSurfaceWithOptions, RemoveAllSurfaces,
+  CGSMainConnectionID
+
+**Result — pre-registered outcome SILENT:**
+```
+CGSMainConnectionID=39443
+CGSAddSurface -> 0 (OK) surfaceID=0xf3409c2
+CGSOrderSurface -> 0 (OK)
+CGSFlushSurface -> 0 (OK)
+(25s hold)
+CGSRemoveSurface -> 0 (OK)
+kernel.log: ZERO VMAccelSurfaceClient/GATED/newUserClient lines
+            (only routine framebuffer getVRAMRange/getPixelInfo
+            from window creation)
+```
+CGS created and serviced the surface entirely without consulting
+the accelerator. Plain AddSurface takes the software/IOSurface
+path on 10.6 — adoption does not happen without something else
+selecting the accel path.
+
+**Leading suspect — capability gating (verified in ioreg this
+session):** the kext publishes `IOAccelerator3D=No`,
+`IOGraphicsAccelerated=No`, `IODisplayAccelerated=No` — the
+`fb669ac` design deriving all three from `m_3d_functional` (const
+false "until Mesa + CGL shim lands", flip anticipated as "one
+line"). Mesa + the substitute CGL shim HAVE landed. With all
+three No, WindowServer has no reason to consider any accelerated
+path — consistent with SILENT.
+
+**Pre-registered next experiment (needs a kext change + reboot):**
+boot-arg-gated capability flip (extend the existing gate or a
+sibling arg) so ordinary boots stay byte-identical; on the probe
+boot publish IOAccelerator3D=Yes and re-run the requester.
+- Surface-client lines during AddSurface → adoption is
+  capability-gated; mechanism identified; next question becomes
+  whether the ops work.
+- Still silent with capability on → the gate is deeper (QE/GL
+  path needs a renderer first) — GLD hypothesis promoted with
+  strong evidence.
+- Hazard: advertising 3D may push WindowServer toward GL
+  compositing that needs a renderer we cannot yet provide
+  (GLEngine discovery is the closed dead end). Boot-arg gate +
+  config.plist recovery discipline applies.
+
+**Phase A2 (same boot, requester extended): silence survives a
+BOUND context — and the requester is exhausted at the wall.**
+Added to the requester: CGL renderer census, pixel format query,
+real CGL context, and `CGLSetSurface(ctx, cid, wid, sid)` — the
+binding step that makes a surface GPU-relevant. Signature
+confirmed by disassembly of the real OpenGL.framework: 4 args
+(rdi=ctx mutex-deref'd; esi/edx/ecx reload for a 4-arg indirect
+call). The substitute's forward table declares CGLSetSurface with
+6 args — latent arity bug there, unexercised by Gecko so far;
+fix when touched.
+```
+CGLQueryRendererInfo -> 0 nrend=1
+  renderer[0]: accelerated=0 rendererID=0x1020400
+CGLChoosePixelFormat(accelerated) -> 0 npix=0   ← wall
+CGLChoosePixelFormat(plain) -> 0 npix=1
+CGLCreateContext -> 0 ctx=0x100889e00
+CGSAddSurface -> 0 surfaceID=0xf499b03
+CGLSetSurface(ctx,cid,wid,sid) -> 0 (OK)        ← binding OK
+CGSFlushSurface/Order/Remove -> 0
+kernel.log: ZERO surface-client lines
+```
+Reading: the only renderer CGL can see is SOFTWARE; no
+accelerated pixel format exists — exactly what IOAccelerator3D=No
+predicts. A software context bound to the surface needs no
+accelerator, so silence at A2 is still "nobody needed a GPU."
+The requester cannot push further: npix=0 for accelerated formats
+is the wall. **Capability flip is now necessary AND interpretable**
+(user pre-authorized this ordering): flip on + accelerated
+renderer appears + SetSurface produces lines ⇒ capability-gated
+end-to-end. Flip on + still no accelerated renderer ⇒ flag
+necessary but insufficient ⇒ GLD/GLEngine-plugin hypothesis
+confirmed at the CGL layer (plugin discovery is the closed dead
+end). Boot hazard acknowledged: IOGLBundleName currently names
+VMVirtIOGLEngine, a bundle that does not exist — with 3D=Yes,
+WindowServer may attempt a GLD load and find nothing. Boot-arg
+gated; config.plist recovery posture applies.
+
+**Instrument lessons:** nm prints Mach-O symbols WITH leading
+underscore; dlsym takes the C name without — two requester runs
+wasted on `_CGSAddSurface`. kernel.log rotates at size>1000K
+(newsyslog) — check rotation before reading a small log as a
+fresh boot.
+
+**flush_frontbuffer status (checked 2026-08-14):** still an empty
+stub (`virgl_iokit_winsys.c:482`, wired into the vtable at :613).
+Fact stands, relevance changed: the substitute's readback+blit
+presentation path never calls it, which is why verified rendering
+works with it empty. Architecture doc should carry that qualifier.
 
 ### Next (pre-registered)
 
