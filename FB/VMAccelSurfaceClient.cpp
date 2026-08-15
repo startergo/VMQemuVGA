@@ -167,6 +167,7 @@ bool CLASS::initWithTask(task_t owningTask, void* securityToken,
     
     m_accelerator = nullptr;
     m_owning_task = owningTask;
+    m_creator_logged = false;
     m_surface = nullptr;
     m_lock = IOLockAlloc();
     
@@ -213,6 +214,22 @@ bool CLASS::start(IOService* provider)
     // Initialize surface
     bzero(m_surface, sizeof(VMAccelSurface));
     m_surface->surface_id = 0;
+
+    /* Creator attribution, LATE site #1 (2026-08-15, user timing
+     * caution): IOUserClientCreator is set by the IOKit machinery
+     * AROUND client creation — reading it in initWithTask may run
+     * before the property is populated, and an empty value there
+     * would read as "no creator" rather than "read too soon".
+     * start() runs with the client fully constructed. Logged from
+     * BOTH this site and the first externalMethod dispatch on the
+     * same boot: a difference between the two IS the timing datum. */
+    {
+        OSObject *v = getProperty("IOUserClientCreator");
+        OSString *s = OSDynamicCast(OSString, v);
+        IOLog("VMAccelSurfaceClient: creator@start = \"%s\"\n",
+              (s && s->getLength()) ? s->getCStringNoCopy()
+                                     : "(empty/unset at start())");
+    }
     m_surface->owning_task = m_owning_task;
     m_surface->is_locked = false;
     
@@ -316,21 +333,35 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 
 IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 index)
 {
-    IOLog("VMAccelSurfaceClient: getTargetAndMethodForIndex index=%u (max=%u)\n", 
+    IOLog("VMAccelSurfaceClient: getTargetAndMethodForIndex index=%u (max=%u)\n",
           index, kIOAccelNumSurfaceMethods);
-    
+
     if (index >= kIOAccelNumSurfaceMethods) {
         IOLog("VMAccelSurfaceClient: Invalid method index %u\n", index);
         return NULL;
     }
-    
+
     if (targetP) {
         *targetP = this;
     }
-    
+
+    /* Creator attribution, LATE site #2: first externalMethod dispatch —
+     * the client is fully constructed and has served a call by now. If
+     * this reads populated while start()'s read was empty, the timing
+     * datum is "the property lands between start and first dispatch" —
+     * NOT "no creator". Once per client. */
+    if (!m_creator_logged) {
+        m_creator_logged = true;
+        OSObject *v = getProperty("IOUserClientCreator");
+        OSString *s = OSDynamicCast(OSString, v);
+        IOLog("VMAccelSurfaceClient: creator@dispatch = \"%s\"\n",
+              (s && s->getLength()) ? s->getCStringNoCopy()
+                                    : "(empty at dispatch too)");
+    }
+
     IOLog("VMAccelSurfaceClient: Returning method %u (count0=%llu, count1=%llu)\n",
           index, (unsigned long long)sMethods[index].count0, (unsigned long long)sMethods[index].count1);
-    
+
     // Return const_cast since IOKit expects non-const pointer
     return (IOExternalMethod*)&sMethods[index];
 }
@@ -400,14 +431,34 @@ IOReturn CLASS::read(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 
 IOReturn CLASS::setShapeBacking(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetShapeBacking -> Unsupported\n");
+    /* Raw args logged: the next-rung decision needs the call's actual
+     * values, not just its identity (pre-registered: stays Unsupported —
+     * backing claims memory). */
+    IOLog("VMAccelSurfaceClient: SetShapeBacking(a1=0x%llx a2=0x%llx "
+          "a3=0x%llx) -> Unsupported\n",
+          (unsigned long long)(uintptr_t)p1,
+          (unsigned long long)(uintptr_t)p2,
+          (unsigned long long)(uintptr_t)p3);
     return kIOReturnUnsupported;
 }
 
 IOReturn CLASS::setIDMode(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetIDMode -> Unsupported\n");
-    return kIOReturnUnsupported;
+    /* First REAL selector (2026-08-15). Deliverability line: SetIDMode's
+     * documented argument is the kIOAccelSurfaceMode* constant (1555/8888/
+     * YUV…, IOAccelSurfaceConnect.h) — storing it is an honest claim.
+     * Pre-registered decision for the NEXT rung (made BEFORE this boot's
+     * log comes back): shape-family selectors stay Unsupported regardless
+     * of what fires — their argument semantics are unread, and backing
+     * selectors claim memory. This boot's purpose: log the next call's
+     * RAW args so the following decision is evidence-based. */
+    uint32_t mode = (uint32_t)(uintptr_t)p1;
+    uint32_t arg2 = (uint32_t)(uintptr_t)p2;
+    if (m_surface)
+        m_surface->pixel_format = mode;
+    IOLog("VMAccelSurfaceClient: SetIDMode(mode=0x%x arg2=0x%x) -> "
+          "STORED (first real selector)\n", mode, arg2);
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::setScale(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
@@ -418,7 +469,12 @@ IOReturn CLASS::setScale(void *p1, void *p2, void *p3, void *p4, void *p5, void 
 
 IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetShape -> Unsupported\n");
+    /* Raw args logged (see SetShapeBacking note). */
+    IOLog("VMAccelSurfaceClient: SetShape(a1=0x%llx a2=0x%llx "
+          "a3=0x%llx) -> Unsupported\n",
+          (unsigned long long)(uintptr_t)p1,
+          (unsigned long long)(uintptr_t)p2,
+          (unsigned long long)(uintptr_t)p3);
     return kIOReturnUnsupported;
 }
 
@@ -466,7 +522,12 @@ IOReturn CLASS::control(void *p1, void *p2, void *p3, void *p4, void *p5, void *
 
 IOReturn CLASS::setShapeBackingAndLength(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: SetShapeBackingAndLength -> Unsupported\n");
+    /* Raw args logged (see SetShapeBacking note). */
+    IOLog("VMAccelSurfaceClient: SetShapeBackingAndLength(a1=0x%llx "
+          "a2=0x%llx a3=0x%llx) -> Unsupported\n",
+          (unsigned long long)(uintptr_t)p1,
+          (unsigned long long)(uintptr_t)p2,
+          (unsigned long long)(uintptr_t)p3);
     return kIOReturnUnsupported;
 }
 

@@ -38,6 +38,7 @@ private:
     task_t m_owning_task;
     VMAccelSurface* m_surface;
     IOLock* m_lock;
+    bool m_creator_logged;  /* first-dispatch creator read, once */
     
     // Helper methods
     IOReturn lockSurface(bool for_write);

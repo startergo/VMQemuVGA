@@ -48,6 +48,33 @@ consumer sequence calls a **set_shape-family selector** next
 calls something else entirely, that is a finding about the
 sequence, visible only because this expectation was written first.
 
+## 2026-08-15 (SetIDMode boot pre-registrations, before build a0788488)
+
+Changes in `a0788488fc31b5c5da4f0ac747e1c3c0` (source committed
+before boot): SetIDMode returns SUCCESS and stores its mode
+argument (first real selector — documented kIOAccelSurfaceMode*
+constant, honest claim); shape-family handlers log RAW ARGS while
+staying Unsupported; IOUserClientCreator logged at TWO sites
+(start() and first externalMethod dispatch) per the timing
+caution — early-empty at one site and populated at the other is
+the TIMING DATUM, not "no creator".
+
+**Pre-registered predictions:**
+1. readfb gets PAST IOAccelCreateSurface (SetIDMode succeeds) and
+   fails at its NEXT call — prediction: a set_shape-family
+   selector, whose raw args now land in the kernel log.
+2. The boot-time surface-client caller (n=2 so far) walks past
+   SetIDMode too, on the same boot.
+3. creator@dispatch names a process for at least the readfb
+   client; creator@start may read empty (timing datum if so).
+   **Decision already made for the rung after (fixed before this
+   boot's log returns): shape-family stays Unsupported regardless
+   of what fires — argument semantics unread, backing selectors
+   claim memory. The raw args this boot logs are what the NEXT
+   decision gets based on.**
+4. Outcome #3 watch: desktop/software path must stay alive
+   through callers receiving SetIDMode success.
+
 ## 2026-08-15 (latest) — re-land boot: rung 1 REPRODUCED from committed source (provisional lifted); caller n=2; hygiene list from the boot log
 
 **Predictions vs outcomes (build 84e4b177, commit f551fba):**
