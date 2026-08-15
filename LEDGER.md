@@ -288,6 +288,25 @@ And because it is Apple's own consumer, a failure in it is evidence
 about the driver, not about the probe — which no hand-written prober can
 claim.
 
+**Refinement (user, 2026-08-14, session close): run it at every rung, not
+once.** The baseline run is the *before* half of a controlled comparison,
+not the discriminator itself — what discriminates is the **pair**.
+Baseline: fail at `IOAccelFindAccelerator`. After the trio lands: if
+readfb passes while WindowServer stays silent, that separates "IOAccel
+discovery now works" from "WindowServer declines to use it" — two very
+different next steps. Without the baseline, a post-fix pass has nothing
+to compare against and the same silence is unattributable. So: **run at
+baseline, after the trio, after the plugin** — each run is cheap, needs
+no gate, and converts one inference into an observation. In one respect
+a better instrument than the boot-arg probe: it never touches the
+properties WindowServer reads, so it cannot perturb the thing it
+measures.
+
+**The free second control: the desktop still composites.** A visibly
+live desktop during a readfb failure establishes CGS compositing works
+by some non-accelerated route — so the failure is about the accelerated
+path specifically, not a broken display.
+
 ---
 
 ### Verdict (pre-registered outcome #1)
