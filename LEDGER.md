@@ -87,6 +87,15 @@ Prediction: past `IOAccelFindAccelerator`, fail at
 The pair (baseline fail → post-trio pass-at-rung-1) is what
 discriminates "IOAccel discovery works" from "WindowServer declines."
 
+**The instrumented build is the instrument (user, 2026-08-14).** The
+pristine tool fails **silently** — exit 0, zero bytes, no diagnostic.
+The step-marker `fprintf`s are therefore load-bearing, not convenience:
+every subsequent rung needs the same instrumented build and include
+shim, and a future session reaching for stock `readfb.c` would get no
+diagnostic at all. Artifacts (host): `/tmp/readfb_steps.c`, shim at
+`/tmp/accelhdr/IOKit/graphics/IOAccelSurfaceControl.h`; rebuild recipe
+in the Build section above.
+
 ---
 
 ## 2026-08-14 — Personality diff vs VMsvga2 (cross-tree read, no boot)
