@@ -16,7 +16,76 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-14 (personality diff vs VMsvga2 run — FB-side accel trio incomplete/mistyped, IOCFPlugInTypes absent; entry below)
+Last updated: 2026-08-14 (readfb baseline RUN — observed failure at IOAccelFindAccelerator, kIOReturnNotFound, on the unmodified kext; entry below)
+
+---
+
+## 2026-08-14 — readfb baseline RUN: fails at IOAccelFindAccelerator — as pre-registered
+
+**The staged arbiter's step 0, executed.** Outcome exactly as
+pre-registered: **inference converted to observation on the running,
+unmodified system.**
+
+### Build (host, 10.6 cross-compile)
+
+- Tool: Apple's `IOGraphics/tools/readfb.c`, **byte-unmodified**, plus a
+  copy with one `fprintf` per failure checkpoint (call sequence
+  identical; observability only). Binaries: `/tmp/readfb_pristine`,
+  `/tmp/readfb_steps` (host and guest `/tmp/`); instrumented source
+  `/tmp/readfb_steps.c`.
+- `xcrun clang -arch x86_64 -mmacosx-version-min=10.6 -isysroot
+  MacOSX10.6.sdk -I /tmp/accelhdr … -framework IOKit -framework
+  ApplicationServices -framework CoreFoundation`.
+- Build shim (recorded, reproducible): `IOAccelSurfaceControl.h` is in
+  no 10.6-era SDK header set — taken from the 10.2.8 SDK
+  (`leopard-webkit-build/sdk/MacOSX-SDKs/`) into
+  `/tmp/accelhdr/IOKit/graphics/`, extended with prototypes for
+  `IOAccelSetSurfaceFramebufferShapeWithBackingAndLength`,
+  `IOAccelWrite(Un)LockSurfaceWithOptions` — private API present in the
+  10.6 IOKit binary (verified exported in both 10.6 SDKs' IOKit, 18
+  IOAccel symbols) but declared in no header; signatures pinned by
+  Apple's own call sites in readfb.c.
+
+### Guest (sl@slqemu.local, 10.6.8 x86_64, kext 8.0.0d82 loaded, unmodified)
+
+Registry ground truth, FB node (`ioreg -r -c VMVirtIOFramebuffer`):
+
+```
+"IOGLBundleName" = "GLEngine"
+"IOGraphicsAccelerator" = No
+"IOAccelIndex" = 0
+"IOAcceleratorFamily" = No
+```
+
+**Absent from the FB node: `IOAccelTypes`, `IOAccelRevision`,
+`IOCFPlugInTypes`** — the personality-diff finding, now observed live,
+not inferred. (`IOAccelIndex=0` present, consistent with the
+`has_3d_support` block.)
+
+### Run (raw)
+
+```
+pristine: exit=0, 0 bytes (silent failure — Apple's tool reports nothing)
+steps:    STEP FAILED at IOAccelFindAccelerator err=0xe00002bc
+```
+
+`0xe00002bc` = `kIOReturnNotFound`. **Rung 1 confirmed: the FB trio is
+the gate**, by Apple's own consumer, on the current kext, no gate, no
+driver change, no perturbation of anything WindowServer reads.
+
+### Free control
+
+WindowServer alive (`ps ax` match) during the run — the desktop path is
+live by a non-accelerated route, so the failure is specific to the
+accelerated path, not a broken display.
+
+### Next rung (pre-registered)
+
+After the FB trio lands in path-string form: re-run both binaries.
+Prediction: past `IOAccelFindAccelerator`, fail at
+`IOCreatePlugInInterfaceForService` (no `IOCFPlugInTypes`, no plugin).
+The pair (baseline fail → post-trio pass-at-rung-1) is what
+discriminates "IOAccel discovery works" from "WindowServer declines."
 
 ---
 
