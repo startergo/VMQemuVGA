@@ -178,7 +178,16 @@ bool CLASS::initWithTask(task_t owningTask, void* securityToken,
     // Publish the number of methods we support
     setProperty("IOUserClientMethodCount", kIOAccelNumSurfaceMethods, 32);
     IOLog("VMAccelSurfaceClient: Published %u methods\n", kIOAccelNumSurfaceMethods);
-    
+
+    /* Caller-attribution note (2026-08-15, cost three boots): kxld
+     * refused get_bsdtask_info/proc_pid/proc_name, then pid_for_task,
+     * then proc_selfpid/proc_selfname — ALL unresolved 0xdc008016.
+     * ROOT CAUSE (read from the artifact): OSBundleLibraries declares
+     * iokit/libkern/mach KPIs and NOT com.apple.kpi.bsd — every BSD
+     * symbol is unresolvable by declaration regardless of the kernel's
+     * symbol table. Fix: add the bsd KPI dependency, then the
+     * proc_self* attribution probe, on its own boot. Boot is the only
+     * linkage arbiter (kextutil -n -t falsified for this class). */
     IOLog("VMAccelSurfaceClient: Initialized for task %p\n", owningTask);
     return true;
 }

@@ -20,6 +20,209 @@ Last updated: 2026-08-14 (readfb baseline RUN — observed failure at IOAccelFin
 
 ---
 
+## 2026-08-15 (step 1 pre-registrations, before the attribution boot)
+
+Build `2a310eab389410efa90a92d3ec9038a9` adds per-creation client
+attribution: pid+name derived from the OWNING task
+(`get_bsdtask_info(m_owning_task)` → `proc_pid` → `proc_name`; the
+task-argument distinction from `withAddressRange`), logged on EVERY
+client creation. All three symbols verified exported by the guest's
+actual `/mach_kernel` (`nm -g`, 2026-08-15); `get_bsdtask_info`
+declared in-source (absent from available headers). Pure
+observation — every selector still returns Unsupported.
+
+**Prediction 1 (the 15:59:43 caller's identity):** the boot-time
+external caller is either (a) WindowServer — in which case making
+any selector succeed becomes a live experiment on the compositor
+and outcome #3 ("working software path breaks") is elevated from
+background watch to active concern; or (b) another system consumer
+(loginwindow / SystemUIServer / Dock class) — step 2 stays a
+tool/agent-context experiment and the compositor question remains
+open. Discriminated by the new log line on the next boot; nothing
+else in the build changed.
+
+**Prediction 2 (step 3's expected next selector, written now per
+VMsvga2's map):** once `SetIDMode` returns success, Apple's
+consumer sequence calls a **set_shape-family selector** next
+(`SetShape`/`SetShapeBacking`/`SetShapeBackingAndLength`). If it
+calls something else entirely, that is a finding about the
+sequence, visible only because this expectation was written first.
+
+## 2026-08-15 (later) — trio re-landed from session record; scoping REVISED; prior rung result provisional
+
+**Working-tree loss discovered by git:** the 2a trio and the
+capability flip were NEVER COMMITTED (`git log --all -S` finds
+neither string; last commit on VMVirtIOFramebuffer.cpp is
+fb669ac). A tree operation silently discarded them; the "restore"
+then reproduced the MIG-era build (a147a911) and readfb regressed
+to rung-1 failure — tree state, not system state. **Rule adopted:
+commit before booting.** Evidence from uncommitted source is the
+November-d98 shape — a binary nobody can rebuild — so **the 2a
+rung result above is marked PROVISIONAL until reproduced from
+committed source** (this re-land provides that source).
+
+**Scoping revised by the registry observation (zero code, zero
+boots):** on the trio-LESS restored build, ioreg showed a LIVE
+`IOAccelerationUserClient` with `"IOUserClientCreator" = "pid 97,
+WindowServer"` — **WindowServer's accelerator connection is
+trio-INDEPENDENT.** The causal story splits:
+- **IOAccel-API consumers** (readfb's class:
+  IOAccelFindAccelerator → IOAccelCreateSurface → surface
+  client type 0): trio-gated.
+- **WindowServer:** reaches the accelerator directly (owns the
+  framebuffer; observed holding the extCreate/extDestroy client
+  class — "connects to the accelerator" observed, "drives
+  surfaces through it" NOT).
+- Correlation in hand: the boot-time surface-client caller
+  appeared on the trio boot (15:59:43) and on NEITHER trio-less
+  boot since (n=1 vs n=2) — consistent with that caller being an
+  IOAccel-API consumer, probably NOT WindowServer.
+
+**Trio re-landed as the ARBITER ENABLER** (build
+`84e4b177705946ae4224cdeaca268ab4`, source committed before
+boot): the readfb ladder is the only rung-walking instrument;
+without the trio it fails at rung 1 permanently and the
+measurement method is lost. Constants re-verified against
+artifacts: kCurrentGraphicsInterfaceRevision=2 (10.6 SDK
+header), getPath(char*, int*, gIOServicePlane) (kernel headers).
+
+**Pre-registered predictions for the re-land boot:**
+1. Trio log line fires with a path string; ioreg shows
+   IOAccelTypes as that string on the FB; readfb rung 1 passes
+   again (reproducing the provisional result from committed
+   source — unprovisionalizes it). If rung 1 FAILS with the trio
+   present, the string's shape is the first suspect.
+2. The boot-time surface-client caller REAPPEARS (n=1 → n=2):
+   evidence a system consumer uses the IOAccel-API path — making
+   the trio more than readfb-scoped. If absent, the correlation
+   weakens.
+
+**Also recorded (2026-08-15, cost three boots):** kxld refused
+get_bsdtask_info/proc_pid/proc_name, pid_for_task, AND
+proc_selfpid/proc_selfname — all unresolved 0xdc008016. Root
+cause read from the artifact: OSBundleLibraries declares
+iokit/libkern/mach KPIs, NOT com.apple.kpi.bsd — every BSD
+symbol unresolvable by declaration. Instruments falsified en
+route: nm on /mach_kernel (symbol table ≠ kext-linkable set);
+kextutil -n -t (passed builds kxld refused — boot is the only
+linkage arbiter); nm on System.kext plugins (symbol-set kexts,
+no binary). Rules updated by user with all four symbols named.
+Caller-attribution answer arrived by the zero-code route:
+IOUserClientCreator (64 live instances; ours = pid 97
+WindowServer above). For transient surface-client callers: read
+the property from inside initWithTask via plain
+getProperty("IOUserClientCreator") + IOLog — pure IOKit, no KPI
+risk — or ioreg while the client lives.
+
+## 2026-08-15 — 2a RUNG: trio clears IOAccelFindAccelerator; first external call lands on selector 7
+
+**Step 2a executed** (FB trio in path-string form, unconditional
+publish, boot-log-asserted string; `IOCFPlugInTypes` deliberately
+NOT published — that is 2b). Build on the sanctioned baseline
+(`./build-enhanced_private.sh --unsigned`, md5
+`5472512ae5d18d7cf830cc8c56c4d5fa`; the 10.6-ness comes from the
+base `VMQemuVGA.xcconfig`, always applied — see rules). Probe
+boot per protocol (fresh, cached, gate arg in plist).
+
+**Trio verified in both artifacts:**
+```
+boot log: IOAccel trio published — IOAccelTypes="IOService:/AppleACPIPlatformExpert/PCI0/AppleACPIPCI/S10@2/VMVirtIOFramebuffer/VMQemuVGAAccelerator" Index=0 Revision=2
+ioreg (FB node): IOAccelTypes = <that path string> / IOAccelIndex=0 / IOAccelRevision=2
+```
+Path string (not number), on the FB (not the accelerator) — both
+halves of the old mistake corrected; the boot-log assertion
+proves the write fired.
+
+**After-trio rung result:**
+```
+readfb_pristine: rc=0, silent (unchanged)
+readfb_steps:    STEP FAILED at IOAccelCreateSurface err=0xe00002c7
+```
+`IOAccelFindAccelerator` — the baseline wall — **PASSED**. The
+trio is confirmed on the causal path by Apple's own consumer.
+
+**Prediction outcome: failed EARLIER than predicted, and the
+reason is ours.** Predicted failure at
+`IOCreatePlugInInterfaceForService`; actual at
+`IOAccelCreateSurface` — Apple's sequence creates the surface
+(IOAccel C API) BEFORE instantiating the plugin, so the plugin
+rung is downstream and unreached, not refuted. Kernel-log
+attribution of the failure:
+```
+16:03:57 GATED ON → VMAccelSurfaceClient created   (readfb's open)
+16:03:57 getTargetAndMethodForIndex index=7 → method 7 (count0=2)
+16:03:57 SetIDMode -> Unsupported                   ← our hardened stub
+16:03:57 Client closing / Stopping
+```
+**THE FIRST CALL WE DID NOT MAKE.** Apple's consumer opened our
+surface client and invoked selector 7 (`SetIDMode`, 2-in — the
+WindowServer-captured count). The consumer→accelerator direction
+is now exercised end-to-end: trio → type-0 open (gate) → MIG
+boundary (old-style dispatch serving a real caller) → handler.
+`0xe00002c7` is our own designed return — the wall is our stub,
+not the system.
+
+**Milestone + next.** The pre-registered "intermediate decisive
+evidence" fired, via readfb (better than a hand-written prober —
+a failure in Apple's tool is evidence about the driver). Next
+unit: make surface ops real, starting with `SetIDMode`
+(surface pixel-format selection; constants from the enum dump:
+8888=0x4, BGRA32=0xA …), then the ops Apple's sequence calls in
+order (`SetShape*`, locks). Backing design per the pre-registered
+insight: ATTACH_BACKING machinery — surface backed by a guest
+allocation attached as a virtio resource; WriteLock returns its
+pointer; Flush = TRANSFER_TO_HOST + scanout. 2b (`IOCFPlugInTypes`)
+stays sequenced after the surface ops, as pre-registered.
+
+**Precision notes (user, 2026-08-15) — do not over-read the
+milestone:**
+- **readfb is not WindowServer.** The calls are Apple's framework
+  code, not mine — exactly the pre-registered evidence — but a
+  tool I launched, not the compositor deciding on its own.
+- **count0=2 on selector 7 is a second finding inside the
+  first:** the count came from Catalina-era WindowServer captures
+  and just validated against 10.6's MIG on a real caller. One
+  selector is not the table, but it is the first evidence any of
+  the table is right for this OS.
+- **Caution basis corrected:** the November crash rationale
+  describes a binary built from a path that isn't this
+  repository's — citing it as danger is inference from lost
+  evidence (guarded in the notes). The live caution is this
+  codebase's own comment (`VMVirtIOFramebuffer.cpp:377-379`):
+  advertise a capability you can't deliver and consumers stop
+  falling back to the working path. Implementing selectors past
+  SetIDMode is therefore UNTESTED territory with a plausible
+  failure shape — not known-dangerous. Keep the boot-arg gate;
+  watch the third pre-registered outcome ("working software path
+  breaks") rather than expect it.
+- **GLD closure, scoped:** this kext has no GLD, and Apple's
+  accelerator framework still found the accelerator, opened the
+  surface client, dispatched a selector — the surface path does
+  not require a GLD plugin, closed from the artifact (VMsvga2
+  showed it only at source level). Scope: the tool-initiated
+  consumer path; WindowServer's own compositor decision remains
+  open (see next datum).
+
+**Second external caller (same boot, found while checking the
+above):**
+```
+15:59:43 GATED ON → client created (task 0xffffff800b67bbc0)
+15:59:43 index=7 → SetIDMode -> Unsupported → close
+15:59:48 WINDOWSERVER REQUESTING FRAMEBUFFER MEMORY (startup)
+```
+One minute after boot — before any tool ran (readfb 16:03:57) —
+a SYSTEM process found the accelerator via the trio, opened the
+client, attempted surface creation: identical call shape to
+readfb's, from a different task. Identity unattributed (task
+pointer only); `proc_name` at client init is the cheap
+instrumentation to name it next build. Desktop survived the
+Unsupported (software path continued) — outcome #3 did not fire.
+
+**Free control:** desktop alive through every run; the software
+compositing path untouched.
+
+---
+
 ## 2026-08-14 — readfb baseline RUN: fails at IOAccelFindAccelerator — as pre-registered
 
 **The staged arbiter's step 0, executed.** Outcome exactly as

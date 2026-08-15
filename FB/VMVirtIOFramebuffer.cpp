@@ -7,6 +7,7 @@
 #include <IOKit/ndrvsupport/IOMacOSVideo.h>
 #include <IOKit/graphics/IOGraphicsTypes.h>
 #include <IOKit/graphics/IOAccelClientConnect.h>
+#include <IOKit/graphics/IOGraphicsInterfaceTypes.h>
 
 // Forward declaration for IODisplayWrangler
 class IODisplayWrangler : public IOService
@@ -500,6 +501,64 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
                 if (m_accelerator->start(this)) {
                     m_accelerator->registerService(kIOServiceAsynchronous);
                     IOLog("VMVirtIOFramebuffer::start() - Accelerator registered successfully\n");
+
+                    // FB-side IOAccel trio for IOAccelFindAccelerator() —
+                    // the ARBITER ENABLER for the readfb rung ladder
+                    // (Apple's IOGraphics/tools/readfb.c consumer path).
+                    // Re-landed 2026-08-15 from the session tool-record
+                    // after the original working-tree edit was silently
+                    // discarded (never committed — commit-before-boot is
+                    // now the rule). Scope, established by observation:
+                    // this gates IOAccel-API consumers ONLY. WindowServer
+                    // reaches the accelerator trio-INDEPENDENTLY (observed
+                    // holding IOAccelerationUserClient, "pid 97,
+                    // WindowServer", on the trio-less build). Do not treat
+                    // this as the WindowServer gate.
+                    //
+                    // Consumed keys per the 10.6 SDK
+                    // IOGraphicsInterfaceTypes.h: IOAccelTypes (IOService-
+                    // plane path STRING of the accelerator, set on the FB —
+                    // NOT a number, NOT on the accelerator), IOAccelIndex,
+                    // IOAccelRevision (=kCurrentGraphicsInterfaceRevision
+                    // =2, era-verified in the 10.6 SDK header). Published
+                    // UNCONDITIONALLY: an honest claim — the accelerator
+                    // exists and is registered directly above — and a
+                    // conditional publish makes "never executed"
+                    // indistinguishable from "executed and didn't help".
+                    // The path string is asserted in the log so the boot
+                    // proves the write fired; if rung 1 fails with the
+                    // trio present, the STRING is the first suspect
+                    // (check its shape in ioreg against what
+                    // IOAccelFindAccelerator expects). IOCFPlugInTypes is
+                    // deliberately NOT published (step 2b — advertises a
+                    // CFPlugIn that does not exist).
+                    {
+                        char accelPath[192];
+                        accelPath[0] = '\0';
+                        /* IORegistryEntry::getPath(char*, int *length,
+                         * plane) — length is in/out; signature per kernel
+                         * headers. */
+                        int pathLen = (int)sizeof(accelPath);
+                        bool gotPath = m_accelerator->getPath(
+                            accelPath, &pathLen, gIOServicePlane);
+                        if (gotPath && accelPath[0]) {
+                            setProperty("IOAccelTypes", accelPath);
+                            setProperty("IOAccelIndex",
+                                        (uint64_t)0, 32);
+                            setProperty("IOAccelRevision",
+                                        (uint64_t)kCurrentGraphicsInterfaceRevision,
+                                        32);
+                            IOLog("VMVirtIOFramebuffer: IOAccel trio "
+                                  "published — IOAccelTypes=\"%s\" "
+                                  "Index=0 Revision=%u\n",
+                                  accelPath,
+                                  (unsigned)kCurrentGraphicsInterfaceRevision);
+                        } else {
+                            IOLog("VMVirtIOFramebuffer: IOAccel trio "
+                                  "FAILED — no IOService-plane path for "
+                                  "accelerator %p\n", (void *)m_accelerator);
+                        }
+                    }
                 } else {
                     IOLog("VMVirtIOFramebuffer::start() - WARNING: Accelerator start() failed\n");
                     m_accelerator->detach(this);
