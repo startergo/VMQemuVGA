@@ -197,7 +197,71 @@ after LockSurface or QuickTime-class clients fail (`VMsvga2GA.cpp:602-606`).
 
 ---
 
-## 2026-08-14 — MIG probe PASS; surface-client transport verified open
+## 2026-08-14 — GA plugin role read: absent here; readfb.c is Apple's own consumer reference
+
+**Question.** Diff this project's GA plugin table against VMsvga2GA's.
+
+**Verdict: there is nothing to diff — the role is unimplemented.** Grep
+for `IOGraphicsAcceleratorInterface` / `kIOGraphicsAcceleratorTypeID`
+across the tree hits only `IOGraphics/tools/readfb.c` (Apple tool) and
+the vendored header. This closes the loop on personality-diff finding 2:
+`IOCFPlugInTypes` is absent because **no plugin exists to advertise**.
+
+- `GLPlugin/VMVirtIOGLEngine` is NOT the GA plugin and never was: it
+  implements an invented `GLEnginePlugin` struct (8 hand-picked function
+  pointers) — not the 92-entry `gld*` contract, not
+  `IOGraphicsAcceleratorInterface`. Superseded 2026-08-09
+  (`GLPlugin/SUPERSEDED.md`): Mesa + CGL shim chosen over hand-written
+  GLEngine. Reference-only.
+- `IOGraphics/` is a vendored Apple IOGraphics 1.5.1 source tree, one
+  commit, unmodified ("for reference").
+
+**VMsvga2GA's table vs Apple's struct** (authoritative layout verified
+identical in 10.6 SDK, 26.5 SDK, and vendored IOGraphics 1.5.1): all
+IUnknown + IOCFPlugIn base slots filled; `Reset`, `CopyCapabilities`
+('smvl' only; 'cgls' compiled out), `Flush` (near no-op), `Synchronize`,
+`GetBeamPosition` (returns 0), `AllocateSurface` (CGSSurface path only),
+`FreeSurface`, `LockSurface` (+`accessFlags=2`), `UnlockSurface`,
+`SwapSurface`, `SetDestination`, `GetBlitter` (Fill/Copy/CopyRegion),
+`WaitComplete` filled; **`GetBlitProc` and `WaitForCompletion` — the two
+`IOGA_COMPAT` named slots — left NULL**; reserved array is **[24]** (the
+"22" comment in VMsvga2's source is a miscount), with `[0]=WaitSurface`,
+`[1]=SetSurface` load-bearing and `[2..23]` NULL.
+
+**`readfb.c` — Apple's own consumer, sitting in this repo's tree — is
+the canonical client sequence and a ready-made template for the probe:**
+
+1. `IOAccelFindAccelerator(framebuffer, &accelerator, &fbIndex)`
+2. `IOAccelCreateSurface(accelerator, surfaceID, Windowed|8888, &connect)`
+   — the IOAccel* C API on the **accelerator** (surface client, type 0)
+3. `IOAccelSetSurfaceFramebufferShapeWithBackingAndLength` — client
+   backing variant
+4. `IOCreatePlugInInterfaceForService(**framebuffer**, ACCF0000-…-904e,
+   6766E94A-…-904e, &interface, &quality)` — plugin instantiated **from
+   the framebuffer service** (why VMsvga2 copies `IOCFPlugInTypes` onto
+   the FB)
+5. `GetBlitter(CopyRegion|OpType0, SourceFramebuffer)` →
+   `AllocateSurface(kIOBlitHasCGSSurface, surfaceID)` → `SetDestination`
+   → invoke blitter → `Flush`
+6. `IOAccelWriteLockSurfaceWithOptions` / unlock → read pixels →
+   `FreeSurface` / `IOAccelDestroySurface` / `IODestroyPlugInInterface`
+
+**Architecture finding: the consumer uses BOTH channels side by side** —
+the `IOAccel*` C API on the accelerator (surface lifecycle) *and* the GA
+CFPlugIn on the framebuffer (2D ops). Apple's own tool requires both.
+Scope note: app-side attach demonstrably needs the plugin (readfb,
+QuickTime); whether WindowServer itself instantiates it for compositing
+is unverified — VMsvga2's Q3 evidence has WindowServer on the surface
+client, apps on the plugin.
+
+**Implication for the fix order:** the pre-registered experiment (FB trio
++ claims) exercises WindowServer-side discovery only. The app-side
+surface path additionally requires a GA plugin that does not exist in
+this project — VMsvga2GA (MIT-style headers) is the only worked example
+of the table, and `readfb.c` is the test client. Sequence any plugin work
+after the WindowServer probe; do not block the probe on it.
+
+---
 
 ### Verdict (pre-registered outcome #1)
 
