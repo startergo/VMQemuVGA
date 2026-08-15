@@ -48,6 +48,62 @@ consumer sequence calls a **set_shape-family selector** next
 calls something else entirely, that is a finding about the
 sequence, visible only because this expectation was written first.
 
+## 2026-08-15 (latest) — re-land boot: rung 1 REPRODUCED from committed source (provisional lifted); caller n=2; hygiene list from the boot log
+
+**Predictions vs outcomes (build 84e4b177, commit f551fba):**
+1. **Trio published, rung 1 PASSED — 2a result UNPROVISIONALIZED.**
+   Boot log (serial + kernel.log): `IOAccel trio published —
+   IOAccelTypes="IOService:/AppleACPIPlatformExpert/PCI0/AppleACPIPCI/
+   S10@2/VMVirtIOFramebuffer/VMQemuVGAAccelerator" Index=0
+   Revision=2`; ioreg carries the same string on the FB. readfb:
+   `STEP FAILED at IOAccelCreateSurface err=0xe00002c7` — i.e.
+   IOAccelFindAccelerator passed, failure is our own SetIDMode
+   stub (kernel: 19:49:01 GATED ON → SetIDMode → Unsupported).
+   Same rung, same attribution, now from reconstructable source.
+2. **Boot-time surface-client caller REAPPEARED (n=2):** 19:46:43
+   GATED ON + SetIDMode — on the trio boot, absent on both
+   trio-less boots. A system consumer uses the IOAccel-API path,
+   trio-gated. Identity still unattributed (client transient;
+   ioreg sample missed it). Sequence datum: WindowServer's
+   FRAMEBUFFER type-0 at 19:46:09, 34 s before the surface-client
+   open.
+
+**Hygiene list additions (user-flagged from boot log; traced to
+source — observations, not yet fixed):**
+1. `"3D managers initialized for QXL/Hyper-V DDA mode"`
+   (VMQemuVGAAccelerator.cpp:198, branch at :177): the comment
+   says "only for QXL/Hyper-V DDA mode" but the initialization
+   runs UNCONDITIONALLY in start() — dead-weight init on every
+   variant, not variant detection (no other branch keys off it;
+   the managers are the fb669ac-era vestigial machinery nothing
+   consumes).
+2. `"Metal framework not available (macOS < 10.11)"` (:206-227):
+   a kext citing a userspace framework's availability via a
+   preprocessor gate — meaningless in kernel context; Metal is on
+   the do-not-cite list; the VMMetalPlugin block is already
+   recorded as an unbacked claim on every target.
+3. `"RendererID=0x00024600"` (:262): constant with NO artifact
+   provenance — comment says "Generic renderer ID for virtual
+   GPUs," nothing more. Advertised to CGL. The only renderer-ID
+   datum verified on this system is 0x1020400 (software renderer,
+   from the A2 census). A renderer ID is a claim; this one is
+   unbacked.
+4. **Found while tracing — the claim machinery**
+   (VMQemuVGAAccelerator.cpp:262-284): beside RendererID, the
+   accelerator publishes `IOAccelTypes=7` NUMERIC (:265 — the
+   personality-diff finding-1 shape; conflicts with the FB's new
+   path-string publication; if CGS parses it as a path the
+   failure is silent), `IOGLAccelTypes=7`, `IOSurfaceAccelTypes=7`,
+   `IOVideoAccelTypes=7` (:266-268 — video decode/encode
+   acceleration claimed, nothing implements it), the
+   "Framebuffer/3D/Hardware" IOAcceleratorTypes array (:277-283),
+   and PerformanceStatistics/Accum=true (:273-274). d-era comments
+   throughout — historic-implementation category. This block is
+   the concrete home of "advertising a 3D role while providing no
+   path for either 2D or 3D" (user): the discovery layer is
+   shared, and NEITHER a GA CFPlugIn (2D) nor a GLD (3D) exists
+   behind any of these properties.
+
 ## 2026-08-15 (later) — trio re-landed from session record; scoping REVISED; prior rung result provisional
 
 **Working-tree loss discovered by git:** the 2a trio and the
