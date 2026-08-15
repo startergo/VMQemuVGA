@@ -3439,106 +3439,33 @@ this ledger is on that code path.
 
 ## Active task — 3D transport
 
-The original scope of this project includes 3D acceleration via virgl.
-`enable3DAcceleration` has capsets in hand (VIRGL id=1 v=1 size=308, VIRGL2
-id=2 v=2 size=1408) and `CTX_CREATE` has succeeded on the eager
-`initializeWebGLAcceleration` path (context 2 created, response `0x1100`).
-**Nothing downstream of context creation has ever executed on a path that
-matters.** Per the guardrails, the next step is proving the transport:
-
-1. Create a 3D context explicitly (control the call, don't rely on the
-   eager boot-time path).
-2. Submit a clear command to a 3D resource.
-3. `TRANSFER_FROM_HOST_3D` to read the cleared bytes back.
-4. Verify the bytes match the clear color.
-
-Everything above that (shaders, textures, GL routing) is a userspace
-software problem. The transport proof is the load-bearing gate.
+**Superseded 2026-08-10 through 2026-08-12 — transport proven; original
+text preserved in Superseded.** The four steps below were delivered:
+explicit 3D context + clear + read-back verified byte-exact (Increment C,
+2026-08-10: Application → OSMesa → Gallium → virgl → virgl_iokit_winsys →
+user client → virtio-gpu → virglrenderer → ANGLE → Metal → GPU), userspace
+memory backing verified (ATTACH_BACKING probe, 2026-08-10), GL routing
+verified end-to-end through the CGL shim (2026-08-12). **The current
+active task is the capability-gating/coupling probe** — see the top entry
+(2026-08-14 personality diff) with its pre-registered fix order and probe
+design.
 
 ---
 
 ## Open
 
-- **ATTACH_BACKING with userspace memory — OPEN, the one structural
-  unknown before the IOKit winsys.** The kext's `attachBacking()`
-  accepts any `IOMemoryDescriptor*` and walks `getPhysicalSegment()` —
-  works on kernel or userspace memory. But the only `withAddressRange`
-  precedent in the codebase (`VMQemuVGAAccelerator.cpp:1189`) is dead
-  code in the superseded 3D managers — never called from a live path.
-  The probe is genuinely needed.
-
-  **Must be a userspace-driven probe, not kernel-side.** A kernel-side
-  probe using `IOMalloc` tests kernel memory, which is a different case
-  and proves nothing about the one that matters. The probe must be
-  driven from userspace via IOUserClient, using the owning task's
-  address space.
-
-  **Four design constraints (pre-registered):**
-
-  1. **Task: use `initWithTask` capture, not `current_task()`.** If the
-     external method is routed through a command gate onto the workloop,
-     `current_task()` becomes the kernel task and `withAddressRange`
-     silently describes the wrong address space. Store the owning task
-     when the user client is created and pass that.
-
-  2. **Buffer: deliberately unaligned, expect multi-segment scatter
-     list.** Every `attachBacking` call so far has been page-aligned
-     `IOBufferMemoryDescriptor` with `nr_entries=1` — practically an
-     invariant. Mesa allocates with `align_malloc(size, 64)`, so the
-     real case starts mid-page and spans many discontiguous physical
-     segments. Use `malloc` (not `valloc`/`mmap`) in the test to hit
-     the real scatter-list path.
-
-  3. **Wiring: `prepare()` before `getPhysicalSegment()`, `complete()`
-     at resource teardown — not after the transfer.** Mesa writes into
-     the buffer between transfers; unwiring after each transfer would
-     break the next operation.
-
-  4. **Selectors: check existing before adding.** The user client
-     already has handlers taking `scalarInput[8]` for ctx_id from the
-     earlier fix; if something close is there, extending beats adding.
-
-  **Probe shape:** malloc a buffer in userspace → write known pattern →
-  `withAddressRange(addr, len, kIODirectionInOut, owningTask)` +
-  `prepare()` → `attachBacking` via new/existing selector →
-  TRANSFER_TO_HOST_3D → zero the buffer (negative control) →
-  TRANSFER_FROM_HOST_3D → expect the pattern back.
-
-  **What the probe proves (known limit):** a single small buffer in a
-  quiet guest succeeds whether or not the wiring is correct, because
-  nothing is putting pressure on those pages. The probe establishes
-  the mechanism — that `withAddressRange` can describe userspace
-  memory to the device on 10.6, that `prepare()`/`getPhysicalSegment()`
-  produce valid physical addresses, and that the host can read/write
-  through the scatter list. It does NOT prove that the wiring holds
-  for the resource's lifetime under memory pressure. Confirming the
-  latter needs many live resources or sustained memory pressure,
-  which is a property of the finished winsys, not something to chase
-  now.
-
-  **Pre-registered prediction:** if `withAddressRange` + `prepare()`
-  works on 10.6 for a malloc'd userspace buffer, the entire winsys is
-  bookkeeping on top of proven transport. If 10.6's IOKit can't wire
-  arbitrary userspace memory for virtio-gpu scatter-list use, the model
-  needs adjustment (kext-allocated backing via
-  `IOBufferMemoryDescriptor` + `clientMemoryForType`/`IOConnectMapMemory`
-  — more IOKit plumbing, but already-wired kernel memory, no per-resource
-  wiring pressure).
-
-  **Diagnostic logging (pre-registered):** log `nr_entries` and
-  per-segment `(addr, length)` from the scatter-list walk. An unaligned
-  `malloc` should produce several segments with a partial first page.
-  If `nr_entries == 1` on an unaligned buffer, either the allocator
-  handed something page-aligned and contiguous by luck, or the segment
-  walk is wrong — both make a pass meaningless and neither is visible
-  from the pattern check alone.
-
-  **Expected failure mode for wiring problems:** not an error code, but
-  wrong bytes. `prepare()` failing returns a status you can check;
-  pages moving underneath a correct-looking descriptor doesn't. A clean
-  `nr_entries` plus a correct pattern is the pass. Partial corruption
-  (some segments correct, others stale or zeroed) points at wiring, not
-  at the protocol — the protocol is proven by `probeTransport3D`.
+- ~~**ATTACH_BACKING with userspace memory — OPEN, the one structural
+  unknown before the IOKit winsys.**~~ **Answered 2026-08-10 — VERIFIED;**
+  see the dated section "ATTACH_BACKING-with-userspace-memory probe —
+  VERIFIED — 2026-08-10". The probe ran as pre-registered — all four
+  design constraints satisfied (owning-task capture via `initWithTask`,
+  deliberately unaligned buffer with partial first/last pages, persistent
+  `prepare()` with `complete()` at teardown, existing-selector reuse) —
+  and passed: 5 segments walked matching `getLength()` exactly,
+  4096/4096 dwords round-tripped `i ^ 0xA5A5A5A5`, all six commands
+  `0x1100`. The pre-registered known limit stands: a single quiet-guest
+  buffer does not prove lifetime wiring under memory pressure. The full
+  pre-registration text is preserved in Superseded.
 
 - **Hardware cursor — OPEN, unresolved whether GL scanout is the cause.**
   Queue 1 transport proven (used ring advances, PROBE PASS). Guest-side
@@ -3615,8 +3542,15 @@ software problem. The transport proof is the load-bearing gate.
   in probe as `enableController` does, or handle OSData properly. **Fixed
   2026-08-09** — probe now uses `configRead32(kIOPCIConfigVendorID)` /
   `kIOPCIConfigClassCode` directly, same pattern as
-  `VMVirtIOFramebuffer::probe`. See "Superseded" section.- **3D beyond capsets.** Nothing downstream of `enable3DAcceleration` has
-  executed on a meaningful path. Expect novel failures, not regressions.
+  `VMVirtIOFramebuffer::probe`. See "Superseded" section.
+- ~~**3D beyond capsets.** Nothing downstream of `enable3DAcceleration`
+  has executed on a meaningful path. Expect novel failures, not
+  regressions.~~ **Superseded 2026-08-10/12** — downstream execution is
+  verified on per-process paths: Increment C (Mesa virgl clear + read-back
+  byte-exact), the CGL shim end-to-end (2026-08-12), real applications
+  (PowerFox, per the 2026-08-14 entry). What remains open is the
+  WindowServer-reachable half — the coupling probe (top entry) and the
+  `functional_3d` pivot.
 
 - **Install script** does not delete/regenerate kext caches. Highest-value
   process fix available.
@@ -3693,8 +3627,10 @@ Do not start this merge without asking.
     explaining why QXL doesn't share the flag.
   - `IOGLBundleName = "GLEngine"` on the framebuffer node vs.
     `"VMVirtIOGLEngine"` on the `VMQemuVGAAccelerator` child — inconsistent.
-    **Still open.** GLPlugin is superseded; the inconsistency is a
-    separate cleanup.
+    **Still open — now tracked in the 2026-08-14 personality diff** (finding
+    3: three nubs, three values, plus the `"com.apple.kpi.iokit"` hygiene
+    item; reconciliation is pre-registered as pre-experiment step 3 in the
+    fix order). Reconcile there, not here.
   - `IOMetalBundleName = ""`, `IOGLESBundleName = ""` — empty / vestigial.
     (Metal does not exist on 10.6 per CLAUDE.md.) **Still open.**
   - ~~`class-code = <00000300>` on the framebuffer node~~ — **FIXED earlier:**
@@ -3791,3 +3727,41 @@ states that no longer exist.**
   `0x0300` (the kext's falsified "Override class-code for System Profiler"
   hack). Only `probe()`'s `0x000000` remains as a real bug — tracked in
   Open as the OSData/OSNumber cast issue.
+
+- **(2026-08-09 → 2026-08-10) ATTACH_BACKING-with-userspace-memory as the
+  Open "one structural unknown before the IOKit winsys."** Pre-registration
+  preserved from Open: four design constraints — (1) owning-task capture
+  via `initWithTask`, not `current_task()` (command-gate routing makes
+  `current_task()` the kernel task and `withAddressRange` silently
+  describes the wrong address space); (2) deliberately unaligned `malloc`
+  buffer expecting multi-segment scatter with partial first page
+  (Mesa `align_malloc(size, 64)` starts mid-page); (3) `prepare()` before
+  `getPhysicalSegment()`, `complete()` only at teardown — Mesa writes
+  between transfers; (4) extend existing selectors before adding. Known
+  limit pre-stated: a single quiet-guest buffer proves the mechanism, not
+  lifetime wiring under memory pressure. Expected wiring-failure mode:
+  wrong bytes, not error codes; `nr_entries == 1` on an unaligned buffer
+  would make a pass meaningless. **Superseded by:** the probe passing
+  2026-08-10 — all four constraints satisfied, 5 segments walked matching
+  `getLength()`, 4096/4096 dwords `i ^ 0xA5A5A5A5`, all six commands
+  `0x1100` (dated section "ATTACH_BACKING-with-userspace-memory probe —
+  VERIFIED — 2026-08-10"). The known limit remains for the finished
+  winsys to establish.
+
+- **(2026-08-09 → 2026-08-10) "Active task — 3D transport: nothing
+  downstream of context creation has ever executed on a path that
+  matters."** The section's four steps (explicit context, clear command,
+  `TRANSFER_FROM_HOST_3D` read-back, byte verification) were the
+  pre-registered transport gate. **Superseded by:** Increment C
+  (2026-08-10) — Mesa's virgl driver produced byte-exact clears through
+  the full stack, exactly the deliverable; the ATTACH_BACKING probe the
+  same day; and the CGL shim verified end-to-end 2026-08-12. Transport is
+  proven per-process. The active task is now the WindowServer
+  capability-gating/coupling probe (2026-08-14, top entry).
+
+- **(2026-08-09 → 2026-08-10) "3D beyond capsets — expect novel failures,
+  not regressions."** **Superseded by:** Increment C and the CGL-shim
+  verification — downstream of `enable3DAcceleration` executes and is
+  verified on per-process paths. Novel failures did materialize along the
+  way (the `cmd_buf` 256-byte overflow found and fixed during Increment C)
+  but the blanket expectation no longer describes the state.
