@@ -25,6 +25,18 @@ userspace half exists. Mesa is cross-built for 10.6 with a new
 return byte-exact pixels through virgl to the host GPU, and a shimmed Cocoa app
 renders visibly on the guest desktop — see [3D status](#3d-status).
 
+**Working: WindowServer's 2D surface acceleration path.** As of 2026-08-16 the
+kext serves the full Apple `IOAccelSurface` consumer loop in-kernel — SetIDMode,
+SetShape, QueryLock, WriteLock (a real mapped backing in WindowServer's own
+address space), WriteUnlock, and Flush (a clipped row-by-row blit into the
+framebuffer backing; the refresh timer carries it to the host). The desktop
+paints through this path: verified by eye (correct colors, survives window
+drags) and by the failure that preceded it — when the lock succeeded without a
+working flush, the desktop came up blue, proving WindowServer had switched its
+compositing destination to the surface. Display refresh now runs at a
+**measured 47-52 Hz** (17 ms timer period; a former re-arm-after-work bug had
+capped achieved rate at 19-26 Hz), and the cursor is visibly smoother for it.
+
 **Not yet verified: real applications.** Gecko and WebKit have not been run
 against the shim. Multiple concurrent contexts, resize under load, and sustained
 frame rates are untested, and performance under a real workload is unmeasured.
@@ -55,6 +67,8 @@ or the aperture is family-scoped.
 | Feature negotiation | `VIRTIO_GPU_F_VIRGL` + `VIRTIO_F_VERSION_1` negotiated; queue size 256. |
 | 2D display pipeline | `RESOURCE_CREATE_2D` → `ATTACH_BACKING` → `SET_SCANOUT` → `TRANSFER_TO_HOST_2D` → `RESOURCE_FLUSH`, all accepted by the host. |
 | WindowServer integration | Standard `IOFramebuffer` path: mode enumeration, `getApertureRange`, `getVRAMRange`, `setDisplayMode`. |
+| IOAccelSurface path (2D surface acceleration) | WindowServer's full surface loop served in-kernel: SetIDMode → SetShape (damage regions; empty-region calls are no-ops) → QueryLock → WriteLock (kernel-allocated backing mapped into the owning task, grow-only, teardown on client death mid-lock) → WriteUnlock → Flush (blit clipped to the shape rect, row-by-row across independently-determined strides). Desktop paints through it: visual check 2026-08-16 — correct colors, survives window drags; the preceding lock-without-flush boot came up blue, which is the proof WindowServer switched its compositing destination to the surface. Caller attributed by `IOUserClientCreator = "pid 98, WindowServer"` (ioreg). |
+| Measured refresh rate | In-driver window instrumentation distinguishes configured from achieved rate: **47-52 Hz achieved at 17 ms configured** (mode 1920×1080), 6-10 ms measured work per transfer+flush pair. The old scheme (16 ms tick, divide-by-4 throttle, re-armed after the work) achieved 19-26 Hz — the period was interval + work. Fixed 2026-08-16: re-arm before the work, single period knob. |
 | Desktop rendering | Visual check 2026-08-09 — correct desktop, no shearing or artifacts. |
 | Cursor | Visual check 2026-08-09 — software cursor renders correctly. |
 | Resolution changes | Real user-driven mode switch, resource recreated against a stable buffer, aperture mapping preserved. |
@@ -144,8 +158,10 @@ functions) is the next milestone.
   bugs.
 
 Performance note: an x86_64 guest on an Apple Silicon host runs under TCG
-emulation, not hardware virtualization. The emulated CPU dominates; full-surface
-framebuffer transfers at 60 Hz are expensive.
+emulation, not hardware virtualization. The emulated CPU dominates; a measured
+full-surface transfer+flush pair costs 6-10 ms of workloop time, and timer
+dispatch adds a few ms per fire — the achieved refresh ceiling on this
+configuration is ~50 Hz, not the configured 60.
 
 ---
 
@@ -185,25 +201,34 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
 
 ## Known issues
 
-- **Hardware cursor not visible on virtio-gpu-gl.** The virtio-gpu cursor queue
-  (`UPDATE_CURSOR` / `MOVE_CURSOR`) is implemented and transport-proven (queue 1
-  used-ring advances on both commands). However, no hardware cursor overlay
-  appears on `virtio-gpu-gl-pci`. SPICE receives the cursor data
-  (`set_cursor: type alpha(0), 0, 64x64` in the host log). QXL on the same UTM
-  host shows a visible hardware cursor — confirming CocoaSpice can render
-  overlays — but virtio-gpu-gl does not. Suspected mechanism: virtio-gpu-gl uses
-  GL scanout (DMABuf → Metal texture), bypassing the cursor channel. Pending
-  investigation; see [`LEDGER.md`](LEDGER.md).
+- **Hardware cursor not visible on virtio-gpu-gl — diagnosed upstream, not
+  guest-fixable.** The virtio-gpu cursor queue (`UPDATE_CURSOR` / `MOVE_CURSOR`)
+  is implemented and transport-proven (queue 1 used-ring advances on both
+  commands), and SPICE receives the cursor data — but no overlay appears once
+  GL scanout is active. Controlled comparison, same device and host: QXL
+  (2D SPICE surface) cursor works; virtio-vga-gl **without** this kext (VGA
+  firmware framebuffer → 2D SPICE) cursor works; virtio-vga-gl **with** the
+  kext (GL scanout via `SET_SCANOUT` on a virgl resource) cursor fails — the
+  one variable is GL scanout. Mechanism: CocoaSpice's GL display path does not
+  composite the cursor overlay (its own `CSCursor.isInverted` =
+  `!display.isGLEnabled` distinguishes the paths; `CSDisplay`'s does not).
+  Fix belongs upstream. Guest-side mitigation: the software cursor
+  (WindowServer composites it into the framebuffer from userspace; the kernel
+  never participates — established 2026-08-09) rides the refresh timer, now at
+  a measured ~48 Hz, and is visibly smooth. See [`LEDGER.md`](LEDGER.md).
 - **Full-surface transfers.** Each refresh sends the whole framebuffer. The
-  actual cost under TCG is the per-command doorbell round-trip, not the byte
-  count — QEMU executes `TRANSFER_TO_HOST_2D` host-side at native speed, so
-  bytes were never the constraint. Refresh is throttled to ~15 Hz (every 4th
-  timer tick), cutting doorbell round-trips 4×. Dirty-rectangle tracking was
-  investigated and rejected 2026-08-09 (see [`LEDGER.md`](LEDGER.md)): it would
-  reduce bytes but leave command count unchanged, buying essentially nothing
-  on this configuration.
+  actual cost under TCG is the per-command round-trip, not the byte count —
+  QEMU executes `TRANSFER_TO_HOST_2D` host-side at native speed. The old ~15 Hz
+  throttle priced in a poll-loop `IOSleep(1)` floor (~10 ms/call) that the
+  bounded-spin fix removed; 2026-08-16 the throttle was deleted entirely —
+  the timer re-arms before the work and the period is the single rate knob
+  (17 ms), achieving a measured 47-52 Hz at 6-10 ms work per transfer.
+  Dirty-rectangle tracking remains rejected (2026-08-09,
+  [`LEDGER.md`](LEDGER.md)): it would reduce bytes but leave command count
+  unchanged.
 - **Apple Remote Desktop** was reported to break at a 60 Hz refresh rate in an
-  earlier build. The refresh is now ~15 Hz and this has not been re-tested.
+  earlier build. The refresh is now 17 ms configured / 47-52 Hz measured and
+  this has not been re-tested.
 - **`IOGLBundleName` inconsistency.** The framebuffer node publishes
   `"GLEngine"` while the `VMQemuVGAAccelerator` child publishes
   `"VMVirtIOGLEngine"`. GLPlugin is superseded (see
@@ -261,7 +286,10 @@ it was false. Verify against the device, not against your own logging.
 Earlier versions of this README described a driver whose advanced features were
 stub functions returning success, with an IORegistry that reported them as
 working. That was accurate at the time. The 2D transport is real and verified,
-and has been for several releases. The 3D transport was verified end-to-end at
+and has been for several releases. On 2026-08-16 the 2D **surface
+acceleration** path landed on top of it: WindowServer's `IOAccelSurface` loop
+is served by the kext, the desktop composites through it, and display refresh
+runs at a measured 47-52 Hz. The 3D transport was verified end-to-end at
 the byte level on 2026-08-09, and 3D rendering through Mesa on 2026-08-10 —
 via direct-OSMesa test programs that link `-lOSMesa` directly. The CGL shim's
 presentation path works, but its GL dispatch is broken: apps linked against
