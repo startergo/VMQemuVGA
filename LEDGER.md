@@ -16,7 +16,74 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-14 (readfb baseline RUN — observed failure at IOAccelFindAccelerator, kIOReturnNotFound, on the unmodified kext; entry below)
+Last updated: 2026-08-16 (QueryLock boot RUN — prediction confirmed; cycle now 7→[9,9,11,14] with WriteLock the new held line; caller attributed to WindowServer pid 98; entry below)
+
+---
+
+## 2026-08-16 — QueryLock boot RUN: prediction confirmed; cycle now 7→[9,9,11,14]; caller is WindowServer; geometry went full-screen
+
+Build 29ab557c (commit 111adaf) installed — md5 host↔guest match
+verified before analysis — boot 08:39:47. **kernel.log spans three
+boots**; the 00:30/00:41 QueryLock-Unsupported lines belong to the
+645fa708 boot and must not be counted (caught by timestamp before
+tallying; current boot isolated from its `Darwin Kernel Version`
+line at log line 10527).
+
+Every pre-registration from the entry below landed:
+
+1. **Cycle advanced past QueryLock to a real lock — index 14,
+   handler self-names WriteLock.** Tally for the observed window
+   (08:41:20–08:43:15): index=9 ×94, index=11 ×47, index=14 ×47,
+   index=7 ×1, **index=12 ×0**. Per iteration: 2× SetShape (the
+   0xd/0x1 pair), 1× QueryLock, 1× WriteLock. The caller goes
+   straight to WriteLock; the other lock-family member never fires.
+2. **Held line held:** WriteLock → Unsupported 47/47; QueryLock →
+   Success (never locked) 47/47, no other return observed.
+3. **Storm relocated and still running:** ~47 iterations in ~2 min
+   (~0.4/s; prior boot ~1.4/s over a longer window — windows
+   differ, do not compare rates), dispatches still present in the
+   log tail at 08:46. Fails-more-politely ≠ stops, as tempered.
+4. **Outcome #3 watch — desktop alive AND visually normal:** load
+   9.43 (3 min) → 3.05 (7 min), 1 user; user confirmed the display
+   renders normally through 47 QueryLock successes and 94 shape
+   cycles (visual check, same session).
+
+New data beyond the pre-registrations:
+
+- **Caller attributed: `"IOUserClientCreator" = "pid 98,
+  WindowServer"` on the live surface client** (ioreg, this boot,
+  zero code). Resolves the 2026-08-15 prediction-1 fork to (a)
+  WindowServer — so, per that pre-registration, **outcome #3
+  ("working software path breaks") is ELEVATED from background
+  watch to active concern**: every future selector success is now a
+  live experiment on the compositor, and each must ship with its
+  own desktop-health check.
+- **Geometry changed with the rung:** the 0xd SetShape region is
+  now **full-screen 1680×1050 at (0,0)**; the 645fa708 boot's 0xd
+  was the 46×22 clock strip at x=1634. Same pair structure
+  (0xd real + 0x1 1×1/zero-rect), different content. Inference
+  (unverified): WindowServer shapes the full desktop surface only
+  once lock-availability succeeds; the clock strip was an
+  early-exit shape. What would settle it: the worked example's
+  sequence around first write-lock, or a probe replay against both
+  builds.
+- rgn pointer differs call-to-call (0xffffff800ee03490 →
+  0xffffff800f4c3490) — per-call allocation by the caller's
+  allocator; no leak signal either way.
+
+Hygiene note: the "Lock Configuration / Recursive Locking /
+Priority Inheritance / Deadlock Detection / Lock Timeout" block at
+08:40:34 is ours — FB/VMTextureManager.cpp:397-401, part of the
+vestigial manager init (hygiene list item 1). Not new this boot.
+
+**Next unit — the backing rung: make WriteLock honest.** Design
+step first (its own session unit): read the worked example's
+write_lock path in VMsvga2Surface.cpp for its return contract —
+what the caller receives on success (pointer? size? flags?
+io_connect scalar/struct outputs?) — before writing ours; the
+standing design note is ATTACH_BACKING-reuse. Pre-register the
+prediction when the design is committed. Do NOT bundle: no other
+selector moves in the same boot.
 
 ---
 
