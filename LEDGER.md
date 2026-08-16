@@ -16,7 +16,48 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (fix boot RUN: dispatch latency is the floor, not work — 60 Hz target boot pre-registered on measured budget, build edfce834; entry below)
+Last updated: 2026-08-16 (17 ms boot RUN: **47-52 Hz achieved, mouse smoother** — prediction beaten, workavg miss recorded; rate work CLOSED; entry below)
+
+---
+
+## 2026-08-16 — 17 ms boot RUN (9653497 / edfce834): 47-52 Hz achieved, mouse smoother — the smoothness thread is closed
+
+**User verdict: "mouse is smoother" (again, vs the 25 Hz era).**
+Rate progression on this hardware, all measured by the window
+instrumentation: 15 Hz configured-era → ~25 Hz achieved (re-arm
+bug era) → **47-52 Hz achieved at 17 ms configured** (mode=5
+1920×1080, all three eras' figures mode-matched).
+
+**Predictions vs outcomes:**
+1. ✅✅ Achieved 47.4-48.2 Hz in the first windows, 45.2-51.9
+   across the boot — ABOVE the 40±3 projection (refusal
+   threshold was <<35; nowhere near). The dispatch-overhead
+   model was conservative: ~4 ms/fire at 17 ms vs ~7 at 33 ms —
+   per-fire overhead is NOT constant; the two-component model is
+   incomplete. Recorded as beaten, with the model gap noted.
+2. ❌ **workavg MISSED: 6.0-10.7 ms** (predicted unchanged 3-4.5;
+   was 3.1-4.4 at 33 ms). Inference (unverified): 1-vCPU TCG
+   contention at ~2× fire rate — the measured pair time absorbs
+   stalls that were slack at 33 ms. What would settle it: a
+   workload-matched A/B, not needed for the verdict.
+3. ✅ ticks = xfers exactly, every window (every fire transfers).
+4. Partial: load 14.09 boot-settling → 5.27 at 5 min DURING
+   active use — never got a true idle sample (user recorded the
+   verdict without a quiesce window); idle steady-state at 17 ms
+   REMAINS UNMEASURED. Not load-bearing for the verdict; noted
+   as open if idle cost ever matters.
+5. ✅ Cursor visibly smoother (user).
+6. ✅ Mode line logged: 1920×1080 (work figures mode-matched to
+   the 33 ms era).
+
+**Session close-out state:** master at 9653497; guest RUNNING
+edfce834 (five real selectors + landed pair + 17 ms refresh,
+~48 Hz achieved). The refresh-rate thread is CLOSED at 48 Hz:
+further gains are dispatch-bound, work is 6-10 ms under load,
+and the next rate step (period < 17 ms) would buy little before
+the timer floor. Open items unchanged: idle load at 17 ms;
+bSkipWriteLockOnce unmet; kextcache residual; hygiene list;
+upstream cursor overlay (guest-side mitigation = this rate).
 
 ---
 
