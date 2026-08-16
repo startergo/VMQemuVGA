@@ -16,7 +16,62 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (WriteLock-rung boot RUN corrected: BLUE SCREEN — outcome #3 fired, compositor switched to the untransferred surface; rule update: lock+flush land as a pair; entry below)
+Last updated: 2026-08-16 (REVERTED guest to ac16eac after outcome #3 — safety design worked as pre-registered; Flush design settled: blit to FB backing + existing transfer, no second resource; entry below)
+
+---
+
+## 2026-08-16 — revert executed (guest → ac16eac / 3d618e6f); outcome #3 recorded as the pre-registered outcome LANDING; Flush design settled
+
+**Revert executed and verified:** built ac16eac's two lock-rung
+files in-tree (worktree attempt failed — the build script works
+only from the canonical repo root; do not relocate the tree),
+md5 **bit-identical reproduction: 3d618e6f**, working tree
+restored to HEAD (6c801db + ledger commits stay on master),
+installed with md5 verified both ends, cacheless, reboot issued.
+**Prediction for the revert boot (pre-registered):** desktop
+returns — WindowServer's accel path hits WriteLock Unsupported
+again and falls back to the software path, cycle regresses to
+[9,9,11,14], blue screen gone. If the desktop does NOT return,
+the blue screen had a second cause and this revert is the
+discriminator.
+
+**Framing (user, recorded because it is the correct read):** the
+blue screen is the pre-registered outcome LANDING, not a setback.
+Outcome #3 was written down before the rung, the risk was
+elevated to active when the caller was attributed, the change
+was one step revertable, and the recovery was pre-committed — it
+fired exactly where predicted, with a known recovery command.
+The mechanical milestone stands: 63/63 locks, a correctly-sized
+7,057,408-byte mapping in WindowServer's address space, offset
+decode verified against on-screen geometry, clean unlock
+discipline, and the caller's true sequence
+[shape,query,lock,unlock,flush] fully mapped. The reason to
+revert NOW rather than design Flush on the live blue screen:
+whether WindowServer switches its compositor back mid-session
+once flush works is UNKNOWN — one reboot now is cheaper than a
+session of blind work plus a possible reboot anyway.
+
+**Flush design settled (user decision; scanout-coordination
+question dissolved):** do NOT create a second resource. The
+framebuffer already owns the scanout resource, its
+TRANSFER_TO_HOST_2D + RESOURCE_FLUSH path is proven, and a
+refresh timer drives it (rate per SOURCE, correcting the
+user's 15 Hz: `m_refresh_timer->setTimeoutMS(16)` — "60 Hz
+refresh rate for native VirtIO mode", VMVirtIOFramebuffer.cpp
+:1708, also :1229/:2460). A surface flush with its own resource
++ SET_SCANOUT would fight that timer — two writers, one scanout.
+**Instead: on flush, blit the surface's mapped buffer into the
+FRAMEBUFFER's backing at the shape offset, then transfer that
+rect through the existing path.** Offset decode already verified
+this boot; 2D machinery proven; refresh timer untouched. Flush =
+guest-side memcpy + an existing transfer call — less new
+mechanism than the rung it follows. Lands as a PAIR with
+WriteLock per the rule above.
+
+**Session close-out state:** master at 6c801db (lock rung
+committed, not installed anywhere); guest reverting to ac16eac.
+Next unit = task #2: design Flush per above, then land
+lock+flush together, one pre-registered boot.
 
 ---
 
