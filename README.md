@@ -267,6 +267,12 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
 
 - [`LEDGER.md`](LEDGER.md) — current state: what is fixed, what is open, what is
   unexplained. Updated every session.
+- [`docs/architecture-3d.md`](docs/architecture-3d.md) — the per-process GL
+  stack: app → substitute `OpenGL.framework` → Mesa → virgl → kext → host.
+- [`docs/accelerator-surface-path.md`](docs/accelerator-surface-path.md) — the
+  second, independent stack: WindowServer's 2D `IOAccelSurface` loop served
+  in-kernel (no GL, no Mesa). These two stacks share only the kext transport
+  and the host device.
 - [`.claude/CLAUDE.md`](.claude/CLAUDE.md) — environment facts and the ground
   rules this project works under.
 - [`.claude/rules/`](.claude/rules/) — topic-specific notes on the virtio

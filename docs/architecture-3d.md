@@ -4,6 +4,15 @@ How a guest OpenGL call reaches the host GPU, and what each GL object becomes
 along the way. Companion to [`.claude/rules/acceleration.md`](../.claude/rules/acceleration.md);
 current status of each piece lives in [`LEDGER.md`](../LEDGER.md).
 
+This describes the **per-process GL stack** (app → substitute
+`OpenGL.framework` → Mesa → virgl → kext → host). It is one of two
+independent acceleration stacks in this project. The other — the system-wide,
+in-kernel 2D surface path that WindowServer composites through, containing no
+GL at all — is described in
+[`docs/accelerator-surface-path.md`](accelerator-surface-path.md). Giving
+WindowServer a working 2D surface path did not give it 3D; GL still reaches
+apps only through the stack below.
+
 ---
 
 ## Layer stack
@@ -16,12 +25,13 @@ GUEST — macOS 10.6.8 x86_64 (UTM VM)
 └───────────┬───────────────────────────┬──────────────────────────────────┘
             │ ObjC swizzle              │ __DATA,__interpose
 ┌───────────▼───────────────────────────▼──────────────────────────────────┐
-│  cgl-shim            presentation path works; GL dispatch BROKEN          │
-│  9 NSOpenGLContext swizzles + 4 _CGL* interposes + NSView drawRect swizzle│
-│  presentation: OSMesa buffer → setNeedsDisplay → drawRect → NSBitmapImageRep│
-│  GL DISPATCH: app's draw calls bind to OpenGL.framework, NOT Mesa.        │
-│  See "Split-dispatch" below. Fix: __DATA,__interpose for gl* or           │
-│  substitute OpenGL.framework via DYLD_FRAMEWORK_PATH.                     │
+│  cgl-shim            presentation verified; dispatch SOLVED two ways      │
+│  9 NSOpenGLContext swizzles + _CGL* interposes + drawRect swizzle         │
+│  GL dispatch, both routes landed (per Mesa-VirGL commit log —            │
+│  not re-verified from this repo):                                        │
+│    flat-namespace tests: __DATA,__interpose gl* → Mesa via dlsym         │
+│    real two-level apps: substitute OpenGL.framework + IOSurface upload   │
+│  (Gecko UI renders via the substitute — Mesa-VirGL 9fb95e8)              │
 └───────────┬──────────────────────────────────────────────────────────────┘
             │ OSMesaCreateContextExt / OSMesaMakeCurrent
 ┌───────────▼──────────────────────────────────────────────────────────────┐
@@ -204,7 +214,6 @@ is the mechanism that enters the display cycle from another thread.
 | `ATTACH_BACKING` with userspace memory | **verified** — unaligned 16 KB malloc, 5-segment scatter list (partial page, 3 full, partial page), 4096/4096 dwords correct, wiring held across the guest write between transfers |
 | `virgl_iokit_winsys` | **verified** — Mesa-driven `glClear`+`glReadPixels` byte-exact via virgl, softpipe reference identical (Mesa-VirGL commit c703f8fb910) |
 | Mesa + Gallium + virgl driver (guest) | **built and runtime-verified** via softpipe + virgl (clear, triangle, textured triangle, shaders+textures+sampler state) |
-| `cgl-shim` | **presentation path verified; GL routing broken for two-level apps.** Swizzles, OSMesa context, double-buffer swap/rebind, drawRect: → visible pixels — all verified via flat-namespace test binaries (`shim_smoke_test`, `stress_test` — Mach header lacks `TWOLEVEL`, so Mesa's glClear wins at load time). But two-level-namespace apps (`killtest_shim` and all real apps: Flurry, Gecko, WebKit) bind glClear to OpenGL.framework at link time — GL draw calls go to Apple, not Mesa. Confirmed by `nm -m` + `otool -hv`. Fix: `__DATA,__interpose` for gl* entry points. |
+| `cgl-shim` | **Presentation verified; GL dispatch solved on both routes** (state per Mesa-VirGL commit log, branch `cross-10.6` — not re-verified from this repo this session). Flat-namespace test binaries route via `__DATA,__interpose` gl* entries dispatching to Mesa (`fd7b7cf`); two-level-namespace real apps route via the substitute `OpenGL.framework` (`4b7c463`) — Gecko UI renders through it (`9fb95e8`), with the frontier now at rendering-correctness artifacts (empty-frame blit `8775b09`, pixel-store state `26c82b3`, single-buffer diagnostic `685ba319` — the double-buffer staleness hypothesis for the PowerFox chrome artifacts was FALSIFIED). Killtest, stress (resize + multi-context + CGLEnable) and smoke tests PASS per the same log. |
 | virglrenderer / ANGLE (host) | stock UTM, unmodified |
-| What the shim proves | The **presentation path** is verified end-to-end (swizzles → OSMesa → buffer swap → drawRect → visible pixels) via flat-namespace test binaries. The **GL dispatch path** (app draw calls → Mesa) is the only gap — broken for two-level-namespace apps (which is all real apps). Fix: `__DATA,__interpose` for gl* entry points (Phase 1, ~15 functions for the killtest), or substitute OpenGL.framework via `DYLD_FRAMEWORK_PATH` with a `-reexport_library` thin dylib (Phase 2, for real apps). See LEDGER.md for the full diagnosis and implementation gotcha (dlsym, not symbol name). |
-| Next milestone | **15-function GL interpose** — add `__DATA,__interpose` entries in `cgl_interpose.c` for the killtest's ~15 GL functions, dispatching to Mesa via `dlopen`/`dlsym`. Validates GL routing on a working scene. Then re-run the IOLog gate and IOSleep(1) poll-loop measurements against a real workload. |
+| Next milestone | **Gecko/PowerFox chrome-artifact class** — same content drawn twice at different destinations; guest-side buffer staleness falsified by the `SHIM_SINGLE_BUF` discriminator, so the fault is elsewhere in the presentation chain (substitute IOSurface upload / blit flip / Gecko's own compositing). This is the open frontier of the GL stack; work lives in the Mesa-VirGL repo. The 2D accelerator surface path (separate stack, no GL) has its own open items — see [`accelerator-surface-path.md`](accelerator-surface-path.md). |

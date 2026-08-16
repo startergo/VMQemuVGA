@@ -16,7 +16,56 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (17 ms boot RUN: **47-52 Hz achieved, mouse smoother** — prediction beaten, workavg miss recorded; rate work CLOSED; entry below)
+Last updated: 2026-08-16 (docs split: accelerator surface path gets its own file; architecture-3d.md loses the stale GL-dispatch milestone; memory-store housekeeping noted; entry below)
+
+---
+
+## 2026-08-16 — doc split: two stacks named; stale GL milestone removed; memory-store note
+
+**What was newly stale (user direction, recorded):** not the 3D
+content — the STACK SHAPE. Both docs described one stack (app →
+substitute OpenGL.framework → Mesa → virgl → kext → host, current
+and per-process), while a SECOND independent stack had landed:
+WindowServer → IOAccelSurface client → kernel mapping → blit →
+framebuffer backing → refresh timer → host. System-wide,
+in-kernel, no Mesa, no shim. Neither doc mentioned it.
+
+**Changes:**
+- NEW `docs/accelerator-surface-path.md` — the second stack's own
+  file: diagram, selector-contract table (worked-example line
+  refs), the structural divergence (no BAR → kernel mapping +
+  blit + timer), the blue-screen evidence chain for the
+  compositing switch, confounds and open items. **Explicit
+  distinction in the doc (user, verbatim intent): this gave
+  WindowServer a working 2D surface path, NOT 3D — GL reaches
+  apps only via the per-process substitute, and the GA CFPlugIn
+  that would let apps attach to the accelerator does not exist.**
+- `docs/architecture-3d.md` — keeps the GL stack; header names
+  the two-stack split with the cross-link; the cgl-shim diagram
+  box updated from "GL dispatch BROKEN" to both dispatch routes
+  landed (attributed to Mesa-VirGL commit log — fd7b7cf interpose,
+  4b7c463 substitute, 9fb95e8 Gecko UI renders; NOT re-verified
+  this session); stale "Next milestone: 15-function interpose"
+  row replaced with the actual frontier per that log: the
+  PowerFox chrome-artifact class (SHIM_SINGLE_BUF falsified
+  guest-side buffer staleness, 685ba319) — work lives in
+  Mesa-VirGL.
+- README Development section: links to both stack docs with the
+  distinction.
+
+**3D state recorded for the next session (from Mesa-VirGL commit
+log, branch cross-10.6, tip 685ba319; unverified here):** both GL
+dispatch routes landed; killtest/stress/smoke PASS; Gecko UI
+renders via the substitute; open frontier = chrome-artifact class
+(same content drawn twice at different destinations), buffer-
+staleness hypothesis falsified. The Mesa repo has NO ledger of
+its own — its state lives in commit messages; consider giving it
+a ledger when 3D work resumes.
+
+**Memory-store housekeeping (user, next time it needs updating):
+the store is near its cap; the accelerator-contract material is
+now its own subject — SPLIT IT OUT rather than trimming elsewhere
+to fit.**
 
 ---
 
