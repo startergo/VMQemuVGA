@@ -19,11 +19,16 @@ class VMVirtIOGPU;
 // Surface information structure
 struct VMAccelSurface {
     uint32_t surface_id;
-    uint32_t width;
-    uint32_t height;
     uint32_t pixel_format;
     uint32_t bytes_per_pixel;   /* derived from depth bits at SetIDMode */
-    IOMemoryDescriptor* backing_memory;
+    /* current shape = sub-region within the base extent */
+    uint32_t shape_x, shape_y;
+    uint32_t width, height;     /* current shape bounds w/h */
+    /* grow-only base extent: max bounds.x+w / bounds.y+h ever stored */
+    uint32_t base_w, base_h;
+    IOBufferMemoryDescriptor* backing_memory;
+    IOMemoryMap* client_map;    /* mapping in m_owning_task, outlives unlock */
+    uint32_t bytes_per_row;     /* the ALLOCATION's stride: base_w * bpp */
     bool is_locked;
     task_t owning_task;
 };
@@ -38,6 +43,8 @@ private:
     VMAccelSurface* m_surface;
     IOLock* m_lock;
     bool m_creator_logged;  /* first-dispatch creator read, once */
+    bool m_skip_write_lock_once;  /* 10.6 WindowServer Window-Grab deadlock
+                                   * avoidance, worked example :1658-1666 */
     
 public:
     // IOService overrides

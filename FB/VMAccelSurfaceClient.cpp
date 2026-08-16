@@ -168,6 +168,7 @@ bool CLASS::initWithTask(task_t owningTask, void* securityToken,
     m_accelerator = nullptr;
     m_owning_task = owningTask;
     m_creator_logged = false;
+    m_skip_write_lock_once = false;
     m_surface = nullptr;
     m_lock = IOLockAlloc();
     
@@ -241,8 +242,24 @@ void CLASS::stop(IOService* provider)
 {
     IOLog("VMAccelSurfaceClient: Stopping\n");
 
+    /* Teardown obligation (2026-08-16): the backing mapping
+     * OUTLIVES unlock by design (lazy-create at first write lock,
+     * persist across cycles — worked example :1258-1263/:1276-1281).
+     * It must be released here regardless of what the caller did:
+     * normal close, surface destroy, or the client DYING while
+     * holding the lock (WindowServer restart mid-lock) — all
+     * funnel through clientClose/clientDied -> terminate -> stop.
+     * Same leak shape as the backing-descriptor table fix. */
     if (m_surface) {
+        if (m_surface->is_locked)
+            IOLog("VMAccelSurfaceClient: stop with lock HELD "
+                  "(client died mid-lock?) — releasing anyway\n");
+        if (m_surface->client_map) {
+            m_surface->client_map->release();
+            m_surface->client_map = nullptr;
+        }
         if (m_surface->backing_memory) {
+            m_surface->backing_memory->complete();
             m_surface->backing_memory->release();
             m_surface->backing_memory = nullptr;
         }
@@ -550,20 +567,48 @@ IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void 
 
     /* Geometry updates ONLY under IdentityScaleBit (:1639-1655).
      * The observed 0x1 call lacks it; without the gate every second
-     * shape overwrote 1680x1050 with 1x1. For wID==1 the buffer IS
-     * the shape bounds (bFromGFB path, :1650). */
+     * shape overwrote the stored geometry. For wID==1 the worked
+     * example's bFromGFB branch treats the surface as a SCREEN-SIZED
+     * buffer that shapes select SUB-REGIONS of (bounds = the damage
+     * region; calculateSurfaceInformation adds bounds.y*rowBytes +
+     * bounds.x*bpp to the handed-out address, :390/:417). So we store
+     * the shape origin AND keep a GROW-ONLY base extent = max
+     * bounds.x+w / bounds.y+h ever seen — the early-boot 1680x1050
+     * shapes establish it. */
     if (options & kIOAccelSurfaceShapeIdentityScaleBit) {
         if (m_surface) {
-            m_surface->width  = (uint32_t)(rgn->bounds.w > 0 ? rgn->bounds.w : 0);
-            m_surface->height = (uint32_t)(rgn->bounds.h > 0 ? rgn->bounds.h : 0);
+            m_surface->shape_x = (uint32_t)(rgn->bounds.x > 0 ? rgn->bounds.x : 0);
+            m_surface->shape_y = (uint32_t)(rgn->bounds.y > 0 ? rgn->bounds.y : 0);
+            m_surface->width   = (uint32_t)(rgn->bounds.w > 0 ? rgn->bounds.w : 0);
+            m_surface->height  = (uint32_t)(rgn->bounds.h > 0 ? rgn->bounds.h : 0);
+            uint32_t ext_x = m_surface->shape_x + m_surface->width;
+            uint32_t ext_y = m_surface->shape_y + m_surface->height;
+            if (ext_x > m_surface->base_w) m_surface->base_w = ext_x;
+            if (ext_y > m_surface->base_h) m_surface->base_h = ext_y;
         }
-        IOLog("VMAccelSurfaceClient: SetShape — IdentityScale: geometry "
-              "STORED (%ux%u)\n",
+        IOLog("VMAccelSurfaceClient: SetShape — IdentityScale: shape "
+              "(%u,%u %ux%u) STORED, extent now %ux%u\n",
+              m_surface ? m_surface->shape_x : 0,
+              m_surface ? m_surface->shape_y : 0,
               m_surface ? m_surface->width : 0,
-              m_surface ? m_surface->height : 0);
+              m_surface ? m_surface->height : 0,
+              m_surface ? m_surface->base_w : 0,
+              m_surface ? m_surface->base_h : 0);
     } else {
         IOLog("VMAccelSurfaceClient: SetShape — no IdentityScaleBit: "
               "geometry untouched (:1639)\n");
+    }
+
+    /* 10.6 WindowServer Window-Grab deadlock avoidance (worked
+     * example :1658-1666, REQUIRED on this target — our surface IS
+     * wID==1, the exact guarded case): set_shape(wID==1, options
+     * ==0x5) arms a one-shot skip of the lock-bit on the next
+     * write_lock. Observed options so far: 0xd/0x1; 0x5 not yet
+     * seen, guard armed regardless. */
+    if (m_surface && m_surface->surface_id == 1 && options == 0x5) {
+        m_skip_write_lock_once = true;
+        IOLog("VMAccelSurfaceClient: SetShape — arming "
+              "bSkipWriteLockOnce (wID==1, options==0x5)\n");
     }
     return kIOReturnSuccess;
 }
@@ -576,17 +621,15 @@ IOReturn CLASS::flush(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6
 
 IOReturn CLASS::queryLock(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    /* THIRD real selector (2026-08-16). Semantics from the worked
-     * example (VMsvga2Surface.cpp:1461-1466): pure state query, no
-     * inputs/outputs, the answer IS the return code — CannotLock if
-     * locked, Success if lockable. Our surface is never locked, so
-     * Success is the honest state report (deliverable: it claims no
-     * memory, answers a question). Pre-registered for this boot: the
-     * caller cycle moves past QueryLock to the real locks (12/14) —
-     * the held line — and the storm relocates there. Loop stops only
-     * when something succeeds; this rung's success is state-only. */
-    IOLog("VMAccelSurfaceClient: QueryLock -> Success (never locked)\n");
-    return kIOReturnSuccess;
+    /* THIRD real selector (2026-08-16); state-honest since the
+     * WriteLock rung: semantics from the worked example
+     * (VMsvga2Surface.cpp:1461-1466) — pure state query, the
+     * answer IS the return code. CannotLock if the write lock is
+     * held, Success if lockable. */
+    bool held = (m_surface && m_surface->is_locked);
+    IOLog("VMAccelSurfaceClient: QueryLock -> %s\n",
+          held ? "CannotLock (write lock held)" : "Success (lockable)");
+    return held ? kIOReturnCannotLock : kIOReturnSuccess;
 }
 
 IOReturn CLASS::readLockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
@@ -603,14 +646,175 @@ IOReturn CLASS::readUnlockSurface(void *p1, void *p2, void *p3, void *p4, void *
 
 IOReturn CLASS::writeLockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: WriteLock -> Unsupported\n");
-    return kIOReturnUnsupported;
+    /* FOURTH real selector — the backing rung (2026-08-16).
+     * Contract from the worked example, VMsvga2Surface.cpp:
+     * - row 90: StructO(0, var) — p1 = IOAccelSurfaceInformation*,
+     *   p2 = size_t* infoSize; caller's buffer, driver fills it.
+     * - surface_write_lock_options :1242-1273: BadArgument if
+     *   *infoSize < sizeof; NotReady without id/geometry;
+     *   CannotLock on double-lock; NoMemory if backing fails.
+     * - Direction (:1089-1098): the address must be valid in the
+     *   OWNING task (WindowServer). Mechanism = IOBufferMemoryDescriptor
+     *   (inTaskWithOptions, kIOMemoryKernelUserShared — idiom
+     *   :1111-1128) + createMappingInTask(m_owning_task). KPI
+     *   evidence: the worked example RUNS this on 10.6 — target
+     *   precedent, not OSBundleLibraries reasoning.
+     * - Lifetime: lazy-create at FIRST lock, persist across
+     *   lock/unlock cycles, grow-only (:543 "only resize if it
+     *   needs to grow"), freed at surface destroy (our stop()).
+     * - Fill (:377-396): address[0] = mapping base + buffer offset
+     *   (shape_y*rowBytes + shape_x*bpp, :390/:417); rowBytes =
+     *   the ALLOCATION's stride (screen stride, :408/:393);
+     *   width/height = current shape bounds; colorTemperature[0]
+     *   = 0x1CCCC (GeForce.kext precedent).
+     * What this rung does NOT claim: no CPU->host transfer —
+     * pixels written here stay in guest memory until a later
+     * rung (SVGA2 needs none: its backing IS device VRAM, :558). */
+    IOAccelSurfaceInformation* info = (IOAccelSurfaceInformation*)p1;
+    size_t* infoSize = (size_t*)p2;
+
+    if (!info || !infoSize || *infoSize < sizeof(IOAccelSurfaceInformation)) {
+        IOLog("VMAccelSurfaceClient: WriteLock -> BadArgument "
+              "(info=%p infoSize=%p cap=%llu need=%u)\n",
+              info, infoSize, infoSize ? (unsigned long long)*infoSize : 0ULL,
+              (unsigned)sizeof(IOAccelSurfaceInformation));
+        return kIOReturnBadArgument;
+    }
+    if (!m_surface || !m_surface->surface_id || !m_surface->width ||
+        !m_surface->height || !m_surface->bytes_per_pixel || !m_surface->base_w) {
+        IOLog("VMAccelSurfaceClient: WriteLock -> NotReady (no id/geometry/"
+              "bpp)\n");
+        return kIOReturnNotReady;
+    }
+    bzero(info, *infoSize);
+
+    IOLockLock(m_lock);
+
+    /* 10.6 Window-Grab deadlock avoidance (:1251-1253): when armed,
+     * succeed WITHOUT taking the lock bit. */
+    bool skipped = false;
+    if (m_skip_write_lock_once) {
+        m_skip_write_lock_once = false;
+        skipped = true;
+        IOLog("VMAccelSurfaceClient: WriteLock — bSkipWriteLockOnce "
+              "firing (lock-bit not taken)\n");
+    } else if (m_surface->is_locked) {
+        IOLog("VMAccelSurfaceClient: WriteLock -> CannotLock (already "
+              "held)\n");
+        IOLockUnlock(m_lock);
+        return kIOReturnCannotLock;
+    } else {
+        m_surface->is_locked = true;
+    }
+
+    /* Lazy, grow-only backing: stride is the ALLOCATION's stride
+     * (base_w * bpp, page-rounded total). */
+    uint32_t bpp = m_surface->bytes_per_pixel;
+    uint32_t rowBytes = m_surface->base_w * bpp;
+    uint64_t need = (uint64_t)m_surface->base_h * rowBytes;
+    uint64_t allocSize = (need + page_size - 1) & ~((uint64_t)page_size - 1);
+
+    if (!m_surface->backing_memory ||
+        m_surface->backing_memory->getLength() < allocSize) {
+        /* release any smaller existing backing first (grow path,
+         * mirrors :545-548 release-before-realloc) */
+        if (m_surface->client_map) {
+            m_surface->client_map->release();
+            m_surface->client_map = nullptr;
+        }
+        if (m_surface->backing_memory) {
+            m_surface->backing_memory->complete();
+            m_surface->backing_memory->release();
+            m_surface->backing_memory = nullptr;
+        }
+        IOBufferMemoryDescriptor* md =
+            IOBufferMemoryDescriptor::inTaskWithOptions(
+                0 /* kernel task */,             /* idiom :1111-1116 */
+                kIOMemoryKernelUserShared | kIOMemoryPageable |
+                kIODirectionInOut,
+                allocSize, page_size);
+        if (!md) {
+            IOLog("VMAccelSurfaceClient: WriteLock -> NoMemory "
+                  "(alloc %llu failed)\n", (unsigned long long)allocSize);
+            m_surface->is_locked = false;
+            IOLockUnlock(m_lock);
+            return kIOReturnNoMemory;
+        }
+        if (md->prepare() != kIOReturnSuccess) {
+            md->release();
+            IOLog("VMAccelSurfaceClient: WriteLock -> NoMemory "
+                  "(prepare failed)\n");
+            m_surface->is_locked = false;
+            IOLockUnlock(m_lock);
+            return kIOReturnNoMemory;
+        }
+        IOMemoryMap* map = md->createMappingInTask(m_owning_task, 0,
+                                                   kIOMapAnywhere);
+        if (!map) {
+            md->complete();
+            md->release();
+            IOLog("VMAccelSurfaceClient: WriteLock -> NoMemory "
+                  "(createMappingInTask failed)\n");
+            m_surface->is_locked = false;
+            IOLockUnlock(m_lock);
+            return kIOReturnNoMemory;
+        }
+        m_surface->backing_memory = md;
+        m_surface->client_map = map;
+        m_surface->bytes_per_row = rowBytes;
+        IOLog("VMAccelSurfaceClient: WriteLock — backing ALLOCATED "
+              "%llu bytes (extent %ux%u stride %u), mapped at "
+              "0x%llx in owning task\n",
+              (unsigned long long)allocSize,
+              m_surface->base_w, m_surface->base_h, rowBytes,
+              (unsigned long long)map->getAddress());
+    }
+
+    /* Handout: client-task address + shape offset, allocation
+     * stride, current shape dims. */
+    uint64_t offset = (uint64_t)m_surface->shape_y * m_surface->bytes_per_row
+                    + (uint64_t)m_surface->shape_x * bpp;
+    mach_vm_address_t base = m_surface->client_map->getAddress();
+
+    /* Self-check (never trust arithmetic silently): the shape
+     * window must fit inside the mapping. */
+    if (offset + (uint64_t)m_surface->height * m_surface->bytes_per_row >
+        m_surface->client_map->getLength()) {
+        IOLog("VMAccelSurfaceClient: MISMATCH — handout window exceeds "
+              "mapping: offset=%llu h=%u stride=%u len=%llu\n",
+              (unsigned long long)offset, m_surface->height,
+              m_surface->bytes_per_row,
+              (unsigned long long)m_surface->client_map->getLength());
+    }
+
+    info->address[0] = base + offset;
+    info->width = m_surface->width;
+    info->height = m_surface->height;
+    info->rowBytes = m_surface->bytes_per_row;
+    info->pixelFormat = m_surface->pixel_format;
+    info->colorTemperature[0] = 0x1CCCC;    /* worked example :395 */
+
+    IOLog("VMAccelSurfaceClient: WriteLock -> Success (base=0x%llx "
+          "off=%llu addr=0x%llx %ux%u stride=%u%s)\n",
+          (unsigned long long)base, (unsigned long long)offset,
+          (unsigned long long)info->address[0],
+          info->width, info->height, info->rowBytes,
+          skipped ? " [skipped-lock]" : "");
+    IOLockUnlock(m_lock);
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::writeUnlockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: WriteUnlock -> Unsupported\n");
-    return kIOReturnUnsupported;
+    /* Worked example :1276-1281: clear the bit, Success, nothing
+     * unmaps — the backing persists by design. */
+    IOLockLock(m_lock);
+    if (m_surface)
+        m_surface->is_locked = false;
+    IOLockUnlock(m_lock);
+    IOLog("VMAccelSurfaceClient: WriteUnlock -> Success (bit cleared, "
+          "backing persists)\n");
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::control(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)

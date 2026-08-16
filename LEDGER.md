@@ -16,7 +16,123 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (geometry-fix boot pre-registered — build 3d618e6f, Split commit 1 of 2; entry below)
+Last updated: 2026-08-16 (WriteLock-rung boot pre-registered — build 51a227aa, split commit 2 of 2; entry below)
+
+---
+
+## 2026-08-16 (WriteLock-rung boot pre-registrations, before build 51a227aa — SPLIT commit 2 of 2)
+
+**Build 51a227aa contains ONLY the lock mechanism**, on the
+boot-verified geometry: lazy grow-only backing
+(IOBufferMemoryDescriptor inTaskWithOptions KernelUserShared |
+Pageable | InOut, page-rounded, createMappingInTask(m_owning_task)
+— idiom :1111-1128), handout `base + shape_y*stride +
+shape_x*bpp` with rowBytes = the ALLOCATION's stride (base_w×bpp,
+NOT width×4), width/height = current shape bounds,
+colorTemperature[0]=0x1CCCC; bSkipWriteLockOnce guard armed at
+set_shape(wID==1, options==0x5) and honored in the lock;
+WriteUnlock = clear bit only (backing persists, :1276-1281);
+QueryLock now reports the REAL bit (stays honest now that a lock
+can be held); teardown in stop() releases map+descriptor even
+mid-lock. Boot-risk note: `page_size` and the descriptor/mapping
+calls are new kernel API surface for THIS kext — evidence is the
+worked example running them on this OS (target precedent), boot
+is the arbiter, revert = one step to ac16eac.
+
+**Pre-registered predictions:**
+1. First WriteLock after the early full-screen shape logs
+   "backing ALLOCATED ~7,075,840 bytes (extent 1680x1050 stride
+   6720)" (~6.75 MB) and → Success with a userspace address.
+   Exactly ONE allocation for the whole boot (no later shape
+   exceeds the boot's max extent 1680×1050; 869×860 etc. all
+   fit).
+2. The [9,11,14] storm STOPS or relocates: the loop was driven
+   by WriteLock failing. First-ever dispatches of index 15
+   (WriteUnlock) expected after the first Success — then either
+   the caller goes quiet (loop stopped on success) or the storm
+   relocates to the next unsucceeded selector (prediction:
+   Flush=10, per the damage-region model's fill→unlock→flush
+   order; SetScale=8 or Control=16 would be findings about the
+   sequence).
+3. QueryLock flips honest: Success while unlocked, CannotLock
+   between a WriteLock and its WriteUnlock. A SUSTAINED
+   CannotLock storm means the caller locks without unlocking —
+   discriminator for the caller's discipline.
+4. No MISMATCH line (offset + h×stride within the mapping —
+   arithmetic self-check); NoMemory would mean the extent
+   tracking is wrong.
+5. **Outcome #3 watch is ACTIVE (caller is WindowServer, this is
+   the memory rung):** after first Success the desktop either
+   stays visually normal (user check) or freezes/blacks — that
+   would mean WindowServer switched its compositing source to
+   this surface with no host transfer behind it. A hang (not a
+   crash) is the bSkipWriteLockOnce deadlock class. Recovery:
+   revert to ac16eac, one step.
+
+---
+
+## 2026-08-16 — geometry-fix boot RUN (ac16eac / 3d618e6f): predictions 1,3,4 confirmed; prediction 2 half-falsified — the shape stream is DAMAGE REGIONS, and the prior "full-screen" claim is corrected
+
+Installed cacheless by decision: `kextcache -system-caches`
+exited 0 but wrote NOTHING to `Startup/` (twice) — unexplained
+residual, tracked below; the blessed cacheless dev configuration
+was taken instead (Startup/ asserted empty, kext md5 verified in
+/S/L/E, root:wheel 755). Cacheless boot took ~7 min under TCG;
+kext loaded fine — the stale-cache failure class is absent in
+this mode by construction.
+
+**Predictions vs outcomes:**
+1. ✅ Caller-visible behavior IDENTICAL: cycle 7 ×1 →
+   [9 ×118, 11 ×59, 14 ×59]; QueryLock Success 59; WriteLock
+   Unsupported 59. Split premise holds.
+2. ✅/❌ Empty-region no-op works: 59 × "empty region … no-op",
+   exactly one per iteration, arriving AFTER the WriteLock attempt
+   (iteration order: real-shape → QueryLock → WriteLock →
+   empty-shape). **FALSIFIED half: "stored geometry stays
+   1680×1050" — full-screen was stored only 3×, all early in
+   boot.** The IdentityScale stream over the boot: 80×95 ×19,
+   46×22 ×6, 52×62 ×4, 64×64, 1680×22 ×3, 98×22, 218×22, 58×58,
+   154×88, 1332×804/860/760, 869×860, 1419×95, 1155×104, 2×3,
+   1680×14, 1680×1028 … — 59 stores, one real region per
+   iteration.
+3. ✅ SetIDMode logs `depth=0x4 bpp=4 [WindowServer surface]`.
+4. ✅ Cycle unchanged → the 0x1 call meant nothing beyond its
+   return code to the caller.
+
+**CORRECTION of the 29ab557c entry above:** its "geometry went
+full-screen" finding was a HEAD-OF-LOG SAMPLING ARTIFACT — the
+first iterations after GATED ON are full-screen
+(loginwindow/desktop setup), then the stream becomes small
+window-sized damage regions. The 645fa708 boot's "clock strip"
+was the same phenomenon seen mid-stream. The shape stream was
+heterogeneous ALL ALONG on every boot; only the sample points
+differed. Lesson recorded: tally the whole boot's geometry
+distribution, not the first lines — this is the second time
+head-of-log reading produced a wrong generalization.
+
+**What the shape stream actually is (inference, now
+well-grounded):** per-dirty-region shape-before-lock — the
+worked example's traffic model. For wID==1 its bFromGFB branch
+(:1649-1654) treats the surface as the SCREEN-SIZED buffer:
+buffer = shape bounds (the sub-region), source = screen dims,
+rowBytes = SCREEN stride (`m_screenInfo.client_row_bytes`,
+calculateScaleParameters :408), and
+`calculateSurfaceInformation` adds
+`bounds.y*rowBytes + bounds.x*bpp` to the handed-out address
+(:390, reserved[2] at :417). **Commit-2 design consequence:** our
+lock must keep a GROW-ONLY screen-extent allocation (max
+bounds.x+w, max bounds.y+h ever stored — the boot's early
+1680×1050 establishes it), report rowBytes = the allocation's
+stride (base_w × 4), and hand out
+`base + shape_y*rowBytes + shape_x*bpp` with width/height = the
+CURRENT shape's bounds. Structural fields needed: shape x/y
+(bounds origin) and base extent, not just w/h.
+
+**Residual (unexplained):** kextcache exit=0 with empty Startup/
+on this boot's install. Prior installs produced 9-10 MB mkext.
+Possible: kextd dependency, volume state, or flag behavior
+change. Not investigated — cacheless is the current dev mode;
+revisit before any boot where cache behavior matters.
 
 ---
 
