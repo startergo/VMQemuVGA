@@ -28,6 +28,13 @@ struct VMAccelSurface {
     uint32_t base_w, base_h;
     IOBufferMemoryDescriptor* backing_memory;
     IOMemoryMap* client_map;    /* mapping in m_owning_task, outlives unlock */
+    IOMemoryMap* kernel_map;    /* kernel-task mapping — flush's memcpy source.
+                                 * REQUIRED: KernelUserShared pageable memory has
+                                 * NO kernel VA until explicitly mapped
+                                 * (getBytesNoCopy() returned 0 on the 3258aaec
+                                 * boot, 42/42 flush NotReady). Worked example
+                                 * idiom: createMappingInTask(kernel_task, 0,
+                                 * kIOMapAnywhere), VMsvga2Surface.cpp:1123. */
     uint32_t bytes_per_row;     /* the ALLOCATION's stride: base_w * bpp */
     bool is_locked;
     task_t owning_task;

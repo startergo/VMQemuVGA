@@ -255,6 +255,10 @@ void CLASS::stop(IOService* provider)
         if (m_surface->is_locked)
             IOLog("VMAccelSurfaceClient: stop with lock HELD "
                   "(client died mid-lock?) — releasing anyway\n");
+        if (m_surface->kernel_map) {
+            m_surface->kernel_map->release();
+            m_surface->kernel_map = nullptr;
+        }
         if (m_surface->client_map) {
             m_surface->client_map->release();
             m_surface->client_map = nullptr;
@@ -649,7 +653,9 @@ IOReturn CLASS::flush(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6
     if (m_accelerator)
         fb = OSDynamicCast(VMVirtIOFramebuffer, m_accelerator->getProvider());
     uint8_t* dst = (uint8_t*)(fb ? fb->getBackingKernelPtr() : nullptr);
-    uint8_t* src = (uint8_t*)m_surface->backing_memory->getBytesNoCopy();
+    uint8_t* src = m_surface->kernel_map
+                       ? (uint8_t*)m_surface->kernel_map->getAddress()
+                       : nullptr;
     if (!dst || !src) {
         IOLog("VMAccelSurfaceClient: Flush -> NotReady (fb=%p src=%p)\n",
               dst, src);
@@ -813,6 +819,10 @@ IOReturn CLASS::writeLockSurface(void *p1, void *p2, void *p3, void *p4, void *p
         m_surface->backing_memory->getLength() < allocSize) {
         /* release any smaller existing backing first (grow path,
          * mirrors :545-548 release-before-realloc) */
+        if (m_surface->kernel_map) {
+            m_surface->kernel_map->release();
+            m_surface->kernel_map = nullptr;
+        }
         if (m_surface->client_map) {
             m_surface->client_map->release();
             m_surface->client_map = nullptr;
@@ -849,20 +859,37 @@ IOReturn CLASS::writeLockSurface(void *p1, void *p2, void *p3, void *p4, void *p
             md->complete();
             md->release();
             IOLog("VMAccelSurfaceClient: WriteLock -> NoMemory "
-                  "(createMappingInTask failed)\n");
+                  "(client createMappingInTask failed)\n");
+            m_surface->is_locked = false;
+            IOLockUnlock(m_lock);
+            return kIOReturnNoMemory;
+        }
+        /* Kernel mapping for the flush memcpy — KernelUserShared
+         * pageable memory has no kernel VA without it (3258aaec
+         * boot: getBytesNoCopy()==0, 42/42 flush NotReady). */
+        IOMemoryMap* kmap = md->createMappingInTask(kernel_task, 0,
+                                                    kIOMapAnywhere);
+        if (!kmap) {
+            map->release();
+            md->complete();
+            md->release();
+            IOLog("VMAccelSurfaceClient: WriteLock -> NoMemory "
+                  "(kernel createMappingInTask failed)\n");
             m_surface->is_locked = false;
             IOLockUnlock(m_lock);
             return kIOReturnNoMemory;
         }
         m_surface->backing_memory = md;
         m_surface->client_map = map;
+        m_surface->kernel_map = kmap;
         m_surface->bytes_per_row = rowBytes;
         IOLog("VMAccelSurfaceClient: WriteLock — backing ALLOCATED "
-              "%llu bytes (extent %ux%u stride %u), mapped at "
-              "0x%llx in owning task\n",
+              "%llu bytes (extent %ux%u stride %u), client 0x%llx "
+              "kernel 0x%llx\n",
               (unsigned long long)allocSize,
               m_surface->base_w, m_surface->base_h, rowBytes,
-              (unsigned long long)map->getAddress());
+              (unsigned long long)map->getAddress(),
+              (unsigned long long)kmap->getAddress());
     }
 
     /* Handout: client-task address + shape offset, allocation

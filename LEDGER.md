@@ -16,7 +16,56 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (lock+flush PAIR boot pre-registered — build 3258aaec, blit-only flush; entry below)
+Last updated: 2026-08-16 (pair boot 1 RUN: flush NotReady 42/42, src=0 — getBytesNoCopy has no kernel VA for KernelUserShared memory; kernel-mapping fix in build 9c893795, boot 2 pre-registered; entry below)
+
+---
+
+## 2026-08-16 — pair boot 1 (47eb581 / 3258aaec): flush refused 42/42 by its own gate; diagnosis src=0; blue screen unchanged (pre-registered failure mode)
+
+**Outcome: blue screen again — and the log names the exact cause:**
+`Flush -> NotReady (fb=0xffffff806fabf000 src=0)` ×42/42. The FB
+getter chain WORKS (kernel pointer resolved); the failure is the
+SURFACE source pointer: `getBytesNoCopy()` returns 0 for
+inTaskWithOptions(KernelUserShared|Pageable) memory — it has NO
+kernel virtual address until explicitly mapped. That is precisely
+why the worked example creates `createMappingInTask(kernel_task,
+0, kIOMapAnywhere)` before writing into its buffer (:1123). I used
+the wrong accessor; the NotReady gate (pre-registered failure
+mode) refused rather than blitted from NULL — no corruption, one
+clean diagnosis for one boot.
+
+**Everything else on this boot landed as pre-registered:** cycle
+[9,9,11,14,15,10] ×42 all green through unlock; ONE allocation
+(1680×1050 stride 6720); **ZERO MISMATCH lines** — the formula
+fix verified live (the 80×95 at off=6422624 that false-positived
+5× on the lock-only boot now passes silently); QueryLock 42/42
+Success; timer alive (first tick 12:54:26, Transfer+Flush
+SUCCESS); storm slow (~42 iterations / 8 min — decay pattern as
+before). Visual: blue screen — consistent: nothing ever blitted.
+
+**Fix in build 9c893795 (boot 2 of the pair landing):** keep an
+explicit KERNEL mapping alongside the client mapping —
+`kernel_map = md->createMappingInTask(kernel_task, 0,
+kIOMapAnywhere)` created in the lock's allocation path (fail-hard
+NoMemory if it fails — without it the pair contract is broken);
+flush reads `kernel_map->getAddress()`; released in the grow path
+and stop() teardown. `kernel_task` precedent: our own
+VMVirtIOGPU.cpp:1788/1890/1894 already links it.
+
+**Boot-2 pre-registrations (same list as boot 1, now with src
+expected live):**
+1. Flush logs "Success (blit … surfStride=6720 fbStride=7680 …)"
+   — the stride delta live on every line.
+2. Allocation line now prints BOTH addresses: client 0x… kernel
+   0x… (kernel in 0xffffff8… range, client in 0x1… range —
+   the address SPACES are the check).
+3. Cycle all green; storm stops or slows to damage rate. New
+   selector = next rung named by the log.
+4. **Desktop PAINTS** — colors right (straight copy correct) /
+   R-B swapped (channel mismatch, swizzle rung) / frozen-but-
+   storming (dst wrong or timer not carrying). Outcome #3 closes
+   on the first of those; recovery one step to ac16eac on any
+   destructive outcome.
 
 ---
 
