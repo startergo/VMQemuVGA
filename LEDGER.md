@@ -16,7 +16,60 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (pair boot 1 RUN: flush NotReady 42/42, src=0 — getBytesNoCopy has no kernel VA for KernelUserShared memory; kernel-mapping fix in build 9c893795, boot 2 pre-registered; entry below)
+Last updated: 2026-08-16 (pair boot 2 RUN: **DESKTOP PAINTS** — 48/48 blits green, mechanism complete end to end; five real selectors; entry below)
+
+---
+
+## 2026-08-16 — pair boot 2 (a9b5c78 / 9c893795): THE DESKTOP PAINTS THROUGH THE ACCELERATOR PATH — outcome #3 CLOSED
+
+**Visual verdict (user, 13:16 boot): "full desktop available now."**
+Blue screen gone; desktop rendered through the pair for the first
+time. (Color sub-verdict — R/B swap — asked explicitly; treat
+"full desktop" as strong-but-unconfirmed on channel order until
+the user answers.)
+
+**Kernel log, all green:**
+- **48/48 Flush -> Success (blit …)** — ZERO NotReady, ZERO
+  MISMATCH, ZERO CannotLock. Real geometries at real device
+  coordinates: 46×22 at (1634,0) = the clock strip; 1680×22 at
+  (0,0) = the menu bar; 1332×804 at (348,100) = a large window;
+  64×64 at (1190,967) = dock region; 1680×1050 full-screen.
+  The damage-region model, confirmed in the pixels.
+- Allocation: ONE, with both address spaces live:
+  "client 0x1027a0000 kernel 0xffffff8053b5d000" — the
+  address-space check from boot-2 prediction 2.
+- Cycle [9,9,11,14,15,10] ×48; dispatches STILL active at log
+  pull (desktop in use) — iterations at draw rate, every step
+  green. (Idle-desktop quiescence not yet observed; not
+  load-bearing.)
+- **Prediction detail wrong (recorded): fbStride=6720, not the
+  pre-registered 7680 — the FB mode this boot is 1680×1050, not
+  1920×1080 as on the previous two boots.** The code reads live
+  dims so the blits are consistent; the mode apparently differs
+  between boots (untracked variable — note for later if stride
+  questions arise). surfStride == fbStride == 6720 this boot.
+
+**State of the mechanism — five real selectors, the Apple
+consumer's full 2D surface loop served in-kernel:**
+SetIDMode → SetShape (empty no-op + IdentityScale gating) →
+QueryLock (state-honest) → WriteLock (real mapped backing in the
+owning task, grow-only, skip-guard armed) → WriteUnlock (bit) →
+Flush (clipped row-by-row blit to the FB backing; the 15 Hz timer
+carries to host). The structural divergence from the worked
+example is now IMPLEMENTED, not just understood: SVGA2 gets
+device-VRAM sharing for free; we pay with a kernel mapping + a
+blit, and the timer carries it the rest of the way.
+
+**Open items carried forward:**
+1. Color-channel sub-verdict (explicit user check).
+2. Idle-desktop quiescence of the dispatch loop.
+3. bSkipWriteLockOnce: armed, still untested by traffic (no
+   options==0x5 shape yet — Window Grab would trigger it; the
+   user dragging a window is the live test).
+4. kextcache empty-Startup/ residual (from the geometry-boot
+   entry) — still unexplained, cacheless mode still active.
+5. Hygiene list (vestigial managers, RendererID 0x00024600,
+   IOAccelTypes numeric on the accelerator, etc.) — unchanged.
 
 ---
 
