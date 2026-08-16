@@ -16,7 +16,67 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (pair boot 2 RUN: **DESKTOP PAINTS** — 48/48 blits green, mechanism complete end to end; five real selectors; entry below)
+Last updated: 2026-08-16 (post-landing confirmations + cursor diagnosis recorded; 30 Hz refresh experiment pre-registered — build 72dbfb31; entry below)
+
+---
+
+## 2026-08-16 — post-landing confirmations; cursor is NOT in the surface path; upstream cursor diagnosis; 30 Hz refresh experiment (pre-registered, build 72dbfb31)
+
+**Confirmations on the landed pair (user + log):**
+- **Colors correct** — straight-copy format agreement holds (user
+  notes swap was unlikely by construction: raw row copy never
+  interprets pixels; both buffers 8888; a swap would glare on the
+  Apple menu and wallpaper, not hide).
+- **Desktop survives a window drag** — no deadlock.
+- **bSkipWriteLockOnce still UNMET by traffic**: zero
+  options==0x5 shapes in the entire kernel.log INCLUDING the
+  drag. The guard remains adopted-on-faith from the worked
+  example; the 10.6 Window-Grab shape this boot's WindowServer
+  produces (if any) is not 0x5.
+
+**Cursor-damage test (log, no new boot):** the 64×64 blit rects
+cluster at y≈967 (dock row; x 1190→1256→1259 = dock activity),
+NOT a pointer trail across the display. **Cursor damage does not
+flow through the surface path** — selecting the user's
+pre-specified branch: only the timer lever applies; the
+immediate-transfer-on-flush lever would aim at window latency,
+not the cursor.
+
+**Cursor diagnosis recorded (user analysis, consistent with the
+FB's own 2026-08-09 dead-end investigation and the surface-side
+finding):** WindowServer composites the cursor into the aperture
+from userspace; the kernel never participates. Cursor pixels ride
+the full-surface transfer EXCLUSIVELY → quantized to the
+throttle rate → jank. The missing host-side overlay is upstream:
+without the kext, virtio-vga-gl is not on GL scanout (VGA
+firmware framebuffer → SPICE 2D, cursor works); with the kext
+(SET_SCANOUT on a virgl resource) GL scanout engages and
+CocoaSpice's GL path fails to composite the cursor —
+CSCursor.isInverted = !display.isGLEnabled shows the cursor code
+distinguishing the paths. **Not guest-reachable; upstream fix
+with a clean three-config reproduction** (QXL works /
+virtio-vga-gl no-kext works / virtio-vga-gl kext fails — same
+device, same host, one variable).
+
+**The change (72dbfb31): FULL_REFRESH_INTERVAL 4 → 2** (~15 Hz →
+~30 Hz effective; one constant in VMVirtIOFramebuffer.h, comment
+updated with the honest cost model). Justification: the original
+throttle priced in IOSleep(1)'s ~10ms/call floor; b414425's
+bounded spin removed it (spin covers the host's <20µs response).
+Remaining per-command cost: doorbell MMIO + virtqueue ops under
+TCG — the doubling 30→60 cmd/s is an experiment, not a free win.
+
+**Pre-registered predictions:**
+1. First-tick log self-reports "— 30 Hz refresh" (Hz computed
+   from the constant — the log line is its own check).
+2. **Cursor visibly smoother** (66 ms quantization → 33 ms;
+   user verdict).
+3. Load RISES (2× command rate under TCG); acceptable if
+   single-digit; revert to 4 if load explodes or the desktop
+   stutters.
+4. Surface path unchanged: cycle [9,9,11,14,15,10], blits
+   green, one allocation, zero MISMATCH/NotReady.
+5. Desktop intact.
 
 ---
 

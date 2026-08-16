@@ -64,12 +64,25 @@ private:
     bool                   m_scanout_taken_over_by_3d; // True when 3D app controls scanout
 
     // Throttled full-surface refresh. The timer fires at 60 Hz; we transfer
-    // every FULL_REFRESH_INTERVAL'th tick (~15 Hz). Cost model: the win is
+    // every FULL_REFRESH_INTERVAL'th tick. Cost model: the win is
     // NOT bandwidth (host memcpy on Apple Silicon is cheap and was never
-    // near a limit) — it's 4× fewer TCG-emulated virtqueue round-trips.
+    // near a limit) — it's fewer TCG-emulated virtqueue round-trips.
     // Each refresh is two commands (TRANSFER_TO_HOST_2D + RESOURCE_FLUSH),
-    // each with an MMIO doorbell write and a poll loop, and every one of
-    // those is expensive under TCG. 120 cmd/s → 30 cmd/s is the real saving.
+    // each with an MMIO doorbell write and a poll loop.
+    //
+    // 2026-08-16: INTERVAL 4→2 (~15 Hz → ~30 Hz). The original 4× throttle
+    // was justified when every submitCommand sat on an IOSleep(1) that
+    // blocks to the next scheduler tick — ~10ms/call on this guest (the
+    // "120 cmd/s → 30 cmd/s is the real saving" model). The bounded-spin
+    // fix (commit b414425) removed that floor: the spin covers the host's
+    // <20µs response, poll_iter lands well under the fallback. What
+    // remains per command is the doorbell MMIO + virtqueue ops — nonzero
+    // under TCG, so this is an EXPERIMENT, not a free win: measurement is
+    // guest load + cursor smoothness (the cursor rides this timer
+    // exclusively — WindowServer composites it into the aperture from
+    // userspace; see the 2026-08-09 investigation below — confirmed again
+    // 2026-08-16 from the surface side: no pointer-tracking rects in the
+    // flush blit stream, only dock-window damage).
     //
     // Sub-rect dirty tracking was investigated and rejected 2026-08-09:
     // every cursor-motion signal in the guest is dead with crsr = 0.
@@ -80,14 +93,21 @@ private:
     // the same reason — IOFramebuffer base only routes it to drivers that
     // advertised a hardware cursor. The real cursor-responsiveness fix is
     // host-composited hardware cursor, which is blocked on the UTM GL
-    // cursor-compositing question, not on anything in this driver.
+    // cursor-compositing question (CocoaSpice's GL display path not
+    // compositing the cursor overlay — CSCursor.isInverted =
+    // !display.isGLEnabled distinguishes the paths while CSDisplay's does
+    // not; upstream fix, not guest-reachable; the reproduction is the
+    // three-config comparison: QXL 2D cursor works, virtio-vga-gl without
+    // the kext = VGA-firmware framebuffer → 2D cursor works, with the
+    // kext = GL scanout cursor fails — same device, same host, one
+    // variable).
     //
     // Content-diff dirty tracking would be backwards on this configuration:
     // bytes are not the bottleneck (host-side memcpy), command count is.
     // Sub-rects would still cost two commands per tick plus the hashing CPU
     // under TCG — net regression.
     uint32_t               m_full_refresh_tick_count;
-    static const uint32_t  FULL_REFRESH_INTERVAL = 4;  // ~15 Hz at 60 Hz timer
+    static const uint32_t  FULL_REFRESH_INTERVAL = 2;  // ~30 Hz at 60 Hz timer (was 4/~15 Hz pre-2026-08-16)
     
     void initDisplayModes();
     IOReturn createAGDCService();
