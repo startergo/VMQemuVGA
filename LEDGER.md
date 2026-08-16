@@ -16,7 +16,7 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (WriteLock-rung boot RUN — 63/63 Success, one 7,057,408-byte mapping, WriteUnlock+Flush now in cycle; MISMATCH lines diagnosed as self-check formula bug; entry below)
+Last updated: 2026-08-16 (WriteLock-rung boot RUN corrected: BLUE SCREEN — outcome #3 fired, compositor switched to the untransferred surface; rule update: lock+flush land as a pair; entry below)
 
 ---
 
@@ -54,12 +54,34 @@ verified host↔guest. Cacheless boot again (~2 min this time).
    exceeded the mapping. Fix (one line, next mechanical commit):
    compare `offset + (h−1)*stride + w*bpp` against the mapping
    length.
-5. **Outcome #3 — desktop alive:** 1 user logged in, framebuffer
-   2D path active (refreshDisplay Transfer+Flush for resource 1
-   logged 09:54:28). Visual pixel check requested from user —
-   report separately when confirmed.
+5. ❌ **Outcome #3 FIRED — user visual check: the boot came up to
+   a BLUE SCREEN, not a desktop.** The "desktop alive" line first
+   written here (load + 1 user + early refreshDisplay) was WRONG
+   — alive ≠ pixels, the exact distinction the rules demand; it
+   is corrected here. **Mechanism (diagnosis, consistent with all
+   observations):** WriteLock success made WindowServer switch
+   its compositing destination to our surface; pixels land in the
+   7 MB guest-side mapping with no host transfer (Flush refused),
+   so nothing paints. The one refreshDisplay (09:54:28) was the
+   early software path; the blue screen is its residue. Storm
+   DECAYS rather than storms: 63 iterations in the first ~2 min,
+   only 5 more in the following ~18 min (10:14 tail) —
+   WindowServer backs off from a persistently failing flush.
+   Compositor alive throughout (no hang — bSkipWriteLockOnce
+   hazard did not materialize; no 0x5 shape seen).
 - bSkipWriteLockOnce never fired (no options==0x5 shape observed
   this boot either; the guard sits armed and untested by traffic).
+
+**RULE UPDATE from this boot — the lock rung cannot land alone.**
+Success at the lock CHANGES WHERE WindowServer draws; a lock
+without a working flush is a broken-window state by construction.
+The rung granularity was too fine here: **WriteLock and Flush
+must land as a PAIR** (one mechanism: "surface becomes
+presentable"), with the pre-registration covering both and the
+intermediate one-selector-boot discipline applying below the
+pair. Recovery for the current boot was pre-registered as
+"revert to ac16eac" — executed per user decision (see next
+entry).
 
 **Handout decode sanity (offset arithmetic verified against
 known on-screen geometry):** off=6536 → x=1634 (the clock strip);
