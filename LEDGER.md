@@ -16,7 +16,65 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (60 Hz PREP: idle-30 Hz load baseline 1.45 taken; mode variance promoted to NAMED CONFOUND; achieved-rate instrumentation pre-registered — build 72c53842; entry below)
+Last updated: 2026-08-16 (re-arm bug found AND confirmed in source; fix build b6192fed pre-registered — re-arm first, direct 33 ms period, throttle deleted, work-time logged; entry below)
+
+---
+
+## 2026-08-16 — baseline boot (72c53842) RUN: re-arm bug measured and confirmed in source; fix pre-registered (b6192fed)
+
+**Baseline boot results (instrumentation only, 30 Hz configured):**
+- **Unit calibration by artifact:** window dur ≈ 1.0006e10 raw for
+  a 1e10 target → raw units ARE nanoseconds. Confirmed, not
+  assumed.
+- **"30 Hz configured, 19-26 Hz achieved."** Idle windows:
+  ticks 498-514, xfers 249-257 per 10.01 s → achieved ≈ 25 Hz,
+  per-cycle 39-40 ms. Active windows: ticks 382-468, xfers
+  191-234 → 19-23 Hz, per-cycle 43-52 ms.
+- **tick:xfers = 2.000 EXACTLY in every window** — the throttle
+  arithmetic is perfect; the shortfall is tick DELIVERY (user
+  diagnosis: "the throttle is fine, the timer is late").
+- **Confirmed in SOURCE, not inferred** (user's model, then read):
+  VMVirtIOFramebuffer.cpp:2450-2463 — refreshDisplay() runs,
+  THEN setTimeoutMS(16) re-arms. Period = interval + work. Work
+  derived: idle ~7-8 ms, active ~11-20 ms per transfer+flush
+  pair (per-cycle minus the two 16 ms re-arms). Work ceiling
+  alone: ~50-90 Hz (user) — 30 Hz comfortably achievable, 60 Hz
+  plausible, ONCE the bug is fixed. **The pre-fix numbers
+  measured the bug, not the budget.**
+- Idle load: 1.83 at 7 min uptime (prior boot: 1.45 at 10 min —
+  boot-age caveat recorded; both are "idle 30 Hz-era, low
+  single digits"). Mode both boots: 1920×1080 (confound held
+  constant).
+- Skip-tick penalty confirmed too: even non-transfer ticks ran
+  ~19.6 ms (16 + callback ε) — the divide-by-N scheme paid the
+  late-re-arm on every tick.
+
+**The fix (build b6192fed) — one bug, two changes together
+(user direction):**
+1. Re-arm FIRST (top of the callback), work after — period
+   becomes max(interval, work).
+2. Divide-by-N throttle DELETED (FULL_REFRESH_INTERVAL,
+   m_full_refresh_tick_count, the gate); the period IS the rate
+   knob: REFRESH_PERIOD_MS = 33 (~30 Hz target — the RATE
+   DECISION IS NOT THIS CHANGE; 60 Hz gets decided on the
+   measured budget after this boot). First-tick log now prints
+   the period, not a bogus Hz division.
+3. Work-time logged SEPARATELY from period: workavg ns/xfer in
+   the window line; achieved Hz computed in-log. Work is
+   MODE-DEPENDENT (confound extended: work figures quote their
+   mode).
+
+**Pre-registrations for the fix boot (b6192fed):**
+1. Idle: ticks=xfers ≈ 300/window, achieved ~30 Hz (up from 25);
+   workavg ≈ 7-8 ms; period = max(33, work) — if workavg ≥ 33 ms,
+   the timer backs up even at 30 and THAT is the ceiling datum.
+2. Active: workavg 11-20 ms; achieved still ~30.
+3. Idle load ≈ 1.4-1.8 (boot-age caveat).
+4. Cursor at least as smooth as the 30 Hz verdict.
+5. Mode line logged (confound check).
+6. **Only then the 60 Hz decision, on evidence:** workavg ≤ ~16 ms
+   idle → 60 Hz plausible (period 17 ms > work); pre-register its
+   own boot. Refuse on measurement, not vibes.
 
 ---
 

@@ -106,21 +106,34 @@ private:
     // bytes are not the bottleneck (host-side memcpy), command count is.
     // Sub-rects would still cost two commands per tick plus the hashing CPU
     // under TCG — net regression.
-    uint32_t               m_full_refresh_tick_count;
+    // Refresh cadence (2026-08-16 re-arm fix): the timer period is set
+    // DIRECTLY to the target — no divide-by-N throttle. The old scheme
+    // (16 ms tick + every-Nth-tick transfer, re-armed AFTER the work)
+    // made the period interval + work-time: measured 39-52 ms per
+    // transfer cycle at a "30 Hz" configuration, i.e. 19-26 Hz achieved.
+    // With re-arm FIRST the period is max(interval, work). REFRESH_PERIOD_MS
+    // is the single rate knob; the achieved rate is measured by the
+    // window instrumentation below, not assumed from this constant.
+    // Work-time is MODE-DEPENDENT (1920x1080 vs 1680x1050 changes the
+    // transfer size) — the per-window work average is the budget datum
+    // for any future rate decision.
+    static const uint32_t  REFRESH_PERIOD_MS = 33;  // ~30 Hz target
     // Achieved-rate instrumentation (2026-08-16, before the 60 Hz
     // attempt — "configured" and "achieved" must be distinguishable,
-    // because the overrun symptom at 60 Hz is SKIPPED TICKS, not load).
+    // because the overrun symptom is SKIPPED TICKS, not load).
     // Window closes on mach_absolute_time() raw delta ≥ 1e10 raw units
-    // (~10 s IF units are ns; the 30 Hz baseline boot calibrates the
-    // unit empirically — do not convert units by assumption). ticks =
-    // refreshDisplay callbacks reached (IOTimerEventSource coalesces
-    // late fires, so ticks < expected IS the backup signal); xfers =
-    // successful transfer+flush pairs only.
+    // (calibrated empirically = 10.0 s: raw units are nanoseconds,
+    // confirmed by the 72c53842 boot's dur values, not assumed).
+    // ticks = timer fires that reached the handler (IOTimerEventSource
+    // coalesces late fires, so ticks < expected IS the backup signal);
+    // xfers = successful transfer+flush pairs only; work_sum = raw time
+    // spent inside those pairs (separate from period — the two must
+    // stay distinguishable).
     uint64_t               m_tick_window_count;
     uint64_t               m_xfer_window_count;
+    uint64_t               m_work_window_sum;
     uint64_t               m_window_start_raw;
     static const uint64_t  REFRESH_WINDOW_RAW = 10000000000ULL;
-    static const uint32_t  FULL_REFRESH_INTERVAL = 2;  // ~30 Hz at 60 Hz timer (was 4/~15 Hz pre-2026-08-16)
     
     void initDisplayModes();
     IOReturn createAGDCService();

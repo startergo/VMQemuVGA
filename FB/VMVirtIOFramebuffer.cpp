@@ -60,9 +60,9 @@ bool VMVirtIOFramebuffer::init(OSDictionary* properties)
     m_fb_allocation_height = 0;
     m_scanout_resource_id = 1;  // Primary GUI display resource ID
     m_scanout_taken_over_by_3d = false;  // 2D framebuffer active by default
-    m_full_refresh_tick_count = 0;
     m_tick_window_count = 0;
     m_xfer_window_count = 0;
+    m_work_window_sum = 0;
     m_window_start_raw = mach_absolute_time();
     m_width = 1024;
     m_height = 768;
@@ -1227,9 +1227,9 @@ IOReturn VMVirtIOFramebuffer::open(void)
                                 (IOTimerEventSource::Action)&VMVirtIOFramebuffer::displayRefreshTimer);
                             if (m_refresh_timer) {
                                 if (workloop->addEventSource(m_refresh_timer) == kIOReturnSuccess) {
-                                    // Arm at steady-state cadence; the timer re-arms at 16 ms on each
-                                    // fire. The old 1 s initial arm delayed first paint for no reason.
-                                    m_refresh_timer->setTimeoutMS(16);
+                                    // Arm at the steady-state period; the callback re-arms FIRST
+                                    // (before the work) so the wait overlaps it.
+                                    m_refresh_timer->setTimeoutMS(REFRESH_PERIOD_MS);
                                     IOLog("VMVirtIOFramebuffer::open() - Display refresh timer armed (16 ms)\n");
                                 } else {
                                     IOLog("VMVirtIOFramebuffer::open() - Failed to add timer to workloop\n");
@@ -1708,8 +1708,9 @@ IOReturn VMVirtIOFramebuffer::enableController()
     // In VGA compatibility mode, BAR0 writes automatically appear on screen
     // The timer would interfere by calling transferToHost2D which is not needed in VGA mode
     if (useNativeScanout && m_refresh_timer && m_gpu_driver) {
-        m_refresh_timer->setTimeoutMS(16);  // 60 Hz refresh rate for native VirtIO mode
-        IOLog("VMVirtIOFramebuffer::enableController() - Display refresh timer enabled: 60 Hz (native VirtIO mode)\n");
+        m_refresh_timer->setTimeoutMS(REFRESH_PERIOD_MS);
+        IOLog("VMVirtIOFramebuffer::enableController() - Display refresh timer enabled: period %u ms (native VirtIO mode)\n",
+              (unsigned)REFRESH_PERIOD_MS);
         IOLog("VMVirtIOFramebuffer::enableController() - Timer will transfer framebuffer updates to VirtIO GPU\n");
     } else if (!useNativeScanout) {
         IOLog("VMVirtIOFramebuffer::enableController() - Timer DISABLED (VGA compatibility mode - not needed)\n");
@@ -2445,23 +2446,29 @@ void VMVirtIOFramebuffer::displayRefreshTimer(OSObject* owner, IOTimerEventSourc
     if (call_count <= 5) {
         IOLog("VMVirtIOFramebuffer::displayRefreshTimer() - Timer fired (call #%d)\n", call_count);
     }
-    
+
+    /* RE-ARM FIRST (2026-08-16 fix): the old order (work, then
+     * re-arm) made the period interval + work-time — measured 39-52
+     * ms cycles at a "30 Hz" configuration (19-26 Hz achieved; the
+     * 72c53842 boot's window instrumentation). Re-arming before the
+     * work makes the wait overlap it: period = max(interval, work).
+     * The period IS the rate knob now (REFRESH_PERIOD_MS) — no
+     * divide-by-N throttle compounding a late-re-arm penalty on
+     * skipped ticks.
+     *
+     * Note: do NOT chase dirty-rectangle tracking here. Per LEDGER
+     * 2026-08-09, the cost under TCG is the per-command doorbell
+     * round-trip, not bytes — QEMU executes TRANSFER_TO_HOST_2D
+     * host-side at native speed, so sub-rect transfers leave command
+     * count unchanged and buy essentially nothing; dirty-rect paths
+     * were investigated and falsified. */
+    if (sender && fb->m_refresh_timer) {
+        fb->m_refresh_timer->setTimeoutMS(REFRESH_PERIOD_MS);
+    }
+
     // Refresh display - transfer framebuffer to VirtIO GPU and flush to display
     fb->refreshDisplay();
-    
-    // Re-arm timer for next refresh cycle (16ms = 60 Hz; the refresh logic
-    // elsewhere skips 3 of every 4 ticks to throttle to ~15 Hz).
-    //
-    // Note: do NOT chase dirty-rectangle tracking here. Per LEDGER 2026-08-09,
-    // the cost under TCG is the per-command doorbell round-trip, not bytes —
-    // QEMU executes TRANSFER_TO_HOST_2D host-side at native speed, so reducing
-    // byte count via sub-rect transfers would leave command count unchanged
-    // and buy essentially nothing. The 15 Hz throttle is the actual win
-    // (4× fewer doorbell round-trips); dirty-rect paths were investigated
-    // and falsified.
-    if (sender && fb->m_refresh_timer) {
-        fb->m_refresh_timer->setTimeoutMS(16);
-    }
+
 }
 
 void VMVirtIOFramebuffer::refreshDisplay()
@@ -2475,15 +2482,24 @@ void VMVirtIOFramebuffer::refreshDisplay()
         if (now_raw - m_window_start_raw >= REFRESH_WINDOW_RAW) {
             uint64_t dur_raw = now_raw - m_window_start_raw;
             IOLog("VMVirtIOFramebuffer: refresh window — ticks=%llu "
-                  "xfers=%llu dur=%llu raw (%llu raw/xfers)\n",
+                  "xfers=%llu dur=%llu raw workavg=%llu ns/xfer "
+                  "(achieved ~%llu.%u Hz)\n",
                   (unsigned long long)m_tick_window_count,
                   (unsigned long long)m_xfer_window_count,
                   (unsigned long long)dur_raw,
                   m_xfer_window_count
-                      ? (unsigned long long)(dur_raw / m_xfer_window_count)
-                      : 0ULL);
+                      ? (unsigned long long)(m_work_window_sum / m_xfer_window_count)
+                      : 0ULL,
+                  m_xfer_window_count
+                      ? (unsigned long long)(m_xfer_window_count / (dur_raw / 1000000000ULL))
+                      : 0ULL,
+                  m_xfer_window_count
+                      ? (unsigned)((m_xfer_window_count % (dur_raw / 1000000000ULL)) * 10 /
+                                   (dur_raw / 1000000000ULL))
+                      : 0U);
             m_tick_window_count = 0;
             m_xfer_window_count = 0;
+            m_work_window_sum = 0;
             m_window_start_raw = now_raw;
         }
     }
@@ -2509,23 +2525,19 @@ void VMVirtIOFramebuffer::refreshDisplay()
         return;
     }
 
-    // Throttled full-surface refresh at ~15 Hz. See header for the cost
-    // model and the dead-end investigations (cursorRect, setCursorState,
-    // content-diff) that were closed before this landed.
+    // Full-surface refresh every fire — the period IS the rate knob
+    // (REFRESH_PERIOD_MS, re-armed before the work; see the callback and
+    // the header's cadence note). Dead-end investigations (cursorRect,
+    // setCursorState, content-diff) are recorded in the header.
     static bool logged_first_refresh = false;
     if (!logged_first_refresh) {
         logged_first_refresh = true;
-        IOLog("VMVirtIOFramebuffer::refreshDisplay: first tick (mode=%u %ux%u) — %u Hz refresh\n",
+        IOLog("VMVirtIOFramebuffer::refreshDisplay: first tick (mode=%u %ux%u) — period %u ms\n",
               (unsigned)m_current_mode, (unsigned)m_width, (unsigned)m_height,
-              (unsigned)(60 / FULL_REFRESH_INTERVAL));
+              (unsigned)REFRESH_PERIOD_MS);
     }
 
-    m_full_refresh_tick_count++;
-    if (m_full_refresh_tick_count < FULL_REFRESH_INTERVAL) {
-        return;
-    }
-    m_full_refresh_tick_count = 0;
-
+    uint64_t work0 = mach_absolute_time();
     IOReturn transfer_result = m_gpu_driver->transferToHost2D(m_scanout_resource_id, 0,
                                                                0, 0, m_width, m_height);
     if (transfer_result != kIOReturnSuccess) {
@@ -2540,6 +2552,10 @@ void VMVirtIOFramebuffer::refreshDisplay()
               flush_result);
         return;
     }
+    /* Work-time kept SEPARATE from period (user direction): the two
+     * must stay distinguishable — work is the budget datum (and is
+     * mode-dependent). Raw ns, same as the window clock. */
+    m_work_window_sum += mach_absolute_time() - work0;
     m_xfer_window_count++;   /* successful transfer+flush pair only */
 
     static bool logged_success = false;
