@@ -16,7 +16,150 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (QueryLock boot RUN — prediction confirmed; cycle now 7→[9,9,11,14] with WriteLock the new held line; caller attributed to WindowServer pid 98; entry below)
+Last updated: 2026-08-16 (geometry-fix boot pre-registered — build 3d618e6f, Split commit 1 of 2; entry below)
+
+---
+
+## 2026-08-16 (geometry-fix boot pre-registrations, before build 3d618e6f — SPLIT commit 1 of 2)
+
+**The isRegionEmpty finding is a real storage bug** (read from the
+worked example, :136-144/:1607/:1639): our SetShape stored
+bounds.w/h from EVERY call, so the observed 0x1 pair-member
+(bounds 1×1, rect 0×0) overwrote 1680×1050 with 1×1 twice per
+cycle — invisible until now because nothing read the stored
+geometry. A lock implemented on top would have allocated backing
+for a 1×1 surface. Per user split: land the geometry fix FIRST as
+a mechanical change with the lock still Unsupported, then the lock
+rung lands on known-correct geometry — if the lock boot goes
+wrong, geometry is already excluded.
+
+**Build 3d618e6f contains ONLY:** empty-region no-op (rect[0]
+degenerate → Success, geometry untouched — :1607), IdentityScaleBit
+(0x4) gate on geometry storage (:1639-1655), bpp derivation at
+SetIDMode (0x24 → depth 0x4 → 4 bpp, stored; unknown depths store
+0 and nothing reads it yet), dead code removed (vram_address
+field, three never-defined helper declarations). No returns
+changed, no memory claimed, no new selectors real.
+
+**Pre-registered predictions:**
+1. Caller-visible behavior IDENTICAL to the 29ab557c boot: cycle
+   7 → [9,9,11,14], QueryLock Success, WriteLock Unsupported, same
+   storm rate. The only deltas are log lines — that is the point
+   of the split.
+2. New log lines: 0x1 member logs "empty region … no-op"; 0xd
+   member logs "IdentityScale: geometry STORED (1680x1050)"; the
+   stored pair-stable geometry is 1680×1050 across the whole boot.
+3. SetIDMode logs bpp=4.
+4. If the cycle CHANGES shape, the split's premise is wrong — the
+   0x1 call meant something to the caller beyond its return code.
+   (Cannot see how: it returned Success before and after.)
+
+---
+
+## 2026-08-16 — write_lock contract read (design step, zero code); loose end closed: geometry change is same-client
+
+**Loose end closed first (from the same kernel.log, zero boots):**
+GATED ON (client-creation) count = **1 in boot B (645fa708, clock-strip
+geometry) and 1 in boot C (29ab557c, full-screen)** — one surface
+client per boot, zero destroy/close lines. The geometry change is
+the SAME WindowServer client re-shaping across the rung; a
+different-client explanation is ruled out. "Shapes full desktop
+once lock-availability succeeds" remains an inference on causality,
+but client-identity coincidence is not available as an out.
+
+**WriteLock contract, read from the worked example** (all line
+numbers `~/VMsvga2-modern/AC/UC/VMsvga2Surface.cpp` unless noted;
+headers in MacKernelSDK):
+
+1. **What comes back — `IOAccelSurfaceInformation`**
+   (IOAccelTypes.h:56-70): `mach_vm_address_t address[4]`,
+   `UInt32 rowBytes, width, height`, `UInt32 pixelFormat`,
+   `IOOptionBits flags`, `IOFixed colorTemperature[4]`,
+   `UInt32 typeDependent[4]`. Size taken as `sizeof` at build
+   time — do not hand-compute. Table row for index 14 is
+   `kIOUCScalarIStructO, 0, kIOUCVariableStructureSize` (0 scalars
+   in, variable struct out — driver fills it); plain
+   `surface_write_lock` (:1481) forwards to `_options` with
+   `kIOAccelSurfaceLockInAccel`. Fields the worked example fills
+   (`calculateSurfaceInformation` :377-396): `address[0]` (+ buffer
+   byte offset), `width`, `height`, `rowBytes` (= source pitch),
+   `pixelFormat` (stored mode), `colorTemperature[0]=0x1CCCC`
+   ("from GeForce.kext"); everything else stays bzero'd.
+   Validation order (:1246-1256): `*infoSize < sizeof` →
+   kIOReturnBadArgument; `!bHaveID || !isSourceValid()` →
+   kIOReturnNotReady; already locked → kIOReturnCannotLock.
+
+2. **Direction — driver creates the mapping in the OWNING task.**
+   The design-flaw comment (:1089-1098) states it: a locked
+   CGSSurface address must be valid *inside the WindowServer* (the
+   owning task), not the requesting app. Mechanism (idiom at
+   :1111-1128, real path `allocBacking` :531 / `mapBacking`
+   :569): `IOBufferMemoryDescriptor::inTaskWithOptions(0,
+   kIOMemoryKernelUserShared | kIOMemoryPageable | kIODirectionInOut,
+   size, page_size)` then `createMappingInTask(m_owning_task, 0,
+   kIOMapAnywhere)`; on SVGA2 the preferred backing is **VRAM**
+   (`m_provider->VRAMRealloc`, mapped via `mapVRAMRangeForTask`)
+   with GMR fallback. **NOT clientMemoryForType /
+   IOConnectMapMemory** — the address travels inside the struct.
+   **Decision consequence: this is the map-into-WindowServer
+   direction, the opposite of ATTACH_BACKING, and is machinery
+   this project has never exercised.** A client-provided branch
+   exists (`set_shape_backing` → `m_client_backing.addr` returned
+   as-is :385-386) — that would reuse ATTACH_BACKING-direction
+   thinking — but our observed caller never dispatches selector 6.
+
+3. **Unlock / lifetime:** `surface_write_unlock_options` (:1276-1281)
+   = `OSTestAndClear(lock bit); return Success`. **Nothing is
+   unmapped.** Backing is lazily allocated at FIRST write lock
+   (:1258-1263: `if (isClientBackingValid()) goto finishup; if
+   (!allocBacking() || !mapBacking(m_owning_task, 0U)) →
+   kIOReturnNoMemory`), persists across lock/unlock cycles, torn
+   down only at surface destruction (`releaseBacking` :590).
+   Architectural note for our port: on SVGA2 the backing IS device
+   memory (CPU and device see the same bytes), which is why unlock
+   needs no transfer. Virtio-gpu has no guest-CPU-mappable VRAM,
+   so for us CPU-written pixels need a later CPU→host push
+   (TRANSFER_TO_HOST_2D family) — a LATER rung, not part of
+   WriteLock success. Lock also calls `vtb.sync` (:1270-1271) when
+   backing is not packed — device-DMA drain before CPU writes;
+   no-op for our first version.
+
+**Watch item from the same read — UPGRADED to required behavior
+(user correction, same session):** `bSkipWriteLockOnce`
+(:1251-1253, set at :1658-1666) — set_shape with `m_wID==1 &&
+options==0x5` makes the NEXT write_lock succeed WITHOUT taking
+the lock bit, as the fix for a **10.6 WindowServer deadlock
+during Window Grab** (comment notes Window Grab works on 10.7 and
+asks what changed). **Our surface IS wID==1 — the exact guarded
+case.** This is not a wart to omit as a hack: leaving it out
+reintroduces a compositor hang, outcome #3 territory on the rung
+where a mistake is destructive rather than merely unsuccessful.
+Our observed set_shape options so far are 0xd/0x1 (0x5 not yet
+seen), but the guard goes in with the same condition regardless.
+
+**Two further design obligations (user, same session):**
+1. **Lazy-create-and-persist has a teardown obligation.** The
+   mapping outlives unlock, so it must be released at surface
+   destroy AND at clientClose/free — specifically including the
+   client dying while holding a lock (WindowServer restarting
+   mid-lock is a real case). Same leak shape as the
+   backing-descriptor table, where the fix was cleanup on client
+   teardown regardless of what the caller did.
+2. **The two fields to get exactly right in
+   calculateSurfaceInformation-equivalent:** `address` must be the
+   CLIENT-TASK address from the mapping — never a kernel pointer —
+   and `rowBytes` must be the ALLOCATION's actual stride, not
+   width×4 by assumption. A wrong stride means the compositor
+   writes past what was mapped — the destructive version of the
+   GL_UNPACK_ROW_LENGTH bug. Invariant to self-check in code:
+   mapped_size ≥ height × rowBytes.
+
+**Next unit:** implement WriteLock per this contract — minimal
+honest version: `IOBufferMemoryDescriptor` (inTaskWithOptions,
+KernelUserShared) sized `width*height*bpp` rounded up to page,
+`createMappingInTask(m_owning_task)`, fill the five fields,
+Success. No host transfer, no client-backing branch. Own commit,
+own boot, pre-registered prediction written before it.
 
 ---
 

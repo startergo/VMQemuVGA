@@ -22,9 +22,8 @@ struct VMAccelSurface {
     uint32_t width;
     uint32_t height;
     uint32_t pixel_format;
-    uint32_t bytes_per_row;
+    uint32_t bytes_per_pixel;   /* derived from depth bits at SetIDMode */
     IOMemoryDescriptor* backing_memory;
-    void* vram_address;
     bool is_locked;
     task_t owning_task;
 };
@@ -32,18 +31,13 @@ struct VMAccelSurface {
 class VMAccelSurfaceClient : public IOUserClient
 {
     OSDeclareDefaultStructors(VMAccelSurfaceClient);
-    
+
 private:
     VMQemuVGAAccelerator* m_accelerator;
     task_t m_owning_task;
     VMAccelSurface* m_surface;
     IOLock* m_lock;
     bool m_creator_logged;  /* first-dispatch creator read, once */
-    
-    // Helper methods
-    IOReturn lockSurface(bool for_write);
-    IOReturn unlockSurface(bool was_write);
-    IOReturn getSurfaceState(uint32_t* state);
     
 public:
     // IOService overrides

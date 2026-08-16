@@ -240,7 +240,7 @@ bool CLASS::start(IOService* provider)
 void CLASS::stop(IOService* provider)
 {
     IOLog("VMAccelSurfaceClient: Stopping\n");
-    
+
     if (m_surface) {
         if (m_surface->backing_memory) {
             m_surface->backing_memory->release();
@@ -249,7 +249,7 @@ void CLASS::stop(IOService* provider)
         IOFree(m_surface, sizeof(VMAccelSurface));
         m_surface = nullptr;
     }
-    
+
     super::stop(provider);
 }
 
@@ -455,12 +455,25 @@ IOReturn CLASS::setIDMode(void *p1, void *p2, void *p3, void *p4, void *p5, void
      * (wID in the mode slot) — corrected before anything reads it. */
     uint32_t wid = (uint32_t)(uintptr_t)p1;
     uint32_t modebits = (uint32_t)(uintptr_t)p2;
+    /* Depth field -> bytes per pixel (eIOAccelSurfaceModeBits,
+     * IOAccelSurfaceConnect.h:105-122). Observed call: 0x24 = depth
+     * 0x4 (ColorDepth8888, 4 bpp) + WindowedBit. Depths we cannot
+     * name store bpp=0: WriteLock then refuses (NotReady) rather
+     * than sizing a backing on a guess. */
+    uint32_t depth = modebits & 0x0F;
+    uint32_t bpp = 0;
+    if (depth == 0x3)       bpp = 2;   /* 1555 */
+    else if (depth == 0x4)  bpp = 4;   /* 8888 */
+    else if (depth == 0xA)  bpp = 4;   /* BGRA32 */
     if (m_surface) {
         m_surface->surface_id = wid;
         m_surface->pixel_format = modebits;
+        m_surface->bytes_per_pixel = bpp;
     }
-    IOLog("VMAccelSurfaceClient: SetIDMode(wID=0x%x modebits=0x%x%s) -> "
-          "STORED\n", wid, modebits, (wid == 1) ? " [WindowServer surface]" : "");
+    IOLog("VMAccelSurfaceClient: SetIDMode(wID=0x%x modebits=0x%x "
+          "depth=0x%x bpp=%u%s) -> STORED\n",
+          wid, modebits, depth, bpp,
+          (wid == 1) ? " [WindowServer surface]" : "");
     return kIOReturnSuccess;
 }
 
@@ -514,17 +527,43 @@ IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void 
           rgn->num_rects,
           (int)rgn->bounds.x, (int)rgn->bounds.y,
           (int)rgn->bounds.w, (int)rgn->bounds.h);
-    if (rgn->num_rects > 0 && rgnSizeV >= (sizeof(IOAccelDeviceRegion) +
-                                           sizeof(IOAccelBounds))) {
+
+    /* Empty-region no-op (worked example :136-144, :1607): num_rects!=0
+     * with rect[0] degenerate IS an empty shape — the observed 0x1
+     * pair-member (bounds 1x1, rect 0x0) is exactly this. Returns
+     * Success WITHOUT touching geometry. */
+    bool rectReadable = (rgn->num_rects > 0 &&
+                         rgnSizeV >= (sizeof(IOAccelDeviceRegion) +
+                                      sizeof(IOAccelBounds)));
+    if (rectReadable) {
         IOLog("VMAccelSurfaceClient: SetShape rect[0]=(x=%d y=%d w=%d "
               "h=%d)\n",
               (int)rgn->rect[0].x, (int)rgn->rect[0].y,
               (int)rgn->rect[0].w, (int)rgn->rect[0].h);
+        if (rgn->rect[0].w <= 0 || rgn->rect[0].h <= 0) {
+            IOLog("VMAccelSurfaceClient: SetShape — empty region "
+                  "(rect[0] degenerate): no-op, geometry untouched "
+                  "(:1607)\n");
+            return kIOReturnSuccess;
+        }
     }
 
-    if (m_surface) {
-        m_surface->width  = (uint32_t)(rgn->bounds.w > 0 ? rgn->bounds.w : 0);
-        m_surface->height = (uint32_t)(rgn->bounds.h > 0 ? rgn->bounds.h : 0);
+    /* Geometry updates ONLY under IdentityScaleBit (:1639-1655).
+     * The observed 0x1 call lacks it; without the gate every second
+     * shape overwrote 1680x1050 with 1x1. For wID==1 the buffer IS
+     * the shape bounds (bFromGFB path, :1650). */
+    if (options & kIOAccelSurfaceShapeIdentityScaleBit) {
+        if (m_surface) {
+            m_surface->width  = (uint32_t)(rgn->bounds.w > 0 ? rgn->bounds.w : 0);
+            m_surface->height = (uint32_t)(rgn->bounds.h > 0 ? rgn->bounds.h : 0);
+        }
+        IOLog("VMAccelSurfaceClient: SetShape — IdentityScale: geometry "
+              "STORED (%ux%u)\n",
+              m_surface ? m_surface->width : 0,
+              m_surface ? m_surface->height : 0);
+    } else {
+        IOLog("VMAccelSurfaceClient: SetShape — no IdentityScaleBit: "
+              "geometry untouched (:1639)\n");
     }
     return kIOReturnSuccess;
 }
