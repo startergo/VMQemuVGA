@@ -61,19 +61,54 @@ TRANSFER_TO_HOST_2D + RESOURCE_FLUSH path is proven, and a
 refresh timer drives it (rate per SOURCE, correcting the
 user's 15 Hz: `m_refresh_timer->setTimeoutMS(16)` — "60 Hz
 refresh rate for native VirtIO mode", VMVirtIOFramebuffer.cpp
-:1708, also :1229/:2460). A surface flush with its own resource
+:1708, also :1229/:2460; at 16 ms the added latency from riding
+the timer is ≤~16-33 ms, not the 67 ms a 15 Hz timer would
+imply). A surface flush with its own resource
 + SET_SCANOUT would fight that timer — two writers, one scanout.
 **Instead: on flush, blit the surface's mapped buffer into the
-FRAMEBUFFER's backing at the shape offset, then transfer that
-rect through the existing path.** Offset decode already verified
-this boot; 2D machinery proven; refresh timer untouched. Flush =
-guest-side memcpy + an existing transfer call — less new
-mechanism than the rung it follows. Lands as a PAIR with
-WriteLock per the rule above.
+FRAMEBUFFER's backing at the shape offset.** Offset decode
+already verified this boot; 2D machinery proven; timer
+untouched. **REFINED at session close (user): land flush as
+BLIT-ONLY — the timer already transfers the whole framebuffer,
+so correctness needs nothing beyond the memcpy; an explicit
+TRANSFER_TO_HOST_2D of the dirty rect only buys latency. Add
+the immediate transfer later, only if latency shows.** The rung
+after a destructive failure becomes a guest-side memcpy and
+nothing else — no new virtio commands, no timer interaction, no
+scanout question at all.
 
-**Session close-out state:** master at 6c801db (lock rung
-committed, not installed anywhere); guest reverting to ac16eac.
-Next unit = task #2: design Flush per above, then land
+**Three blit details (user; cheap right, expensive wrong):**
+1. **Clip to the shape rect** — the surface was 46×22 at x=1634
+   in one boot and full-screen in another; respect bounds, never
+   assume full size.
+2. **Strides differ** — the mapped buffer's rowBytes and the
+   framebuffer's rowBytes are independently determined
+   (6720 vs. the FB's own stride; do not assume equal); copy
+   row by row, never one span.
+3. **Confirm byte order** — surface declares 0x24
+   (ColorDepth8888), FB is 32-bit, but a channel swap would
+   present as a rendering bug, not a format bug; verify ARGB vs
+   BGRA agreement (source read + one-boot visual) before
+   trusting a straight copy.
+
+**Structural divergence from the worked example, now
+UNDERSTOOD rather than inherited:** VMsvga2's unlock/flush do
+(almost) nothing because its backing IS device VRAM — the CPU
+and the device see the same bytes. Ours must move pixels because
+there is no BAR; the blit-to-FB-backing is the virtio-gpu
+equivalent of what SVGA2 gets for free. This is the load-bearing
+difference for every selector from the lock onward.
+
+**Notes carried into the lock+flush boot (must not be lost):**
+isRegionEmpty semantics — the 0x1 pair-member MUST stay a
+no-op; the flush blit clips to the shape rect and copies
+row-by-row (strides independently determined); the MISMATCH
+self-check formula fix (`offset + (h−1)*stride + w*bpp`);
+bpp=0 depths still refuse (NotReady).
+
+**Session close-out state:** master at 556d322 (ledger tip;
+lock rung at 6c801db, not installed anywhere); guest on ac16eac
+/ 3d618e6f, desktop CONFIRMED back. Next unit = task #2: land
 lock+flush together, one pre-registered boot.
 
 ---
