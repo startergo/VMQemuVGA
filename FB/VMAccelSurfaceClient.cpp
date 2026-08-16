@@ -22,65 +22,65 @@ static const IOExternalMethod sMethods[kIOAccelNumSurfaceMethods] = {
     [kIOAccelSurfaceReadLockOptions] = {
         NULL,                                                       // object (filled by getTargetAndMethodForIndex)
         (IOMethod) &VMAccelSurfaceClient::readLockOptions,         // func
-        kIOUCScalarIScalarO,                                       // flags
-        1,                                                          // count0 (1 scalar input: options)
-        0                                                           // count1 (0 scalar outputs)
+        kIOUCScalarIStructO,                                       // worked example VMsvga2Surface.cpp:74 — StructO(1, var)
+        1,                                                          // 1 scalar input: options
+        kIOUCVariableStructureSize                                  // out: IOAccelSurfaceInformation (handler slot p2)
     },
     [kIOAccelSurfaceReadUnlockOptions] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::readUnlockOptions,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIScalarO,                                       // :75 — already correct
         1,                                                          // 1 input: options
         0
     },
     [kIOAccelSurfaceGetState] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::getState,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIScalarO,                                       // :76 — already correct
         0,                                                          // 0 inputs
         1                                                           // 1 output: state
     },
     [kIOAccelSurfaceWriteLockOptions] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::writeLockOptions,
-        kIOUCScalarIScalarO,
-        1,                                                          // 1 input: options
-        0
+        kIOUCScalarIStructO,                                       // :79 — StructO(1, var), not (1,0)
+        1,                                                          // 1 scalar input: options
+        kIOUCVariableStructureSize                                  // out: IOAccelSurfaceInformation (handler slot p2)
     },
     [kIOAccelSurfaceWriteUnlockOptions] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::writeUnlockOptions,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIScalarO,                                       // :80 — already correct
         1,                                                          // 1 input: options
         0
     },
     [kIOAccelSurfaceRead] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::read,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIStructI,                                       // :81 — StructI(0, var)
         0,
-        0
+        kIOUCVariableStructureSize                                  // in struct: read params (handler slot p1)
     },
     [kIOAccelSurfaceSetShapeBacking] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::setShapeBacking,
-        kIOUCScalarIScalarO,
-        0,
-        0
+        kIOUCScalarIStructI,                                       // :82 — THE BACKING RUNG: StructI(4, var)
+        4,                                                          // 4 scalars, then region struct-in
+        kIOUCVariableStructureSize                                  // in: IOAccelDeviceRegion (handler slot p5)
     },
     [kIOAccelSurfaceSetIDMode] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::setIDMode,
-        kIOUCScalarIScalarO,
-        2,                                                          // 2 inputs (WindowServer passes 2 args)
+        kIOUCScalarIScalarO,                                       // :83 — already correct
+        2,                                                          // (wID, modebits)
         0
     },
     [kIOAccelSurfaceSetScale] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::setScale,
-        kIOUCScalarIScalarO,
-        0,
-        0
+        kIOUCScalarIStructI,                                       // :84 — StructI(1, var)
+        1,
+        kIOUCVariableStructureSize                                  // in struct: scale params (handler slot p2)
     },
     [kIOAccelSurfaceSetShape] = {
         NULL,
@@ -92,58 +92,58 @@ static const IOExternalMethod sMethods[kIOAccelNumSurfaceMethods] = {
     [kIOAccelSurfaceFlush] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::flush,
-        kIOUCScalarIScalarO,
-        0,
+        kIOUCScalarIScalarO,                                       // :86 — (2,0), not (0,0): takes (framebufferMask, options)
+        2,                                                          // 2 scalar inputs
         0
     },
     [kIOAccelSurfaceQueryLock] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::queryLock,
-        kIOUCScalarIScalarO,
-        0,
+        kIOUCScalarIScalarO,                                       // :87 — already correct; no inputs, no outputs —
+        0,                                                          // the answer IS the return code
         0
     },
     [kIOAccelSurfaceReadLock] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::readLockSurface,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIStructO,                                       // :88 — StructO(0, var): out IOAccelSurfaceInformation
         0,
-        0
+        kIOUCVariableStructureSize                                  // (handler slots p1=info, p2=infoSize)
     },
     [kIOAccelSurfaceReadUnlock] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::readUnlockSurface,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIScalarO,                                       // :89 — already correct
         0,
         0
     },
     [kIOAccelSurfaceWriteLock] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::writeLockSurface,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIStructO,                                       // :90 — StructO(0, var): out IOAccelSurfaceInformation
         0,
-        0
+        kIOUCVariableStructureSize                                  // (handler slots p1=info, p2=infoSize)
     },
     [kIOAccelSurfaceWriteUnlock] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::writeUnlockSurface,
-        kIOUCScalarIScalarO,
+        kIOUCScalarIScalarO,                                       // :91 — already correct
         0,
         0
     },
     [kIOAccelSurfaceControl] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::control,
-        kIOUCScalarIScalarO,
-        0,
-        0
+        kIOUCScalarIScalarO,                                       // :92 — (2,1), not (0,0)
+        2,                                                          // 2 scalar inputs
+        1                                                           // 1 scalar output
     },
     [kIOAccelSurfaceSetShapeBackingAndLength] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::setShapeBackingAndLength,
-        kIOUCScalarIScalarO,
-        0,
-        0
+        kIOUCScalarIStructI,                                       // :93 — StructI(5, var)
+        5,                                                          // 5 scalars, then region struct-in
+        kIOUCVariableStructureSize                                  // in: IOAccelDeviceRegion (handler slot p6)
     },
 };
 

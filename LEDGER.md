@@ -48,6 +48,50 @@ consumer sequence calls a **set_shape-family selector** next
 calls something else entirely, that is a finding about the
 sequence, visible only because this expectation was written first.
 
+## 2026-08-16 — alignment boot: struct transports; geometry real; next rung is QueryLock (log-named, not guessed)
+
+**Boot results (ece17314):**
+```
+SetShape(options=0xd fbIndex=0 rgn=0xffffff800df65e90 size=20)
+  region — num_rects=1 bounds=(x=1634 y=0 w=46 h=22) rect[0]=same
+SetShape(options=0x1 …) region — num_rects=1 bounds=(0,0,1,1) rect[0]=(0,0,0,0)
+```
+- Struct transported: size=20 = IOACCEL_SIZEOF_DEVICE_REGION(1) exactly;
+  p4-by-value confirmed; sanity gates all passed; zero "[size impl?]".
+- **Geometry is real, decodable WindowServer content**: the 0xd region
+  is the menu-bar clock strip (46×22 at x=1634 — top-right of the
+  1680-wide display, exactly the pre-registered sanity check). The 0x1
+  pair-member is the 1×1/zero-rect empty variant (known-real family).
+- **The storm moved and grew**: 747 SetShape (~1.4/s), shape
+  SUCCEEDING each time; locks fired only 3× (prior boot's tail).
+- **Next rung read from the log, not guessed** (user correction —
+  every dispatch logs index=N): the cycle is 7 → [9, 9, 11] × repeat.
+  **Index 11 = QueryLock** — 56 dispatches; set_shape_backing (6) and
+  real locks (12/14): ZERO hits. The caller probes lock AVAILABILITY
+  after shaping; both prime-suspect candidates (flush, backing) were
+  wrong — the log named it for free.
+- QueryLock semantics from the worked example (:1461-1466): pure state
+  query, answer IS the return code — kIOReturnCannotLock if locked,
+  **kIOReturnSuccess if lockable**. Our never-locked surface makes
+  Success the honest, deliverable answer; current Unsupported reads as
+  "cannot even ask."
+- Desktop healthy, load DOWN to 2.0 (from 7.8). Outcome #3 clean.
+
+**Mechanical commit (645fa708, source committed before boot): ALL
+remaining table rows aligned to the worked example** — 0,3:
+StructO(1,var); 5: StructI(0,var); 6: StructI(4,var) [the backing
+rung]; 8: StructI(1,var); 10: ScalarO(2,0); 12,14: StructO(0,var);
+16: ScalarO(2,1); 17: StructI(5,var). Rows 1,2,4,7,9,11,13,15 already
+correct. Handlers untouched (all still return Unsupported without
+reading args — signature risk deferred to each row's own rung; slot
+meanings documented in-table). **No semantic changes bundled.**
+
+**Next (separate semantic commit, its own boot): QueryLock →
+kIOReturnSuccess** (honest state answer). Pre-registered: the cycle
+moves past QueryLock to the real lock (12/14) — the held line — and
+the storm relocates there; loop stops only when something SUCCEEDS
+(fails more politely ≠ stops, per user). Expectation tempered.
+
 ## 2026-08-15 (SetShape-alignment boot pre-registrations, before build ece17314)
 
 **Arg decodes verified from the worked example source** (not
