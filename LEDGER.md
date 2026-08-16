@@ -48,6 +48,25 @@ consumer sequence calls a **set_shape-family selector** next
 calls something else entirely, that is a finding about the
 sequence, visible only because this expectation was written first.
 
+## 2026-08-16 (QueryLock boot pre-registrations, before build 29ab557c)
+
+**Mechanical-alignment-only boot observed first (645fa708):** cycle
+UNCHANGED — 7 → [9,9,11] × repeat, 110/55/1, zero on every other
+selector. Attribution clean: the aligned table alone moves nothing;
+QueryLock's Unsupported is the sole gate.
+
+**This build (29ab557c, committed before boot): QueryLock →
+kIOReturnSuccess** — the worked example's honest answer for a
+never-locked surface (state report; claims no memory).
+
+**Pre-registered:** the cycle advances past QueryLock to the real
+locks (12/14) — the held line, Unsupported until backing exists.
+The storm relocates to the lock rung. If instead the caller does
+something NEW (backing first? surface_control?), the log names it.
+Expectation tempered per user: fails more politely ≠ stops; the
+loop stops only when something succeeds, and the next success is
+on the wrong side of the held line. Desktop watch continues.
+
 ## 2026-08-16 — alignment boot: struct transports; geometry real; next rung is QueryLock (log-named, not guessed)
 
 **Boot results (ece17314):**

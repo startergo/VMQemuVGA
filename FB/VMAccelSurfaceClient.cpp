@@ -537,8 +537,17 @@ IOReturn CLASS::flush(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6
 
 IOReturn CLASS::queryLock(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: QueryLock -> Unsupported\n");
-    return kIOReturnUnsupported;
+    /* THIRD real selector (2026-08-16). Semantics from the worked
+     * example (VMsvga2Surface.cpp:1461-1466): pure state query, no
+     * inputs/outputs, the answer IS the return code — CannotLock if
+     * locked, Success if lockable. Our surface is never locked, so
+     * Success is the honest state report (deliverable: it claims no
+     * memory, answers a question). Pre-registered for this boot: the
+     * caller cycle moves past QueryLock to the real locks (12/14) —
+     * the held line — and the storm relocates there. Loop stops only
+     * when something succeeds; this rung's success is state-only. */
+    IOLog("VMAccelSurfaceClient: QueryLock -> Success (never locked)\n");
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::readLockSurface(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
