@@ -16,7 +16,68 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (WriteLock-rung boot pre-registered — build 51a227aa, split commit 2 of 2; entry below)
+Last updated: 2026-08-16 (WriteLock-rung boot RUN — 63/63 Success, one 7,057,408-byte mapping, WriteUnlock+Flush now in cycle; MISMATCH lines diagnosed as self-check formula bug; entry below)
+
+---
+
+## 2026-08-16 — WriteLock-rung boot RUN (6c801db / 51a227aa): every prediction landed; the cycle now runs [9,9,11,14,15,10]; next held line is Flush
+
+Kext loaded and linked at boot (kxld accepted the new
+descriptor/mapping calls — target precedent held; `kextutil -n -t`
+had also passed pre-boot, though it is not the arbiter). md5
+verified host↔guest. Cacheless boot again (~2 min this time).
+
+**Predictions vs outcomes:**
+1. ✅ **Exactly ONE allocation for the whole boot:** "backing
+   ALLOCATED 7057408 bytes (extent 1680x1050 stride 6720), mapped
+   at 0x1027a0000 in owning task." (Pre-registration said
+   ~7,075,840 — arithmetic slip in the prediction; actual is
+   1050×6720=7,056,000 page-rounded to 1,723 pages = 7,057,408.
+   The code's formula is right; the pre-registered number was
+   wrong. Recorded as such.)
+2. ✅ **Both halves:** index 15 (WriteUnlock) fired for the FIRST
+   TIME — 63×, all Success — and the storm relocated to index 10
+   (Flush) — 63×, all Unsupported. **New cycle: [9,9,11,14,15,10]
+   × 63.** Per iteration: shape pair → QueryLock → WriteLock →
+   WriteUnlock → Flush(refused). Flush was the pre-registered
+   next-selector guess and it is confirmed by the log.
+3. ✅ QueryLock 63/63 Success, CannotLock 0: every lock is
+   followed by its unlock within the iteration — the caller
+   (WindowServer) has clean lock discipline; no sustained-hold
+   case occurred.
+4. ✅ No NoMemory. **MISMATCH fired 5× — FALSE POSITIVE,
+   diagnosed:** my self-check used `offset + h*stride > len`,
+   which is `(y+h)*stride + x*bpp` — over-strict by a partial
+   row. Hand check of the worst case (offset=6422624 → y=955,
+   x=1256; 80×95): last byte = offset + (h−1)*stride + w*bpp =
+   7,054,624 ≤ 7,057,408 — the handout FITS. No caller ever
+   exceeded the mapping. Fix (one line, next mechanical commit):
+   compare `offset + (h−1)*stride + w*bpp` against the mapping
+   length.
+5. **Outcome #3 — desktop alive:** 1 user logged in, framebuffer
+   2D path active (refreshDisplay Transfer+Flush for resource 1
+   logged 09:54:28). Visual pixel check requested from user —
+   report separately when confirmed.
+- bSkipWriteLockOnce never fired (no options==0x5 shape observed
+  this boot either; the guard sits armed and untested by traffic).
+
+**Handout decode sanity (offset arithmetic verified against
+known on-screen geometry):** off=6536 → x=1634 (the clock strip);
+off=0 with 1680×22 (menu bar) and 1680×1050 (full screen); off
+values consistent with y×6720+x×4 throughout. The address
+0x1027a0000 is a WindowServer-task address (user range), not a
+kernel pointer.
+
+**Next rung — Flush (selector 10), the first rung where pixels
+can move.** It is `(framebufferMask, options)` ScalarIScalarO
+(2,0) per the worked example :86. In the damage-region model this
+is the present/push step: CPU-written pixels in the mapped buffer
+need to reach the host via the virtio-gpu 2D path
+(TRANSFER_TO_HOST_2D on a resource backed by our mapped buffer —
+the ATTACH_BACKING machinery finally re-enters here, in the
+forward direction). Design step first: read the worked example's
+flush contract, then pre-register. Same discipline: one selector,
+one boot.
 
 ---
 
