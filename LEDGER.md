@@ -31,9 +31,12 @@ installed with md5 verified both ends, cacheless, reboot issued.
 **Prediction for the revert boot (pre-registered):** desktop
 returns — WindowServer's accel path hits WriteLock Unsupported
 again and falls back to the software path, cycle regresses to
-[9,9,11,14], blue screen gone. If the desktop does NOT return,
-the blue screen had a second cause and this revert is the
-discriminator.
+[9,9,11,14], blue screen gone. **CONFIRMED both halves (10:40
+boot): kernel log shows WriteLock -> Unsupported from 10:40:41,
+zero new backing allocations this boot; user visually confirmed
+the desktop is back.** The blue screen is fully attributed to
+the lock rung — no second cause; the conditional above is
+closed.
 
 **Framing (user, recorded because it is the correct read):** the
 blue screen is the pre-registered outcome LANDING, not a setback.
