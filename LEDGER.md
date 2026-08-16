@@ -16,7 +16,46 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (REVERTED guest to ac16eac after outcome #3 — safety design worked as pre-registered; Flush design settled: blit to FB backing + existing transfer, no second resource; entry below)
+Last updated: 2026-08-16 (lock+flush PAIR boot pre-registered — build 3258aaec, blit-only flush; entry below)
+
+---
+
+## 2026-08-16 (lock+flush pair boot pre-registrations, before build 3258aaec)
+
+**Build 3258aaec = the 6c801db lock rung + blit-only flush +
+MISMATCH formula fix + four inline FB getters.** Flush: gated
+(NotReady without backing/FB), clipped to the shape rect against
+BOTH buffers, row-by-row memcpy (strides independent — surface
+base_w×4 vs FB m_width×4), under m_lock; self-check with the
+fixed last-byte formula SKIPS the copy (no corruption) rather
+than trusting bounds. No new virtio commands, no scanout
+interaction, no new kernel API surface beyond memcpy (libkern).
+FB access via m_accelerator→getProvider()→OSDynamicCast; getters
+in VMVirtIOFramebuffer.h (getBackingKernelPtr/getBackingLength/
+getFbWidth/getFbHeight — the provider IS the FB, same chain
+clientMemoryForType already uses).
+
+**Pre-registered predictions:**
+1. **The cycle completes and stops relocating:** [9,9,11,14,15,10]
+   with 11/14/15/10 ALL green. The loop's driver (a failing
+   selector) is gone. Expect either the storm stops (WindowServer
+   satisfied; re-shapes only on real damage) or iterations
+   continue at damage rate, every step green. If it relocates to
+   a NEW selector (8 SetScale / 16 Control / 2 GetState), that is
+   the log naming the next rung — a finding, not a failure.
+2. **Desktop PAINTS through the accel path** (load-bearing). Sub-
+   verdicts: colors right → straight-copy format agreement
+   confirmed; R/B swapped → surface-8888 vs FB-B8G8R8A8 channel
+   mismatch, swizzle rung needed; frozen-but-storming → blit not
+   reaching host (wrong dst or timer not carrying); storm STOPS
+   with frozen screen → WindowServer wedged (deadlock class,
+   bSkipWriteLockOnce-adjacent).
+3. First flushes log "blit 1680x1050 at (0,0)" early then small
+   rects; surfStride=6720 fbStride=7680 (the live stride delta).
+4. One backing allocation, ZERO MISMATCH lines (formula fixed;
+   the 5 false positives must not reappear).
+5. **Outcome #3:** if the desktop paints correctly, outcome #3
+   CLOSES at this rung. Recovery unchanged: one step to ac16eac.
 
 ---
 

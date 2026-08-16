@@ -109,6 +109,16 @@ private:
     void filterModesByAllocation();
     
 public:
+    // Read access for the surface client's flush blit (2026-08-16,
+    // lock+flush pair): the blit copies the accel surface's mapped
+    // buffer into the FB backing at the shape offset, and the refresh
+    // timer carries it to the host. No new virtio commands.
+    // Backing kernel pointer valid only while the FB is started.
+    void* getBackingKernelPtr() const { return m_fb_backing ? m_fb_backing->getBytesNoCopy() : nullptr; }
+    uint64_t getBackingLength() const { return m_fb_backing ? (uint64_t)m_fb_backing->getLength() : 0; }
+    uint32_t getFbWidth() const { return m_width; }
+    uint32_t getFbHeight() const { return m_height; }
+
     // IOService overrides
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService* provider) override;

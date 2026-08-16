@@ -6,6 +6,7 @@
 #include "VMAccelSurfaceClient.h"
 #include "VMQemuVGAAccelerator.h"
 #include "VMVirtIOGPU.h"
+#include "VMVirtIOFramebuffer.h"
 #include <IOKit/IOLib.h>
 #include <IOKit/graphics/IOGraphicsInterfaceTypes.h>
 
@@ -615,8 +616,102 @@ IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void 
 
 IOReturn CLASS::flush(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    IOLog("VMAccelSurfaceClient: Flush -> Unsupported\n");
-    return kIOReturnUnsupported;
+    /* FIFTH real selector — blit-only flush (2026-08-16), lands as a
+     * PAIR with WriteLock (lock success changes where WindowServer
+     * draws; a lock without a working flush is a broken-window state
+     * — the blue-screen boot proved it). Design (user decision):
+     * NO second resource, NO scanout switching, NO new virtio
+     * commands. Copy the surface's mapped buffer into the
+     * FRAMEBUFFER's backing at the shape offset, row by row; the
+     * existing refresh timer (16 ms tick, FULL_REFRESH_INTERVAL=4
+     * → ~15 Hz effective transfer, VMVirtIOFramebuffer.h:90)
+     * carries it to the host on its next transfer. This is the
+     * virtio-gpu equivalent of what SVGA2 gets for free (its
+     * backing IS device VRAM).
+     * Table row :86 — (framebufferMask, options) scalars in.
+     * Three blit rules (user; cheap right, expensive wrong):
+     * clip to the shape rect; strides are INDEPENDENT (surface
+     * base_w*4 vs FB m_width*4 — 6720 vs 7680 on the observed
+     * boots); straight byte copy — format arbiter is the boot's
+     * visual (surface 0x24/8888 and FB resource B8G8R8A8 written
+     * by the same WindowServer; a channel swap would show as a
+     * rendering bug, not a format error). */
+    uint32_t fbMask = (uint32_t)(uintptr_t)p1;
+    uint32_t options = (uint32_t)(uintptr_t)p2;
+
+    if (!m_surface || !m_surface->backing_memory || !m_surface->client_map ||
+        !m_surface->bytes_per_row) {
+        IOLog("VMAccelSurfaceClient: Flush -> NotReady (no backing)\n");
+        return kIOReturnNotReady;
+    }
+
+    VMVirtIOFramebuffer* fb = nullptr;
+    if (m_accelerator)
+        fb = OSDynamicCast(VMVirtIOFramebuffer, m_accelerator->getProvider());
+    uint8_t* dst = (uint8_t*)(fb ? fb->getBackingKernelPtr() : nullptr);
+    uint8_t* src = (uint8_t*)m_surface->backing_memory->getBytesNoCopy();
+    if (!dst || !src) {
+        IOLog("VMAccelSurfaceClient: Flush -> NotReady (fb=%p src=%p)\n",
+              dst, src);
+        return kIOReturnNotReady;
+    }
+
+    uint32_t fbW = fb->getFbWidth();
+    uint32_t fbH = fb->getFbHeight();
+    uint64_t fbStride = (uint64_t)fbW * 4;
+    uint64_t surfStride = m_surface->bytes_per_row;
+    uint32_t bpp = m_surface->bytes_per_pixel;
+
+    /* Clip the shape rect to BOTH buffers — never assume full size
+     * (46x22 at x=1634, full-screen, and everything between have
+     * all been observed). */
+    uint32_t x = m_surface->shape_x, y = m_surface->shape_y;
+    uint32_t w = m_surface->width, h = m_surface->height;
+    uint32_t orig_w = w, orig_h = h;
+    if (x >= fbW || y >= fbH) {
+        IOLog("VMAccelSurfaceClient: Flush — shape (%u,%u %ux%u) entirely "
+              "off-FB (%ux%u): nothing to blit -> Success\n",
+              x, y, w, h, fbW, fbH);
+        return kIOReturnSuccess;
+    }
+    if (x + w > fbW)  w = fbW - x;
+    if (y + h > fbH)  h = fbH - y;
+    if (w == 0 || h == 0) {
+        IOLog("VMAccelSurfaceClient: Flush — empty after clip -> Success\n");
+        return kIOReturnSuccess;
+    }
+
+    /* Self-check (fixed formula, was over-strict by a partial row):
+     * last byte touched = (y+h-1)*stride + (x+w)*bpp. */
+    uint64_t lastS = (uint64_t)(y + h - 1) * surfStride + (uint64_t)(x + w) * bpp;
+    uint64_t lastD = (uint64_t)(y + h - 1) * fbStride  + (uint64_t)(x + w) * bpp;
+    if (lastS > m_surface->backing_memory->getLength() ||
+        lastD > fb->getBackingLength()) {
+        IOLog("VMAccelSurfaceClient: MISMATCH — blit exceeds a buffer: "
+              "src last=%llu len=%llu dst last=%llu len=%llu — SKIPPING "
+              "copy, returning Success (no corruption)\n",
+              (unsigned long long)lastS,
+              (unsigned long long)m_surface->backing_memory->getLength(),
+              (unsigned long long)lastD,
+              (unsigned long long)fb->getBackingLength());
+        return kIOReturnSuccess;
+    }
+
+    IOLockLock(m_lock);
+    /* Row by row — strides are independently determined. */
+    for (uint32_t r = 0; r < h; r++) {
+        uint8_t* s = src + (uint64_t)(y + r) * surfStride + (uint64_t)x * bpp;
+        uint8_t* d = dst + (uint64_t)(y + r) * fbStride  + (uint64_t)x * bpp;
+        memcpy(d, s, (size_t)w * bpp);
+    }
+    IOLockUnlock(m_lock);
+
+    IOLog("VMAccelSurfaceClient: Flush -> Success (blit %ux%u at (%u,%u)%s "
+          "surfStride=%llu fbStride=%llu — timer carries to host)\n",
+          w, h, x, y,
+          (w != orig_w || h != orig_h) ? " [CLIPPED]" : "",
+          (unsigned long long)surfStride, (unsigned long long)fbStride);
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::queryLock(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
@@ -776,13 +871,18 @@ IOReturn CLASS::writeLockSurface(void *p1, void *p2, void *p3, void *p4, void *p
                     + (uint64_t)m_surface->shape_x * bpp;
     mach_vm_address_t base = m_surface->client_map->getAddress();
 
-    /* Self-check (never trust arithmetic silently): the shape
-     * window must fit inside the mapping. */
-    if (offset + (uint64_t)m_surface->height * m_surface->bytes_per_row >
+    /* Self-check (formula FIXED 2026-08-16 — the original
+     * `offset + h*stride` was over-strict by a partial row and
+     * false-positived 5x on the lock boot): last byte the caller
+     * can touch = (y+h-1)*stride + (x+w)*bpp. */
+    if ((uint64_t)(m_surface->shape_y + m_surface->height - 1) *
+            m_surface->bytes_per_row +
+        (uint64_t)(m_surface->shape_x + m_surface->width) * bpp >
         m_surface->client_map->getLength()) {
         IOLog("VMAccelSurfaceClient: MISMATCH — handout window exceeds "
-              "mapping: offset=%llu h=%u stride=%u len=%llu\n",
-              (unsigned long long)offset, m_surface->height,
+              "mapping: y=%u h=%u x=%u w=%u stride=%u len=%llu\n",
+              m_surface->shape_y, m_surface->height,
+              m_surface->shape_x, m_surface->width,
               m_surface->bytes_per_row,
               (unsigned long long)m_surface->client_map->getLength());
     }
