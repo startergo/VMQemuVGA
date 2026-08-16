@@ -85,9 +85,9 @@ static const IOExternalMethod sMethods[kIOAccelNumSurfaceMethods] = {
     [kIOAccelSurfaceSetShape] = {
         NULL,
         (IOMethod) &VMAccelSurfaceClient::setShape,
-        kIOUCScalarIScalarO,
-        2,                                                          // 2 inputs (revealed by test: mismatch 0x2 0x0)
-        0
+        kIOUCScalarIStructI,                                       // worked example: VMsvga2Surface.cpp:85
+        2,                                                          // 2 scalars (options, fbIndex)
+        kIOUCVariableStructureSize                                  // + variable IOAccelDeviceRegion struct-in
     },
     [kIOAccelSurfaceFlush] = {
         NULL,
@@ -444,20 +444,23 @@ IOReturn CLASS::setShapeBacking(void *p1, void *p2, void *p3, void *p4, void *p5
 
 IOReturn CLASS::setIDMode(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    /* First REAL selector (2026-08-15). Deliverability line: SetIDMode's
-     * documented argument is the kIOAccelSurfaceMode* constant (1555/8888/
-     * YUV…, IOAccelSurfaceConnect.h) — storing it is an honest claim.
-     * Pre-registered decision for the NEXT rung (made BEFORE this boot's
-     * log comes back): shape-family selectors stay Unsupported regardless
-     * of what fires — their argument semantics are unread, and backing
-     * selectors claim memory. This boot's purpose: log the next call's
-     * RAW args so the following decision is evidence-based. */
-    uint32_t mode = (uint32_t)(uintptr_t)p1;
-    uint32_t arg2 = (uint32_t)(uintptr_t)p2;
-    if (m_surface)
-        m_surface->pixel_format = mode;
-    IOLog("VMAccelSurfaceClient: SetIDMode(mode=0x%x arg2=0x%x) -> "
-          "STORED (first real selector)\n", mode, arg2);
+    /* First REAL selector (2026-08-15). Argument semantics verified
+     * against the worked example (VMsvga2Surface.cpp:1304):
+     * set_id_mode(uintptr_t wID, eIOAccelSurfaceModeBits modebits).
+     * wID==1 is WindowServer's own surface (their :1309 comment; wID==1
+     * also gates createPrimaryScreen behind haveFrontBuffer() there —
+     * we return success unconditionally, an unbacked instance to note).
+     * First boot's observed call: wID=0x1, modebits=0x24. Stored under
+     * the correct labels; the earlier "mode=0x1" log was mislabelled
+     * (wID in the mode slot) — corrected before anything reads it. */
+    uint32_t wid = (uint32_t)(uintptr_t)p1;
+    uint32_t modebits = (uint32_t)(uintptr_t)p2;
+    if (m_surface) {
+        m_surface->surface_id = wid;
+        m_surface->pixel_format = modebits;
+    }
+    IOLog("VMAccelSurfaceClient: SetIDMode(wID=0x%x modebits=0x%x%s) -> "
+          "STORED\n", wid, modebits, (wid == 1) ? " [WindowServer surface]" : "");
     return kIOReturnSuccess;
 }
 
@@ -469,13 +472,61 @@ IOReturn CLASS::setScale(void *p1, void *p2, void *p3, void *p4, void *p5, void 
 
 IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
-    /* Raw args logged (see SetShapeBacking note). */
-    IOLog("VMAccelSurfaceClient: SetShape(a1=0x%llx a2=0x%llx "
-          "a3=0x%llx) -> Unsupported\n",
-          (unsigned long long)(uintptr_t)p1,
-          (unsigned long long)(uintptr_t)p2,
-          (unsigned long long)(uintptr_t)p3);
-    return kIOReturnUnsupported;
+    /* SECOND real selector (2026-08-15). Table row aligned to the worked
+     * example (VMsvga2Surface.cpp:85/:1374): set_shape(options,
+     * framebufferIndex, IOAccelDeviceRegion const* rgn, size_t rgnSize).
+     * Old-style ScalarIStructI(count0=2, variable) fills slots as
+     * p1=options, p2=fbIndex, p3=kernel pointer to the copied-in
+     * region, p4=the size — BY VALUE per the worked example's
+     * signature; if that reading is wrong the sanity gate below makes
+     * it visible (p4 logged raw both ways; no blind deref of p4).
+     * Deliverability: storing geometry is honest — no memory claimed.
+     * num_rects==0 is a KNOWN real case (VMsvga2 carries a fixup for
+     * WindowServer sending it); the "struct didn't arrive"
+     * discriminator is a NULL/non-kernel rgn pointer or absurd size. */
+    uint32_t options = (uint32_t)(uintptr_t)p1;
+    uintptr_t fbIdx = (uintptr_t)p2;
+    IOAccelDeviceRegion *rgn = (IOAccelDeviceRegion *)p3;
+    size_t rgnSizeV = (size_t)(uintptr_t)p4;
+
+    uintptr_t rgnAddr = (uintptr_t)rgn;
+    bool kernelCanonical = (rgnAddr >= 0xffffff8000000000ULL);
+    bool sizeSane = (rgnSizeV >= sizeof(IOAccelDeviceRegion) &&
+                     rgnSizeV <= (1u << 20));
+
+    IOLog("VMAccelSurfaceClient: SetShape(options=0x%x fbIndex=%llu "
+          "rgn=0x%llx size=%llu%s)\n",
+          options, (unsigned long long)fbIdx,
+          (unsigned long long)rgnAddr, (unsigned long long)rgnSizeV,
+          sizeSane ? "" : " [size impl? see raw p4]");
+
+    if (!kernelCanonical || !sizeSane) {
+        IOLog("VMAccelSurfaceClient: SetShape — struct did NOT arrive "
+              "usefully (kernelCanonical=%d sizeSane=%d) -> "
+              "Unsupported\n", kernelCanonical, sizeSane);
+        return kIOReturnUnsupported;
+    }
+
+    /* Region readable: log the geometry, sanity-checkable against the
+     * live display (expect ~1680x1050 for full-screen surfaces). */
+    IOLog("VMAccelSurfaceClient: SetShape region — num_rects=%u "
+          "bounds=(x=%d y=%d w=%d h=%d)\n",
+          rgn->num_rects,
+          (int)rgn->bounds.x, (int)rgn->bounds.y,
+          (int)rgn->bounds.w, (int)rgn->bounds.h);
+    if (rgn->num_rects > 0 && rgnSizeV >= (sizeof(IOAccelDeviceRegion) +
+                                           sizeof(IOAccelBounds))) {
+        IOLog("VMAccelSurfaceClient: SetShape rect[0]=(x=%d y=%d w=%d "
+              "h=%d)\n",
+              (int)rgn->rect[0].x, (int)rgn->rect[0].y,
+              (int)rgn->rect[0].w, (int)rgn->rect[0].h);
+    }
+
+    if (m_surface) {
+        m_surface->width  = (uint32_t)(rgn->bounds.w > 0 ? rgn->bounds.w : 0);
+        m_surface->height = (uint32_t)(rgn->bounds.h > 0 ? rgn->bounds.h : 0);
+    }
+    return kIOReturnSuccess;
 }
 
 IOReturn CLASS::flush(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)

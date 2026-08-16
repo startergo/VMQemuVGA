@@ -48,6 +48,53 @@ consumer sequence calls a **set_shape-family selector** next
 calls something else entirely, that is a finding about the
 sequence, visible only because this expectation was written first.
 
+## 2026-08-15 (SetShape-alignment boot pre-registrations, before build ece17314)
+
+**Arg decodes verified from the worked example source** (not
+inference): `set_id_mode(wID, modebits)` — VMsvga2Surface.cpp:1304;
+wID==1 = WindowServer's surface (:1309 comment; also gates
+createPrimaryScreen behind haveFrontBuffer — our unconditional
+success there noted as an unbacked instance). First boot's call
+was wID=1, modebits=0x24; the "mode=0x1" log was MISLABELLED,
+store corrected (surface_id=wID, pixel_format=modebits).
+`set_shape(options, fbIndex, rgn, rgnSize)` — :1374; the 0xd/0x1
+pair = shape-bit OPTION configs, not window IDs (corrects the
+window-pair reading). Both recorded as corrections with sources.
+
+**MIXED outcome confirmed comprehensively:** the worked example's
+table (:73-93) shows most of our rows declare the wrong shape —
+the shape family is ScalarIStructI with a variable
+IOAccelDeviceRegion struct-in (ours said ScalarO 2,0 — the
+caller's region bytes were DROPPED at the MIG boundary; a3's
+stable per-client kernel pointer was the dispatcher's slot, and
+the retry storm is the caller failing to place its surfaces).
+
+**This build (ece17314): ONE row aligned** — index 9 SetShape →
+ScalarIStructI(2, variable), handler signature matched
+(options/fbIndex/rgn/rgnSize), region parsed under guards
+(kernel-canonical rgn; size sane; p4 logged raw both readings —
+by-value per the worked example, no blind deref), geometry
+STORED, success returned. All other rows untouched (one variable
+per boot). Locks remain the pre-registered held line — the
+memory-claim rung fires immediately after shape success at
+storm rate, and the decision stands: Unsupported until a real
+backing exists (ATTACH_BACKING-reuse design, its own unit).
+
+**Pre-registered predictions:**
+1. SetShape calls now carry a parseable region: num_rects +
+   bounds logged; full-screen surfaces ≈ 1680×1050.
+   num_rects==0 is a KNOWN real case (VMsvga2 fixup), not
+   failure; "struct didn't arrive" = null/non-kernel pointer or
+   absurd size.
+2. If the struct transports correctly and shape succeeds, THE
+   STORM STOPS (cleanest confirmation); the next call family
+   (locks) appears and is refused by the pre-registered line.
+3. p4's size reading resolves: by-value matching the worked
+   example (if not, the sanity gate logs it and shape returns
+   Unsupported — no wrong success).
+4. Outcome #3 watch continues: desktop alive through shape
+   success at storm rate.
+
 ## 2026-08-15 (SetIDMode boot pre-registrations, before build a0788488)
 
 Changes in `a0788488fc31b5c5da4f0ac747e1c3c0` (source committed
