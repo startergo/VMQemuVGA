@@ -16,7 +16,62 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (30 Hz experiment RUN — mouse smoother, surface path clean, load acceptable; entry below)
+Last updated: 2026-08-16 (60 Hz PREP: idle-30 Hz load baseline 1.45 taken; mode variance promoted to NAMED CONFOUND; achieved-rate instrumentation pre-registered — build 72c53842; entry below)
+
+---
+
+## 2026-08-16 — 60 Hz prep: baseline measured, confound named, instrumentation built (rate UNCHANGED at 30 Hz)
+
+**NAMED CONFOUND (promoted from note, user direction): the FB
+mode varies between boots** — pair boot 1680×1050, 30 Hz boot
+mode=5 1920×1080, earlier boots 1920×1080. Mode changes stride
+and surface dimensions, so ANY cross-boot comparison of blit
+counts, timing, or load has an uncontrolled variable — the kind
+that later explains a "regression" that was really a different
+mode. Rule: cross-boot comparisons must cite the first-tick mode
+line; a mode change invalidates the comparison. Why the mode
+varies is itself unexplained (open).
+
+**Idle steady-state at 30 Hz (measured BEFORE any change, guest
+quiesced ~100 s, 13:54): load 1.45 1-min (3.37 5-min / 2.62
+15-min still decaying from active use). Baseline for the 60 Hz
+run: idle-30 Hz ≈ 1.4-1.5.** Prior "load 12.91 boot-settling vs
+7.4 active" samples are NOT comparable and are not baselines
+(user flagged: fifth timing confound this project has hit).
+
+**Instrumentation (build 72c53842, INTERVAL still 2/30 Hz):**
+refreshDisplay counts ticks (callbacks reached —
+IOTimerEventSource COALESCES late fires, so ticks below expected
+IS the backup signal) and xfers (successful transfer+flush pairs
+only); a window closes on mach_absolute_time() raw delta ≥ 1e10
+(~10 s IF units are ns — NOT assumed: the 30 Hz baseline boot
+calibrates the unit empirically; log prints raw only). One line
+per window: "refresh window — ticks=N xfers=M dur=R raw
+(R/M raw/xfers)". Pre-registered artifact: the FIRST window
+starts at constructor time and includes boot — tiny counts, huge
+duration; steady windows follow. mach_absolute_time has 9-site
+precedent in VMIOSurfaceManager.cpp (no new API risk).
+
+**Pre-registrations for the BASELINE boot (72c53842):**
+1. Steady windows at idle: ticks ≈ 600, xfers ≈ 300 per window
+   (IF raw units are ns and nothing backs up) — achieved ≈
+   configured 30 Hz. The observed dur_raw/300 calibrates
+   raw-unit-per-second for the 60 Hz comparison.
+2. Idle load ≈ 1.4-1.5 (reproduces the no-instrumentation
+   baseline → instrumentation cost is negligible, or shows up as
+   a small delta).
+3. Surface path unchanged: blits green, no NotReady/MISMATCH.
+4. First-tick mode line LOGGED (the confound check) — if the
+   mode is not 1920×1080, load comparisons still hold (load is
+   mode-insensitive at this precision? NO — do not assume:
+   record whichever mode appears; if it differs from 1920×1080,
+   the load comparison needs the mode caveat).
+
+**THEN, only if the baseline is clean: INTERVAL 2 → 1 (60 Hz),
+same instrumentation, compare: xfers ≈ 600/window expected; if
+xfers << ticks, the timer is backing up — the smoothness gain
+will not materialize and 60 Hz is refused on evidence, not
+vibes. Cursor verdict user-side; idle load vs 1.4-1.5.**
 
 ---
 

@@ -107,6 +107,19 @@ private:
     // Sub-rects would still cost two commands per tick plus the hashing CPU
     // under TCG — net regression.
     uint32_t               m_full_refresh_tick_count;
+    // Achieved-rate instrumentation (2026-08-16, before the 60 Hz
+    // attempt — "configured" and "achieved" must be distinguishable,
+    // because the overrun symptom at 60 Hz is SKIPPED TICKS, not load).
+    // Window closes on mach_absolute_time() raw delta ≥ 1e10 raw units
+    // (~10 s IF units are ns; the 30 Hz baseline boot calibrates the
+    // unit empirically — do not convert units by assumption). ticks =
+    // refreshDisplay callbacks reached (IOTimerEventSource coalesces
+    // late fires, so ticks < expected IS the backup signal); xfers =
+    // successful transfer+flush pairs only.
+    uint64_t               m_tick_window_count;
+    uint64_t               m_xfer_window_count;
+    uint64_t               m_window_start_raw;
+    static const uint64_t  REFRESH_WINDOW_RAW = 10000000000ULL;
     static const uint32_t  FULL_REFRESH_INTERVAL = 2;  // ~30 Hz at 60 Hz timer (was 4/~15 Hz pre-2026-08-16)
     
     void initDisplayModes();

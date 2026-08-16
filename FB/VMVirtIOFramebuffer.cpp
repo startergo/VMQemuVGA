@@ -61,6 +61,9 @@ bool VMVirtIOFramebuffer::init(OSDictionary* properties)
     m_scanout_resource_id = 1;  // Primary GUI display resource ID
     m_scanout_taken_over_by_3d = false;  // 2D framebuffer active by default
     m_full_refresh_tick_count = 0;
+    m_tick_window_count = 0;
+    m_xfer_window_count = 0;
+    m_window_start_raw = mach_absolute_time();
     m_width = 1024;
     m_height = 768;
     m_depth = 32;
@@ -2463,6 +2466,28 @@ void VMVirtIOFramebuffer::displayRefreshTimer(OSObject* owner, IOTimerEventSourc
 
 void VMVirtIOFramebuffer::refreshDisplay()
 {
+    /* Achieved-rate window (see header): ticks = callbacks reached;
+     * window closes on raw-delta regardless of count so MISSED ticks
+     * show up as a low count, not a longer window. */
+    m_tick_window_count++;
+    {
+        uint64_t now_raw = mach_absolute_time();
+        if (now_raw - m_window_start_raw >= REFRESH_WINDOW_RAW) {
+            uint64_t dur_raw = now_raw - m_window_start_raw;
+            IOLog("VMVirtIOFramebuffer: refresh window — ticks=%llu "
+                  "xfers=%llu dur=%llu raw (%llu raw/xfers)\n",
+                  (unsigned long long)m_tick_window_count,
+                  (unsigned long long)m_xfer_window_count,
+                  (unsigned long long)dur_raw,
+                  m_xfer_window_count
+                      ? (unsigned long long)(dur_raw / m_xfer_window_count)
+                      : 0ULL);
+            m_tick_window_count = 0;
+            m_xfer_window_count = 0;
+            m_window_start_raw = now_raw;
+        }
+    }
+
     // Only refresh if GPU driver is available
     if (!m_gpu_driver) {
         IOLog("VMVirtIOFramebuffer::refreshDisplay() - SKIP: No GPU driver\n");
@@ -2515,6 +2540,7 @@ void VMVirtIOFramebuffer::refreshDisplay()
               flush_result);
         return;
     }
+    m_xfer_window_count++;   /* successful transfer+flush pair only */
 
     static bool logged_success = false;
     if (!logged_success) {
