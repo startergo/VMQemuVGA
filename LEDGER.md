@@ -16,7 +16,44 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (post-landing confirmations + cursor diagnosis recorded; 30 Hz refresh experiment pre-registered — build 72dbfb31; entry below)
+Last updated: 2026-08-16 (30 Hz experiment RUN — mouse smoother, surface path clean, load acceptable; entry below)
+
+---
+
+## 2026-08-16 — 30 Hz refresh RUN (9cf7be3 / 72dbfb31): mouse smoother; all five predictions green
+
+**Predictions vs outcomes:**
+1. ✅ First-tick self-report: "— 30 Hz refresh" (13:45:18, mode=5
+   1920×1080 — the FB mode again differs between boots; the
+   untracked-variable note from the pair boot stands).
+2. ✅ **"Now mouse is smoother" (user visual verdict, 13:49).**
+   The cursor rides the full-surface transfer exclusively, so
+   doubling the rate halves the quantization (66 ms → 33 ms).
+3. ✅/unmeasured: load 12.91 at 2 min (boot-settling, comparable
+   to prior boots), ~7.4 at 5 min DURING active use —
+   single-digit, no stutter reported. True idle steady-state not
+   sampled; the before/after comparison is confounded by
+   activity level. Acceptable; revisit only if load shows a
+   problem in normal use.
+4. ✅ Surface path unchanged and healthy at the doubled rate:
+   this boot 127 blits green, ZERO NotReady / MISMATCH /
+   CannotLock.
+5. ✅ Desktop intact (1 user, in use).
+
+**Session tip state:** master at 9cf7be3; guest RUNNING the
+landed pair + 30 Hz (72dbfb31). Five real selectors + the
+smoothness lever. Remaining known-open: idle quiescence of the
+dispatch loop; bSkipWriteLockOnce unmet by traffic; kextcache
+empty-Startup/ residual; hygiene list; the upstream cursor
+overlay (CocoaSpice GL path) — guest-side mitigation is this
+timer rate.
+
+**Deferred option (recorded, not taken):** immediate
+TRANSFER_TO_HOST_2D of the flush rect — would make SURFACE
+content (window moves over the accel path) event-driven instead
+of 30 Hz-quantized. Not the cursor lever (cursor is not in the
+surface path); take it only if window-drag latency bothers in
+use. Its cost is one extra virtio round-trip per flush.
 
 ---
 
