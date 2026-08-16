@@ -117,7 +117,7 @@ private:
     // Work-time is MODE-DEPENDENT (1920x1080 vs 1680x1050 changes the
     // transfer size) — the per-window work average is the budget datum
     // for any future rate decision.
-    static const uint32_t  REFRESH_PERIOD_MS = 33;  // ~30 Hz target
+    static const uint32_t  REFRESH_PERIOD_MS = 17;  // 60 Hz target (was 33/~30 Hz; decision on measured budget: workavg 3.1-4.4 ms, dispatch ~7 ms/fire -> expect ~40 Hz achieved)
     // Achieved-rate instrumentation (2026-08-16, before the 60 Hz
     // attempt — "configured" and "achieved" must be distinguishable,
     // because the overrun symptom is SKIPPED TICKS, not load).

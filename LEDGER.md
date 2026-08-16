@@ -16,7 +16,45 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (re-arm bug found AND confirmed in source; fix build b6192fed pre-registered — re-arm first, direct 33 ms period, throttle deleted, work-time logged; entry below)
+Last updated: 2026-08-16 (fix boot RUN: dispatch latency is the floor, not work — 60 Hz target boot pre-registered on measured budget, build edfce834; entry below)
+
+---
+
+## 2026-08-16 — re-arm fix boot RUN (5f3adb6 / b6192fed): work is 3-4 ms; the floor is ~7 ms/fire TCG dispatch; 60 Hz target pre-registered (edfce834)
+
+**Fix boot results (mode=5 1920×1080, md5 verified):**
+- ticks = xfers EXACTLY (261/261 … 245/245) — every fire
+  transfers; throttle machinery gone; first tick logs the period.
+- **Active: 26.1 Hz achieved** (33 ms configured), workavg
+  3.3-4.4 ms. **Idle: 24.5-24.9 Hz, workavg 3.1-3.4 ms.**
+- **The honest surprise: idle achieved did NOT rise** (pre-fix
+  25, post-fix ~24.7 — both eras ≈ 40 ms/transfer). The floor is
+  neither work nor the re-arm order: **effective period 40.2 ms
+  − 33 configured = ~7 ms/fire of timer-dispatch latency under
+  TCG** (clock delivery + workloop wakeup). The pre-fix
+  arithmetic had folded this into "work" (derived 7-20 ms;
+  actual work is 3-4.4 ms). The fix's value is the period model
+  (max, not sum), the single knob, and the instrumentation that
+  exposed the real floor — not idle rate.
+- Work ceiling alone: ~250-300 Hz. Dispatch overhead is the
+  binding constraint. Idle load at 4 min: 8.58 decaying (boot-
+  age caveat — not the settled number; recorded, not compared).
+
+**60 Hz decision, ON THE MEASURED BUDGET (user's criterion):**
+workavg 3.1-4.4 ms ≤ ~16 ms → plausible. REFRESH_PERIOD_MS
+33 → 17 (build edfce834, one constant).
+
+**Pre-registrations for the 17 ms boot:**
+1. Achieved ≈ 1000/(17+7) ≈ **40±3 Hz** IF dispatch overhead is
+   constant per fire. If achieved << ~35, overhead SCALES with
+   rate (queueing) — that is the refusal datum.
+2. workavg unchanged ≈ 3-4.5 ms (same mode).
+3. ticks = xfers (every fire transfers).
+4. Idle load rises vs the 33 ms era (≈2× fires × ~3-4 ms work +
+   dispatch) — watch single-digit; revert if it climbs past
+   ~half a core sustained at idle.
+5. Cursor visibly smoother again (user verdict; ~24→~40 Hz).
+6. Mode line logged (confound check; work figures quote mode).
 
 ---
 
