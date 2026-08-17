@@ -16,7 +16,115 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-16 (docs split: accelerator surface path gets its own file; architecture-3d.md loses the stale GL-dispatch milestone; memory-store housekeeping noted; entry below)
+Last updated: 2026-08-17 (session: the compositor gate found+fixed in Mesa-VirGL baf08516 — GL chrome restored; 2D refresh workavg degradation datum 3.4→15 ms under host contention; typing-cliff frontier; entry below)
+
+---
+
+## 2026-08-17 — cross-repo session: compositor gate fixed (Mesa baf08516); kext-side data; typing cliff
+
+**Headline work lives in the Mesa-VirGL ledger, entry 18** (commit
+baf08516): PowerFox's failing-era `FEATURE_FAILURE_OPENGL_CREATE_
+CONTEXT` decoded to a compositor gate — `gfxPlatformMac` demands
+`NSOpenGLPFAAccelerated`, real AppKit matching sees a software-only
+renderer list (boot-constant; measured by the new `probe/probe_pix.c`),
+and the shim never swizzled `NSOpenGLPixelFormat`. Fix = strip the
+attribute; GL-composited chrome verified by user. Full falsification
+chain (env/profile/plain-GL/binary/launch-order all exonerated) and the
+unexplained run-1 success are recorded there. The pre-reboot failing
+era was this gate, not (only) entry-17's host disk pressure.
+
+**Kext-relevant observations this session:**
+- Fresh boots (2): 2D surface path all green (WindowServer pid 88,
+  full selector loop, ticks=xfers, ~45-48 Hz achieved, workavg 3.4-4.1
+  ms — consistent with the 17 ms-era close-out figures).
+- **NEW DATUM for the open "guest-wide degradation" item:** during the
+  browser typing burst + host daemon storm (host load 14-20,
+  AddressBookS 90%/contactsd 81%), the kext's own 2D refresh workavg
+  rose 3.4 → 15 ms — kernel-side, browser-independent. Host-side
+  virtio service degradation under host CPU contention, not a kext
+  defect; but it confirms the 2D refresh's achieved rate is hostage to
+  host load. Not measured on a quiet host (queued with the Mesa-side
+  typing-cliff pre-registration).
+- 3D user client per browser session: context+capsets+per-frame
+  0x3009 transfers all healthy (~2 full-frame 1491x910 transfers per
+  composite at ~3 Hz); browser death left no crash report and kernel
+  cleanup (`clientDied` → backings released) fired correctly each time.
+
+**Tools added to `probe/` (untracked, like the rest of probe/):**
+`probe_pix.c` — CGL renderer list + Gecko's exact pixel-format call
+(needs NSApplication bootstrap or it fails bare — the
+`__NSAutoreleaseNoPool` spam is the tell; also deploy to `/Users/sl/`,
+`/tmp` is wiped every reboot and ate tools twice this session);
+`probe_sci.c` — proves a symbol is exported AND fires (banner + rect
+log). Both build with the modern-clang + 10.6-SDK + `-target
+x86_64-apple-macos10.6` incantation used for killtest binaries.
+
+**Guest state at session end:** kext edfce834 (unchanged, healthy);
+`/tmp/subst` carries the strip-swizzle substitute `5c587196` (commit
+baf08516 + no other delta); browser killed after the typing cliff —
+no working browser on screen until the next launch; Mesa scissor
+delta still in `git stash` ("scissor-wrapper-delta", exonerated and
+useless — Gecko makes zero glScissor calls).
+
+**Next concrete steps (pre-registered):**
+1. Mesa-side typing-cliff discrimination on a QUIET host: relaunch,
+   idle health check, then a small typing burst — does the wall-vs-
+   parts gap (≈580 ms unaccounted) appear first again? If yes → 1-vCPU
+   TCG congestion, mitigation = load shedding (skip composites while
+   input pending), not a driver fix. If no → re-attribute.
+2. Negative control for the strip fix: one launch with
+   `SHIM_KEEP_ACCEL_ATTR=1` must fail as before (proves the strip is
+   load-bearing, not accidental).
+3. 2D refresh workavg on a quiet host (this session's 15 ms was under
+   load).
+
+**Post-entry follow-up, same evening (typing test + VM restart):**
+- Typing test under host load ~20: the relaunch had degraded from its
+  FIRST frames (wall 1.3-2.9 s, zero typing) — the degraded regime is
+  HOST-LOAD-driven, not typing-driven; the earlier "typing cliff" was
+  concurrent, not causal. Typing's role: a TRANSIENT U-state wedge
+  (~1-2 min, self-recovering; last activity = a 0x3009 transfer)
+  on top of the degraded baseline. No kernel/surface errors, no crash.
+  Which call holds U remains unmeasured (needs `sample` caught live
+  in the window).
+- Guest→internet died mid-session (100% loss to 8.8.8.8) while
+  host→internet was clean (3/3, 19 ms) and guest→NAT-gateway answered
+  — **UTM's NAT forward path wedged under host load**; reset by the
+  VM restart (8.8.8.8 at 29-37 ms after). Not guest-reachable; another
+  face of the host-starvation family.
+- Post-restart launch (host load falling, 1-min avg 12): gate passed,
+  **wall mean 133-238 ms (min 64 ms) — best figures of the session**,
+  2× better than the previous 300 ms "healthy" era. Host load is the
+  dominant frame-rate variable, ahead of anything guest-side.
+
+**SMP axis OPENED (user action: VM reconfigured to 4 vCPUs):**
+- Boot clean: 4 CPUs active, ZERO TLB-shootdown/IPI panic lines
+  (the recorded 1-vCPU-only rationale has not fired — observation
+  window ~30 min including browser use; keep watching).
+- 2D refresh: **50.7-51.6 Hz achieved, workavg 3.4-4.0 ms** — best
+  recorded rate, up from the 1-vCPU 17 ms-era peak of 48 Hz.
+- Browser compositing at wall 159-165 ms mean (max 214-225 ms) WHILE
+  the host was at load ~20 (1-vCPU era at same host load: 1300-2900
+  ms). **User typed during the window: NO wedge.** The typing-wedge
+  is 1-vCPU starvation — closed by SMP.
+- The "1 vCPU during development" rule stands as a diagnostic-mode
+  recommendation; not a correctness constraint observed so far.
+
+**IOLog gate LANDED (commit 36f8f97, installed c9164bdf, rebooted):**
+- Symptom: kernel.log flooding at ~1.3 MB/min under SMP browsing
+  (16 MB in 12 min; 1 MB msgbuf wrapped in seconds) — the old "IOLog
+  gate" open item, load-bearing once compositing became continuous.
+- Fix: first-N counters on the per-frame hot paths (externalMethod
+  pair 24, 0x3009 16, sendDisplayCommand 32, surface dispatch pair 32,
+  SetShape trail 32, Query/Write/Unlock/Flush Success 32 each,
+  getVRAMRange 32); submitCommand noisy set extended to 0x206/0x207
+  with the device-error line made UNCONDITIONAL. All anomaly paths
+  ungated by design (NotReady/MISMATCH/CannotLock/BadArgument/Invalid).
+- Measured after install, under full compositing (PIXFMT_STRIP run,
+  ~1650 frames): **+948 B/60 s ≈ 0.95 KB/min — ~1400× reduction.**
+- Post-install checks: md5 /S/L/E == build (c9164bdf), kextutil -n -t
+  clean, kextcache exits 0 but still writes no Startup/ files (the
+  standing cacheless residual — boot from /S/L/E, blessed dev config).
 
 ---
 
