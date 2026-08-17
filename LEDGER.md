@@ -126,6 +126,23 @@ useless — Gecko makes zero glScissor calls).
   clean, kextcache exits 0 but still writes no Startup/ files (the
   standing cacheless residual — boot from /S/L/E, blessed dev config).
 
+**NEW OPEN ITEM (2026-08-17 19:08): mid-session HOST-SIDE virtio-gpu
+DEVICE WEDGE.** During a browser launch (pattern-fill run) under host
+load ~18: one `submitCommand: TIMEOUT on cmd 0x200 (no response after
+150ms)` at 19:08:57, then EVERY subsequent device command timed out —
+kext 2D refresh included (`ticks=36 xfers=0, achieved ~0.0 Hz`,
+`transferToHost2D FAILED 0xe00002d6` continuously for 30+ min).
+Display frozen; guest kernel otherwise alive and healthy (timers,
+ssh, no panic — the timeout/error paths did their job). QEMU at ~1
+core (no renderer spin). NOT starvation (that recovers); the host
+device stopped completing virtqueue requests. Started ~1 s into the
+browser's virgl context-create burst. Debug Log disabled → no
+host-side forensics. Cleared only by VM restart (untested — session
+ended before restarting). Possible UTM/virglrenderer defect under
+load; watch for recurrence; if it recurs, enabling the UTM Debug Log
+for a bounded window is the pre-registered evidence step (cap it —
+entry-17's 35 GB lesson).
+
 ---
 
 ## 2026-08-16 — doc split: two stacks named; stale GL milestone removed; memory-store note
