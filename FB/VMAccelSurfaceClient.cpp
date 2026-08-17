@@ -355,8 +355,19 @@ IOReturn CLASS::clientMemoryForType(UInt32 type, IOOptionBits* options, IOMemory
 
 IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 index)
 {
-    IOLog("VMAccelSurfaceClient: getTargetAndMethodForIndex index=%u (max=%u)\n",
-          index, kIOAccelNumSurfaceMethods);
+    /* IOLog gate (2026-08-17): this dispatch pair logged 2 lines per
+     * selector call — at continuous compositing under SMP that was the
+     * single largest kernel.log contributor (16 MB in 12 min of
+     * browsing; 1 MB msgbuf wrapping in seconds). Same pattern as the
+     * 0x6008 first-run counters: first 32 dispatches log, then quiet.
+     * The invalid-index error below is NOT gated. */
+    static uint32_t s_dispatch_log = 0;
+    const bool log_this = (s_dispatch_log < 32);
+    if (log_this) s_dispatch_log++;
+    if (log_this) {
+        IOLog("VMAccelSurfaceClient: getTargetAndMethodForIndex index=%u (max=%u)\n",
+              index, kIOAccelNumSurfaceMethods);
+    }
 
     if (index >= kIOAccelNumSurfaceMethods) {
         IOLog("VMAccelSurfaceClient: Invalid method index %u\n", index);
@@ -381,8 +392,10 @@ IOExternalMethod* CLASS::getTargetAndMethodForIndex(IOService** targetP, UInt32 
                                     : "(empty at dispatch too)");
     }
 
-    IOLog("VMAccelSurfaceClient: Returning method %u (count0=%llu, count1=%llu)\n",
-          index, (unsigned long long)sMethods[index].count0, (unsigned long long)sMethods[index].count1);
+    if (log_this) {
+        IOLog("VMAccelSurfaceClient: Returning method %u (count0=%llu, count1=%llu)\n",
+              index, (unsigned long long)sMethods[index].count0, (unsigned long long)sMethods[index].count1);
+    }
 
     // Return const_cast since IOKit expects non-const pointer
     return (IOExternalMethod*)&sMethods[index];
@@ -529,11 +542,20 @@ IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void 
     bool sizeSane = (rgnSizeV >= sizeof(IOAccelDeviceRegion) &&
                      rgnSizeV <= (1u << 20));
 
-    IOLog("VMAccelSurfaceClient: SetShape(options=0x%x fbIndex=%llu "
-          "rgn=0x%llx size=%llu%s)\n",
-          options, (unsigned long long)fbIdx,
-          (unsigned long long)rgnAddr, (unsigned long long)rgnSizeV,
-          sizeSane ? "" : " [size impl? see raw p4]");
+    /* IOLog gate (2026-08-17): SetShape fires 2-3× per composite cycle
+     * (the shape pair around every Flush) — a top flood source. First
+     * 32 calls log the full geometry trail; then quiet. Error and
+     * no-op branches stay visible for the first 32 (the shape of the
+     * traffic is stable after that). */
+    static uint32_t s_setshape_log = 0;
+    const bool shape_log = (s_setshape_log < 32);
+    if (shape_log) s_setshape_log++;
+    if (shape_log)
+        IOLog("VMAccelSurfaceClient: SetShape(options=0x%x fbIndex=%llu "
+              "rgn=0x%llx size=%llu%s)\n",
+              options, (unsigned long long)fbIdx,
+              (unsigned long long)rgnAddr, (unsigned long long)rgnSizeV,
+              sizeSane ? "" : " [size impl? see raw p4]");
 
     if (!kernelCanonical || !sizeSane) {
         IOLog("VMAccelSurfaceClient: SetShape — struct did NOT arrive "
@@ -544,11 +566,12 @@ IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void 
 
     /* Region readable: log the geometry, sanity-checkable against the
      * live display (expect ~1680x1050 for full-screen surfaces). */
-    IOLog("VMAccelSurfaceClient: SetShape region — num_rects=%u "
-          "bounds=(x=%d y=%d w=%d h=%d)\n",
-          rgn->num_rects,
-          (int)rgn->bounds.x, (int)rgn->bounds.y,
-          (int)rgn->bounds.w, (int)rgn->bounds.h);
+    if (shape_log)
+        IOLog("VMAccelSurfaceClient: SetShape region — num_rects=%u "
+              "bounds=(x=%d y=%d w=%d h=%d)\n",
+              rgn->num_rects,
+              (int)rgn->bounds.x, (int)rgn->bounds.y,
+              (int)rgn->bounds.w, (int)rgn->bounds.h);
 
     /* Empty-region no-op (worked example :136-144, :1607): num_rects!=0
      * with rect[0] degenerate IS an empty shape — the observed 0x1
@@ -558,14 +581,16 @@ IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void 
                          rgnSizeV >= (sizeof(IOAccelDeviceRegion) +
                                       sizeof(IOAccelBounds)));
     if (rectReadable) {
-        IOLog("VMAccelSurfaceClient: SetShape rect[0]=(x=%d y=%d w=%d "
-              "h=%d)\n",
-              (int)rgn->rect[0].x, (int)rgn->rect[0].y,
-              (int)rgn->rect[0].w, (int)rgn->rect[0].h);
+        if (shape_log)
+            IOLog("VMAccelSurfaceClient: SetShape rect[0]=(x=%d y=%d w=%d "
+                  "h=%d)\n",
+                  (int)rgn->rect[0].x, (int)rgn->rect[0].y,
+                  (int)rgn->rect[0].w, (int)rgn->rect[0].h);
         if (rgn->rect[0].w <= 0 || rgn->rect[0].h <= 0) {
-            IOLog("VMAccelSurfaceClient: SetShape — empty region "
-                  "(rect[0] degenerate): no-op, geometry untouched "
-                  "(:1607)\n");
+            if (shape_log)
+                IOLog("VMAccelSurfaceClient: SetShape — empty region "
+                      "(rect[0] degenerate): no-op, geometry untouched "
+                      "(:1607)\n");
             return kIOReturnSuccess;
         }
     }
@@ -591,17 +616,19 @@ IOReturn CLASS::setShape(void *p1, void *p2, void *p3, void *p4, void *p5, void 
             if (ext_x > m_surface->base_w) m_surface->base_w = ext_x;
             if (ext_y > m_surface->base_h) m_surface->base_h = ext_y;
         }
-        IOLog("VMAccelSurfaceClient: SetShape — IdentityScale: shape "
-              "(%u,%u %ux%u) STORED, extent now %ux%u\n",
-              m_surface ? m_surface->shape_x : 0,
-              m_surface ? m_surface->shape_y : 0,
-              m_surface ? m_surface->width : 0,
-              m_surface ? m_surface->height : 0,
-              m_surface ? m_surface->base_w : 0,
-              m_surface ? m_surface->base_h : 0);
+        if (shape_log)
+            IOLog("VMAccelSurfaceClient: SetShape — IdentityScale: shape "
+                  "(%u,%u %ux%u) STORED, extent now %ux%u\n",
+                  m_surface ? m_surface->shape_x : 0,
+                  m_surface ? m_surface->shape_y : 0,
+                  m_surface ? m_surface->width : 0,
+                  m_surface ? m_surface->height : 0,
+                  m_surface ? m_surface->base_w : 0,
+                  m_surface ? m_surface->base_h : 0);
     } else {
-        IOLog("VMAccelSurfaceClient: SetShape — no IdentityScaleBit: "
-              "geometry untouched (:1639)\n");
+        if (shape_log)
+            IOLog("VMAccelSurfaceClient: SetShape — no IdentityScaleBit: "
+                  "geometry untouched (:1639)\n");
     }
 
     /* 10.6 WindowServer Window-Grab deadlock avoidance (worked
@@ -712,11 +739,18 @@ IOReturn CLASS::flush(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6
     }
     IOLockUnlock(m_lock);
 
-    IOLog("VMAccelSurfaceClient: Flush -> Success (blit %ux%u at (%u,%u)%s "
-          "surfStride=%llu fbStride=%llu — timer carries to host)\n",
-          w, h, x, y,
-          (w != orig_w || h != orig_h) ? " [CLIPPED]" : "",
-          (unsigned long long)surfStride, (unsigned long long)fbStride);
+    /* IOLog gate (2026-08-17): one Flush per composite cycle; the
+     * geometry trail is stable after the first 32. Failures above are
+     * NOT gated. */
+    static uint32_t s_flush_log = 0;
+    if (s_flush_log < 32) {
+        s_flush_log++;
+        IOLog("VMAccelSurfaceClient: Flush -> Success (blit %ux%u at (%u,%u)%s "
+              "surfStride=%llu fbStride=%llu — timer carries to host)\n",
+              w, h, x, y,
+              (w != orig_w || h != orig_h) ? " [CLIPPED]" : "",
+              (unsigned long long)surfStride, (unsigned long long)fbStride);
+    }
     return kIOReturnSuccess;
 }
 
@@ -728,8 +762,17 @@ IOReturn CLASS::queryLock(void *p1, void *p2, void *p3, void *p4, void *p5, void
      * answer IS the return code. CannotLock if the write lock is
      * held, Success if lockable. */
     bool held = (m_surface && m_surface->is_locked);
-    IOLog("VMAccelSurfaceClient: QueryLock -> %s\n",
-          held ? "CannotLock (write lock held)" : "Success (lockable)");
+    /* IOLog gate (2026-08-17): per-cycle query; gate the Success shape,
+     * CannotLock (anomaly) always logs. */
+    if (held) {
+        IOLog("VMAccelSurfaceClient: QueryLock -> CannotLock (write lock held)\n");
+    } else {
+        static uint32_t s_qlock_log = 0;
+        if (s_qlock_log < 32) {
+            s_qlock_log++;
+            IOLog("VMAccelSurfaceClient: QueryLock -> Success (lockable)\n");
+        }
+    }
     return held ? kIOReturnCannotLock : kIOReturnSuccess;
 }
 
@@ -921,12 +964,18 @@ IOReturn CLASS::writeLockSurface(void *p1, void *p2, void *p3, void *p4, void *p
     info->pixelFormat = m_surface->pixel_format;
     info->colorTemperature[0] = 0x1CCCC;    /* worked example :395 */
 
-    IOLog("VMAccelSurfaceClient: WriteLock -> Success (base=0x%llx "
-          "off=%llu addr=0x%llx %ux%u stride=%u%s)\n",
-          (unsigned long long)base, (unsigned long long)offset,
-          (unsigned long long)info->address[0],
-          info->width, info->height, info->rowBytes,
-          skipped ? " [skipped-lock]" : "");
+    /* IOLog gate (2026-08-17): per-cycle handout; failure paths and
+     * the MISMATCH self-check above are NOT gated. */
+    static uint32_t s_wlock_log = 0;
+    if (s_wlock_log < 32) {
+        s_wlock_log++;
+        IOLog("VMAccelSurfaceClient: WriteLock -> Success (base=0x%llx "
+              "off=%llu addr=0x%llx %ux%u stride=%u%s)\n",
+              (unsigned long long)base, (unsigned long long)offset,
+              (unsigned long long)info->address[0],
+              info->width, info->height, info->rowBytes,
+              skipped ? " [skipped-lock]" : "");
+    }
     IOLockUnlock(m_lock);
     return kIOReturnSuccess;
 }
@@ -939,8 +988,13 @@ IOReturn CLASS::writeUnlockSurface(void *p1, void *p2, void *p3, void *p4, void 
     if (m_surface)
         m_surface->is_locked = false;
     IOLockUnlock(m_lock);
-    IOLog("VMAccelSurfaceClient: WriteUnlock -> Success (bit cleared, "
-          "backing persists)\n");
+    /* IOLog gate (2026-08-17): per-cycle. */
+    static uint32_t s_wunlock_log = 0;
+    if (s_wunlock_log < 32) {
+        s_wunlock_log++;
+        IOLog("VMAccelSurfaceClient: WriteUnlock -> Success (bit cleared, "
+              "backing persists)\n");
+    }
     return kIOReturnSuccess;
 }
 

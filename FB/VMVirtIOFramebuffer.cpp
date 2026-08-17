@@ -867,15 +867,24 @@ IODeviceMemory* VMVirtIOFramebuffer::getApertureRange(IOPixelAperture aperture)
 // CRITICAL: WindowServer calls this to get the framebuffer memory for rendering
 IODeviceMemory* VMVirtIOFramebuffer::getVRAMRange(void)
 {
-    IOLog("VMVirtIOFramebuffer::getVRAMRange() - *** WINDOWSERVER REQUESTING FRAMEBUFFER MEMORY ***\n");
+    /* IOLog gate (2026-08-17): WindowServer re-requests this
+     * continuously while compositing — 2 lines per call, a top-3
+     * kernel.log contributor under SMP browsing. First 32 log, then
+     * quiet. The NULL-backing error below is NOT gated. */
+    static uint32_t s_vram_log = 0;
+    const bool vram_log = (s_vram_log < 32);
+    if (vram_log) s_vram_log++;
+    if (vram_log)
+        IOLog("VMVirtIOFramebuffer::getVRAMRange() - *** WINDOWSERVER REQUESTING FRAMEBUFFER MEMORY ***\n");
 
     // VirtIO GPU path: same backing as the aperture and the resource — single
     // allocation, three roles.
     if (m_fb_device_memory) {
-        IOLog("VMVirtIOFramebuffer::getVRAMRange() - Returning fb backing %p phys=0x%llx len=%llu\n",
-              m_fb_device_memory,
-              (unsigned long long)m_fb_device_memory->getPhysicalAddress(),
-              (unsigned long long)m_fb_device_memory->getLength());
+        if (vram_log)
+            IOLog("VMVirtIOFramebuffer::getVRAMRange() - Returning fb backing %p phys=0x%llx len=%llu\n",
+                  m_fb_device_memory,
+                  (unsigned long long)m_fb_device_memory->getPhysicalAddress(),
+                  (unsigned long long)m_fb_device_memory->getLength());
         m_fb_device_memory->retain();
         return m_fb_device_memory;
     }

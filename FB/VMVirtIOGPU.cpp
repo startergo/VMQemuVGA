@@ -1987,8 +1987,15 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
         return kIOReturnNotReady;
     }
 
-    // Suppress noisy logging for 60 Hz transfer/flush commands
-    bool noisy = (cmd->type == 0x104 || cmd->type == 0x105);
+    // Suppress noisy logging for 60 Hz transfer/flush commands.
+    // IOLog gate extension (2026-08-17): the 3D transfer pair (0x206
+    // TRANSFER_TO_HOST_3D / 0x207 TRANSFER_FROM_HOST_3D) fires ~3× per
+    // composited frame under the browser — at SMP rates it flooded
+    // kernel.log at ~1.3 MB/min (16 MB in 12 min) and wrapped the 1 MB
+    // msgbuf in seconds. Device-error logging below is NOT gated by
+    // noisy — a device rejection must always be visible.
+    bool noisy = (cmd->type == 0x104 || cmd->type == 0x105 ||
+                  cmd->type == 0x206 || cmd->type == 0x207);
 
     // Refresh-timeout instrumentation: log 4 signals on entry for first N submissions
     // so the succeed→fail transition is visible in a single boot. Throttled after N.
@@ -2325,10 +2332,10 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
         return kIOReturnSuccess;  // OK response range
     }
     if (resp->type >= 0x1200) {
-        if (!noisy) {
-            IOLog("VMVirtIOGPU::submitCommand: device error 0x%x for cmd 0x%x\n",
-                  resp->type, cmd->type);
-        }
+        // Errors always log — the noisy gate must never hide a device
+        // rejection (IOLog-gate rule, 2026-08-17).
+        IOLog("VMVirtIOGPU::submitCommand: device error 0x%x for cmd 0x%x\n",
+              resp->type, cmd->type);
         return kIOReturnError;  // Error response range
     }
 
@@ -5981,8 +5988,16 @@ IOReturn CLASS::setscanout(uint32_t scanout_id, uint32_t resource_id,
 IOReturn CLASS::sendDisplayCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size, 
                                   virtio_gpu_ctrl_hdr* resp, size_t resp_size)
 {
-    IOLog("VMVirtIOGPU::sendDisplayCommand: Relaying command from framebuffer to VirtIO hardware\n");
-    IOLog("VMVirtIOGPU::sendDisplayCommand: Command type: 0x%x, size: %zu\n", cmd ? cmd->type : 0, cmd_size);
+    /* IOLog gate (2026-08-17): two lines per relayed command, 2-3
+     * commands per composite cycle — top flood source under SMP
+     * browsing. First 32 log. The invalid-parameters error below and
+     * submitCommand's own device-error path are NOT gated. */
+    static uint32_t s_sendcmd_log = 0;
+    if (s_sendcmd_log < 32) {
+        s_sendcmd_log++;
+        IOLog("VMVirtIOGPU::sendDisplayCommand: Relaying command from framebuffer to VirtIO hardware\n");
+        IOLog("VMVirtIOGPU::sendDisplayCommand: Command type: 0x%x, size: %zu\n", cmd ? cmd->type : 0, cmd_size);
+    }
     
     if (!cmd || cmd_size == 0) {
         IOLog("VMVirtIOGPU::sendDisplayCommand: Invalid command parameters\n");
@@ -6609,18 +6624,28 @@ IOReturn VMVirtIOGPUUserClient::clientMemoryForType(UInt32 type, IOOptionBits* o
 IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments* args,
                                               IOExternalMethodDispatch* dispatch, OSObject* target, void* reference)
 {
-    // CRITICAL: Log IMMEDIATELY at function entry to catch all calls
-    IOLog("VMVirtIOGPUUserClient::externalMethod() ENTRY: selector=%u (0x%x)\n", selector, selector);
-    
+    // CRITICAL: Log IMMEDIATELY at function entry to catch all calls.
+    // IOLog gate (2026-08-17): at continuous compositing under SMP this
+    // pair logged 2 lines per 3D call — the dominant kernel.log flood
+    // (16 MB in 12 min of browsing; 1 MB msgbuf wrapped in seconds).
+    // First 24 calls log (enough for a full boot-shape read), then
+    // quiet. Error paths below are NOT gated.
+    static uint32_t s_uc_entry_log = 0;
+    const bool uc_log = (s_uc_entry_log < 24);
+    if (uc_log) s_uc_entry_log++;
+    if (uc_log)
+        IOLog("VMVirtIOGPUUserClient::externalMethod() ENTRY: selector=%u (0x%x)\n", selector, selector);
+
     // CRITICAL: Add safety checks to prevent kernel panics
     if (!args) {
         IOLog("VMVirtIOGPUUserClient::externalMethod() ERROR: NULL args pointer\n");
         return kIOReturnBadArgument;
     }
-    
-    IOLog("VMVirtIOGPUUserClient::externalMethod() selector=%u scalarIn=%u scalarOut=%u structIn=%u structOut=%u\n", 
-          selector, args->scalarInputCount, args->scalarOutputCount,
-          args->structureInputSize, args->structureOutputSize);
+
+    if (uc_log)
+        IOLog("VMVirtIOGPUUserClient::externalMethod() selector=%u scalarIn=%u scalarOut=%u structIn=%u structOut=%u\n",
+              selector, args->scalarInputCount, args->scalarOutputCount,
+              args->structureInputSize, args->structureOutputSize);
     
     if (!m_gpu_device) {
         IOLog("VMVirtIOGPUUserClient: No GPU device available for method %u\n", selector);
@@ -6944,8 +6969,17 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferToHost3D\n");
             return kIOReturnBadArgument;
 
-        case 0x3009: // Transfer from host 3D (copy rendered pixels back to guest)
-            IOLog("VMVirtIOGPUUserClient: TransferFromHost3D selector=0x3009\n");
+        case 0x3009: { // Transfer from host 3D (copy rendered pixels back to guest)
+            /* IOLog gate (2026-08-17): ~2 of these per composited frame
+             * at 3-6 Hz continuous — the per-frame flood. First 16 log
+             * (the wire shape is stable call-to-call), then quiet. The
+             * invalid-parameters error below is NOT gated; submitCommand
+             * device errors are not gated either. */
+            static uint32_t s_3009_log = 0;
+            const bool t3009_log = (s_3009_log < 16);
+            if (t3009_log) s_3009_log++;
+            if (t3009_log)
+                IOLog("VMVirtIOGPUUserClient: TransferFromHost3D selector=0x3009\n");
             if (args->scalarInputCount >= 8 && args->scalarInput && m_gpu_device) {
                 uint32_t ctx_id = (args->scalarInputCount >= 9) ? (uint32_t)args->scalarInput[8] : 0;
                 // Log what goes on the wire. Stride/layer_stride/offset are
@@ -6954,12 +6988,13 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                 // produces a plausible-looking partial readback rather than
                 // an error — exactly the failure mode hardest to read from a
                 // colour check.
-                IOLog("VMVirtIOGPUUserClient: 0x3009 wire: res=%u ctx=%u "
-                      "box=(%u,%u,%u, %ux%ux%u) stride=0 layer_stride=0 offset=0\n",
-                      (uint32_t)args->scalarInput[0], ctx_id,
-                      (uint32_t)args->scalarInput[2], (uint32_t)args->scalarInput[3],
-                      (uint32_t)args->scalarInput[4], (uint32_t)args->scalarInput[5],
-                      (uint32_t)args->scalarInput[6], (uint32_t)args->scalarInput[7]);
+                if (t3009_log)
+                    IOLog("VMVirtIOGPUUserClient: 0x3009 wire: res=%u ctx=%u "
+                          "box=(%u,%u,%u, %ux%ux%u) stride=0 layer_stride=0 offset=0\n",
+                          (uint32_t)args->scalarInput[0], ctx_id,
+                          (uint32_t)args->scalarInput[2], (uint32_t)args->scalarInput[3],
+                          (uint32_t)args->scalarInput[4], (uint32_t)args->scalarInput[5],
+                          (uint32_t)args->scalarInput[6], (uint32_t)args->scalarInput[7]);
                 return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                         (uint32_t)args->scalarInput[1],  // level
                                                         (uint32_t)args->scalarInput[2],  // x
@@ -6972,6 +7007,7 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferFromHost3D\n");
             return kIOReturnBadArgument;
+        }
 
         case 0x5000: { // probeAttachBackingUser — userspace-memory ATTACH_BACKING proof
             IOLog("VMVirtIOGPUUserClient: probeAttachBackingUser selector=0x5000\n");
