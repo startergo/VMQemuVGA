@@ -8797,6 +8797,7 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
         unsigned n = size / 4;
         unsigned i = 0;
         static uint32_t s_stream_hits = 0;
+        static uint32_t g_stream_all_n = 0;   /* windowed all-transfers */
         while (i < n) {
             uint32_t hdr = dw[i];
             uint32_t len = (hdr >> 20) & 0xFFF;
@@ -8805,27 +8806,46 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
             if ((cmd == 43 || cmd == 9) && len >= 12) {
                 uint32_t res = dw[i + 1];
                 uint32_t rw = 0, rh = 0;
-                if (userResourceDims(res, &rw, &rh)) {
-                    uint32_t bx = dw[i + 5], by = dw[i + 6];
-                    uint32_t bw = dw[i + 8], bh = dw[i + 9];
+                const bool known = userResourceDims(res, &rw, &rh);
+                uint32_t bx = dw[i + 5], by = dw[i + 6];
+                uint32_t bw = dw[i + 8], bh = dw[i + 9];
+                /* WINDOWED ALL-TRANSFERS mode (2026-08-18): the
+                 * oversize-only filter saw nothing while host errors
+                 * fired — the failing dimension is not (w,h). While
+                 * /tmp/walk_on exists, log EVERY stream transfer
+                 * (resource, box, dims) so a capture window around a
+                 * host-error burst names the resource by timestamp.
+                 * Capped; same marker discipline as the shim. */
+                static int s_all_mode = -1;
+                if (s_all_mode < 0)
+                    s_all_mode = 1;   /* parse always armed; marker per-call */
+                if (s_stream_hits < 5000 &&
+                    (known || 1) /* log unknown resources too */) {
                     if (bx + bw > rw || by + bh > rh) {
-                        if (s_stream_hits < 32) {
-                            s_stream_hits++;
-                            IOLog("VMVirtIOGPUUserClient: STREAM-XFER-OVERSIZE "
-                                  "ctx=0x%x cmd=%u res=0x%x lvl=%u "
-                                  "stride=%u lstride=%u "
-                                  "box=(%u,%u %ux%ux%u) resource=%ux%u\n",
-                                  ctx_id, cmd, res, dw[i + 2],
-                                  dw[i + 3], dw[i + 4],
-                                  bx, by, bw, bh, dw[i + 10], rw, rh);
-                            if (s_stream_hits == 1) {
-                                unsigned nd = len < 14 ? len : 14;
-                                IOLog("VMVirtIOGPUUserClient: STREAM first-hit "
-                                      "raw dwords:");
-                                for (unsigned k = 0; k < nd; k++)
-                                    IOLog(" [%u]=0x%08x", k, dw[i + k]);
-                            }
-                        }
+                        if (s_stream_hits < 32) s_stream_hits++;
+                        IOLog("VMVirtIOGPUUserClient: STREAM-XFER-OVERSIZE "
+                              "ctx=0x%x cmd=%u res=0x%x lvl=%u "
+                              "stride=%u lstride=%u "
+                              "box=(%u,%u %ux%ux%u) resource=%ux%u\n",
+                              ctx_id, cmd, res, dw[i + 2],
+                              dw[i + 3], dw[i + 4],
+                              bx, by, bw, bh, dw[i + 10], rw, rh);
+                    }
+                    /* all-transfers capture (kernel-safe gate: no
+                     * access() in kexts — log FULL-WINDOW-SCALE boxes
+                     * only (>=500k px), the class the capacity errors
+                     * involve; cap 4000 acts as the window and covers
+                     * browser startup + a webgl attempt). */
+                    if (g_stream_all_n < 4000 &&
+                        (uint64_t)bw * bh >= 500000ULL) {
+                        g_stream_all_n++;
+                        IOLog("STREAMXFER[%u] ctx=0x%x cmd=%u res=0x%x "
+                              "lvl=%u stride=%u lstride=%u box=(%u,%u,%u "
+                              "%ux%ux%u) res=%ux%u%s\n",
+                              g_stream_all_n, ctx_id, cmd, res, dw[i + 2],
+                              dw[i + 3], dw[i + 4],
+                              bx, by, dw[i + 7], bw, bh, dw[i + 10],
+                              rw, rh, known ? "" : " UNKNOWN");
                     }
                 }
             }
