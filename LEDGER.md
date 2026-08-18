@@ -149,6 +149,22 @@ mismatch family again. virglrenderer's error does not name the
 resource. Next capture needs the windowed ALL-transfers log correlated
 by timestamp (the identifier's oversize-only filter sees nothing).**
 
+**WEBGL REPRODUCTION UNDER FULL CAPTURE — all kext-visible paths
+eliminated (2026-08-18, build e39300a):** user opened the webgl page
+(black screen); 6 fresh capacity errors fired host-side while the
+capture logged ZERO stream transfers at full-window scale (>=500k px),
+ZERO oversize, ZERO clamp fires. The offending transfers exist in
+NEITHER the 0x6008 stream NOR the kext selectors' visible geometry.
+Remaining candidate, consistent with everything: **MSAA capacity
+accounting** — host log "Skipping 16 samples" shows the webgl page
+requesting MSAA; an MSAA resource's host size includes samples, and
+if Mesa's transfer sizing for MSAA resources doesn't multiply
+consistently, the IOV exceeds capacity while w/h look in bounds —
+matching every observation. WebGL is the only MSAA consumer, matching
+"only webgl contexts die." NEXT SESSION: Mesa-side virgl transfer
+sizing under nr_samples (our tree: virgl_transfer / the encoder's
+transfer path); kext-side clamps stay as harmless belt-and-braces.
+
 **WEDGE MECHANISM FOUND (2026-08-18, third occurrence — host forensics
 via UTM debug.log, which had been ON all along):**
 `vrend_renderer_transfer_internal: context error reported 0 "HOST" IOV
