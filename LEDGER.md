@@ -97,6 +97,34 @@ useless — Gecko makes zero glScissor calls).
   2× better than the previous 300 ms "healthy" era. Host load is the
   dominant frame-rate variable, ahead of anything guest-side.
 
+**WEDGE CLAMPS LANDED — partial coverage (2026-08-18, commits 80b901a +
+0e3278f):**
+- Attach-side clamp (80b901a): IOV truncated to resource capacity in
+  attachBackingUser via a kext-side geometry table (id,fmt,w,h at
+  createResource3DEx, dropped at unref; measured-format bpp table).
+  Result: the DEVICE-FATAL wedge head is closed — zero guest
+  timeouts under it.
+- Transfer-side clamp (0e3278f): box bounded to resource dims at the
+  kext's 0x3008/0x3009 selectors; geometry table raised to 1024.
+  **But the capacity error STILL fires host-side (debug.log: 2× at
+  10:50:44, current boot, AFTER both clamps; xferclamp=0)** — the
+  oversized transfer rides INSIDE the 0x6008 command stream:
+  Mesa's virgl encoder packs TRANSFER commands into the opaque batch
+  that submitVirglCommandsEx relays verbatim. The kext never sees it
+  as a transfer; bounding requires decoding the stream.
+- Failure demotion achieved so far: whole-device wedge → single GL
+  context death (the js webgl black screen). Remaining head is
+  Mesa-side.
+- **NEXT (pre-registered): (a) parse-only scan of the 0x6008 stream
+  in the kext — decode virgl command headers, log any TRANSFER whose
+  box exceeds the recorded resource dims (read-only, same table, no
+  mutation) — names the offending resource + box; (b) the fix in
+  Mesa's virgl_transfer path (suspected: 910-vs-888 window-height
+  mismatch applied to the wrong resource).**
+- Standing hazard: the UTM debug log reached 259 MB today (it was
+  always on); truncate periodically or it re-enacts the 35 GB
+  incident.
+
 **WEDGE MECHANISM FOUND (2026-08-18, third occurrence — host forensics
 via UTM debug.log, which had been ON all along):**
 `vrend_renderer_transfer_internal: context error reported 0 "HOST" IOV
