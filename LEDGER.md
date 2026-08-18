@@ -165,6 +165,23 @@ matching every observation. WebGL is the only MSAA consumer, matching
 sizing under nr_samples (our tree: virgl_transfer / the encoder's
 transfer path); kext-side clamps stay as harmless belt-and-braces.
 
+**MSAA PREF TEST — the crash class CLOSED (2026-08-18, webgl.msaa-
+samples=0 via user.js):** the webgl page still shows black BUT the
+host error count FROZE (no new capacity errors under the pref) — the
+fatal MSAA-transfer path does not run at samples=0; the context
+lives. **Black-with-live-context is a NEW, separate class:** the
+page's program errors out inside Mesa — glBindTexture(target
+mismatch) x306, invalid uniform locations (glUniform location=14;
+"count=4 for non-array webgl_..."), glTexSubImage2D(invalid texture
+level 0) — ANGLE-translated WebGL shader/texture semantics failing
+against our Mesa surface. OPEN ITEM: WebGL rendering correctness
+(shader/uniform/texture-target semantics under our Mesa virgl).
+Still queued: GL_MAX_SAMPLES guest report vs host max-4 (the caps
+overclaim question — relevant when MSAA is wanted back); Mesa's
+virgl_transfer_map_size computes w*h*bp with NO nr_samples anywhere
+(virgl_resource.c:342-343) — dormant at samples=0, returns if MSAA
+is re-enabled.
+
 **WEDGE MECHANISM FOUND (2026-08-18, third occurrence — host forensics
 via UTM debug.log, which had been ON all along):**
 `vrend_renderer_transfer_internal: context error reported 0 "HOST" IOV
