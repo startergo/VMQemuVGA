@@ -141,6 +141,14 @@ capacity error for a resource name; or log ALL stream transfers for
 one windowed capture and post-correlate by timestamp with the host
 errors.
 
+**Identifier follow-up datum (same day): the 4 newest errors cluster
+in ONE 92-ms burst (11:07:33.283–.375) during browser-startup first
+composites; adjacent SPICE lines show the host display drawing
+1920x1080 against the guest's 1491-wide resources — the dimension-
+mismatch family again. virglrenderer's error does not name the
+resource. Next capture needs the windowed ALL-transfers log correlated
+by timestamp (the identifier's oversize-only filter sees nothing).**
+
 **WEDGE MECHANISM FOUND (2026-08-18, third occurrence — host forensics
 via UTM debug.log, which had been ON all along):**
 `vrend_renderer_transfer_internal: context error reported 0 "HOST" IOV
