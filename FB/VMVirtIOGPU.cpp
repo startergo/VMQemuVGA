@@ -8779,6 +8779,60 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
     if (!m_gpu_device->supports3D()) return kIOReturnUnsupported;
     if (size > 1024 * 1024) return kIOReturnBadArgument;  // 1 MB safety cap
 
+    /* STREAM IDENTIFIER (2026-08-18) — PARSE-ONLY scan for the
+     * oversized-transfer head. The attach/transfer clamps cover the
+     * kext's explicit selectors, but the host debug log shows the
+     * IOV-exceeds-capacity error STILL firing: Mesa's virgl encoder
+     * packs TRANSFER commands into THIS stream, which we relay
+     * verbatim. Decode the virgl command headers (dword0 =
+     * len<<20 | cmd; virgl_protocol.h: TRANSFER3D=43,
+     * RESOURCE_INLINE_WRITE=9; body: res_handle, level, stride,
+     * layer_stride, box[6], offset) and log any transfer whose box
+     * exceeds the resource's recorded dims. READ-ONLY — no mutation,
+     * no clamping; traversal trusts len and stops on corruption.
+     * Layout is per virgl_protocol/encode reading; the first hit also
+     * dumps the raw dwords so the layout is verifiable from the log. */
+    {
+        const uint32_t* dw = (const uint32_t*)commands;
+        unsigned n = size / 4;
+        unsigned i = 0;
+        static uint32_t s_stream_hits = 0;
+        while (i < n) {
+            uint32_t hdr = dw[i];
+            uint32_t len = (hdr >> 20) & 0xFFF;
+            uint32_t cmd = hdr & 0xFFFFF;
+            if (len == 0 || i + len > n) break;   /* corrupt — stop */
+            if ((cmd == 43 || cmd == 9) && len >= 12) {
+                uint32_t res = dw[i + 1];
+                uint32_t rw = 0, rh = 0;
+                if (userResourceDims(res, &rw, &rh)) {
+                    uint32_t bx = dw[i + 5], by = dw[i + 6];
+                    uint32_t bw = dw[i + 8], bh = dw[i + 9];
+                    if (bx + bw > rw || by + bh > rh) {
+                        if (s_stream_hits < 32) {
+                            s_stream_hits++;
+                            IOLog("VMVirtIOGPUUserClient: STREAM-XFER-OVERSIZE "
+                                  "ctx=0x%x cmd=%u res=0x%x lvl=%u "
+                                  "stride=%u lstride=%u "
+                                  "box=(%u,%u %ux%ux%u) resource=%ux%u\n",
+                                  ctx_id, cmd, res, dw[i + 2],
+                                  dw[i + 3], dw[i + 4],
+                                  bx, by, bw, bh, dw[i + 10], rw, rh);
+                            if (s_stream_hits == 1) {
+                                unsigned nd = len < 14 ? len : 14;
+                                IOLog("VMVirtIOGPUUserClient: STREAM first-hit "
+                                      "raw dwords:");
+                                for (unsigned k = 0; k < nd; k++)
+                                    IOLog(" [%u]=0x%08x", k, dw[i + k]);
+                            }
+                        }
+                    }
+                }
+            }
+            i += len;
+        }
+    }
+
     // probeTransport3D uses IOBufferMemoryDescriptor::withBytes (line 3866)
     // which COPIES bytes into a fresh kernel buffer. The existing 0x3000
     // submitVirglCommands uses IOMemoryDescriptor::withAddress (line 7184)
