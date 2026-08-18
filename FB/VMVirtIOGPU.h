@@ -564,7 +564,14 @@ private:
     // completes+releases any held descriptors — defensive against
     // "userspace dies with resources attached" leaking wired pages.
     // ------------------------------------------------------------------
-    #define MAX_USER_BACKINGS 64
+    /* 2026-08-18: 64 → 512. Real Gecko compositing holds more than 64
+     * simultaneously-live backed resources (observed: fresh-boot
+     * browser start filled the table at resource id 0x1bc →
+     * attachBackingUser FAIL 0xe00002be → Mesa GL_OUT_OF_MEMORY →
+     * compositor SIGSEGV at 0xb5). Unref frees slots correctly
+     * (removeUserBacking); the limit was simply sized for a smaller
+     * era. Entry ≈16 bytes → 512 = 8 KB per client. */
+    #define MAX_USER_BACKINGS 512
     struct user_backing_entry {
         uint32_t resource_id;       // 0 = free slot
         IOMemoryDescriptor* desc;
