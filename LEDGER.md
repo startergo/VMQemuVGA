@@ -97,6 +97,28 @@ useless — Gecko makes zero glScissor calls).
   2× better than the previous 300 ms "healthy" era. Host load is the
   dominant frame-rate variable, ahead of anything guest-side.
 
+**WEDGE MECHANISM FOUND (2026-08-18, third occurrence — host forensics
+via UTM debug.log, which had been ON all along):**
+`vrend_renderer_transfer_internal: context error reported 0 "HOST" IOV
+data size exceeds resource capacity 5` and
+`virtio_gpu_virgl_process_cmd: ctrl 0x103, error 0x1203`. A backing
+whose walked IOV exceeds the resource's virglrenderer capacity raises
+a FATAL context error — virglrenderer then drops every later command
+on that context → all timeouts → the wedge. Guest-side arithmetic
+from this boot's kernel log: every resource matches capacity EXCEPT
+res=0x107 (fmt=16, 2 bytes/px, 1491×888): capacity 2,646,816 vs
+backing walked 2,648,016 — 1,200 bytes over (a guest/host sizing or
+stride disagreement on the fmt16 class). All three occurrences
+explained (startup, typing, page load — each on whichever context hit
+the bad-sized resource). NOTE the interplay: yesterday's 64-entry
+table-full MASKED some of these by failing the attach outright; with
+512 slots every attach succeeds, including the oversized one.
+Also: ctrl 0x103 error 0x1203 = a transient SET_SCANOUT invalid-
+resource alongside. **Mitigation candidate (pre-registered): clamp
+the walked IOV to the resource's capacity in attachBackingUser —
+one defensive change; the host never sees an oversized IOV; wedge
+class closed. Proper fix: the winsys's fmt16 buffer sizing.**
+
 **SMP axis OPENED (user action: VM reconfigured to 4 vCPUs):**
 - Boot clean: 4 CPUs active, ZERO TLB-shootdown/IPI panic lines
   (the recorded 1-vCPU-only rationale has not fired — observation
