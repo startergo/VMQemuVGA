@@ -6961,13 +6961,37 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                 // so the caller sees the issue, and pass 0 (preserves ABI).
                 // The transferToHost3D helper itself logs the warning.
                 uint32_t ctx_id = (args->scalarInputCount >= 9) ? (uint32_t)args->scalarInput[8] : 0;
+                /* TRANSFER-SIDE CLAMP — same as 0x3009 (see there):
+                 * bound the box to the resource's recorded dims;
+                 * unknown resource → pass through unclamped. */
+                uint32_t rw = 0, rh = 0;
+                uint32_t bx = (uint32_t)args->scalarInput[2];
+                uint32_t by = (uint32_t)args->scalarInput[3];
+                uint32_t cbw = (uint32_t)args->scalarInput[5];
+                uint32_t cbh = (uint32_t)args->scalarInput[6];
+                if (userResourceDims((uint32_t)args->scalarInput[0], &rw, &rh)) {
+                    if (bx + cbw > rw) cbw = (bx < rw) ? (rw - bx) : 0;
+                    if (by + cbh > rh) cbh = (by < rh) ? (rh - by) : 0;
+                    if (cbw != (uint32_t)args->scalarInput[5] ||
+                        cbh != (uint32_t)args->scalarInput[6]) {
+                        IOLog("VMVirtIOGPUUserClient: XFER-CLAMP res=0x%x "
+                              "box (%u,%u %ux%u) > resource %ux%u → "
+                              "(%u,%u %ux%u) — winsys box defect "
+                              "upstream\n",
+                              (uint32_t)args->scalarInput[0],
+                              bx, by, (uint32_t)args->scalarInput[5],
+                              (uint32_t)args->scalarInput[6], rw, rh,
+                              bx, by, cbw, cbh);
+                    }
+                }
+                /* args->scalarInput is const — pass the clamped box
+                 * via locals (unclamped when the resource is
+                 * unknown). */
                 return m_gpu_device->transferToHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                       (uint32_t)args->scalarInput[1],  // level
-                                                      (uint32_t)args->scalarInput[2],  // x
-                                                      (uint32_t)args->scalarInput[3],  // y
+                                                      bx, by,
                                                       (uint32_t)args->scalarInput[4],  // z
-                                                      (uint32_t)args->scalarInput[5],  // width
-                                                      (uint32_t)args->scalarInput[6],  // height
+                                                      cbw, cbh,
                                                       (uint32_t)args->scalarInput[7],  // depth
                                                       ctx_id);                         // ctx_id
             }
@@ -6987,6 +7011,35 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                 IOLog("VMVirtIOGPUUserClient: TransferFromHost3D selector=0x3009\n");
             if (args->scalarInputCount >= 8 && args->scalarInput && m_gpu_device) {
                 uint32_t ctx_id = (args->scalarInputCount >= 9) ? (uint32_t)args->scalarInput[8] : 0;
+                /* TRANSFER-SIDE CLAMP (2026-08-18, the WebGL
+                 * context-death head): a transfer box larger than the
+                 * resource makes virglrenderer's transfer_internal
+                 * compute an IOV above capacity → FATAL context error
+                 * → that context's every later command dropped (the
+                 * page goes black; pre-attach-clamp this same error
+                 * killed the whole device). Bound the box to the
+                 * resource's recorded dims; unknown resource → pass
+                 * through (never clamp on a guess). */
+                uint32_t rw = 0, rh = 0;
+                uint32_t bx = (uint32_t)args->scalarInput[2];
+                uint32_t by = (uint32_t)args->scalarInput[3];
+                uint32_t cbw = (uint32_t)args->scalarInput[5];
+                uint32_t cbh = (uint32_t)args->scalarInput[6];
+                if (userResourceDims((uint32_t)args->scalarInput[0], &rw, &rh)) {
+                    if (bx + cbw > rw) cbw = (bx < rw) ? (rw - bx) : 0;
+                    if (by + cbh > rh) cbh = (by < rh) ? (rh - by) : 0;
+                    if (cbw != (uint32_t)args->scalarInput[5] ||
+                        cbh != (uint32_t)args->scalarInput[6]) {
+                        IOLog("VMVirtIOGPUUserClient: XFER-CLAMP res=0x%x "
+                              "box (%u,%u %ux%u) > resource %ux%u → "
+                              "(%u,%u %ux%u) — winsys box defect "
+                              "upstream\n",
+                              (uint32_t)args->scalarInput[0],
+                              bx, by, (uint32_t)args->scalarInput[5],
+                              (uint32_t)args->scalarInput[6], rw, rh,
+                              bx, by, cbw, cbh);
+                    }
+                }
                 // Log what goes on the wire. Stride/layer_stride/offset are
                 // hardcoded to 0 in transferFromHost3D at line 7183-7185
                 // (host computes from format+width). A wrong host-side stride
@@ -6997,16 +7050,16 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                     IOLog("VMVirtIOGPUUserClient: 0x3009 wire: res=%u ctx=%u "
                           "box=(%u,%u,%u, %ux%ux%u) stride=0 layer_stride=0 offset=0\n",
                           (uint32_t)args->scalarInput[0], ctx_id,
-                          (uint32_t)args->scalarInput[2], (uint32_t)args->scalarInput[3],
-                          (uint32_t)args->scalarInput[4], (uint32_t)args->scalarInput[5],
-                          (uint32_t)args->scalarInput[6], (uint32_t)args->scalarInput[7]);
+                          bx, by,
+                          (uint32_t)args->scalarInput[4], cbw, cbh,
+                          (uint32_t)args->scalarInput[7]);
+                /* args->scalarInput is const — pass the (possibly
+                 * clamped) box via locals. */
                 return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                         (uint32_t)args->scalarInput[1],  // level
-                                                        (uint32_t)args->scalarInput[2],  // x
-                                                        (uint32_t)args->scalarInput[3],  // y
+                                                        bx, by,
                                                         (uint32_t)args->scalarInput[4],  // z
-                                                        (uint32_t)args->scalarInput[5],  // width
-                                                        (uint32_t)args->scalarInput[6],  // height
+                                                        cbw, cbh,
                                                         (uint32_t)args->scalarInput[7],  // depth
                                                         ctx_id);                         // ctx_id
             }
@@ -8348,6 +8401,19 @@ void VMVirtIOGPUUserClient::dropUserResourceGeom(uint32_t id)
             return;
         }
     }
+}
+
+bool VMVirtIOGPUUserClient::userResourceDims(uint32_t id,
+    uint32_t* w, uint32_t* h)
+{
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id == id) {
+            if (w) *w = m_user_geom[i].w;
+            if (h) *h = m_user_geom[i].h;
+            return true;
+        }
+    }
+    return false;
 }
 
 uint64_t VMVirtIOGPUUserClient::userResourceCapacity(uint32_t id)

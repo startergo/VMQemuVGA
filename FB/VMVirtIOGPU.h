@@ -593,7 +593,11 @@ private:
     // capacity 2,646,816, backing walked 2,648,016 — 1,200 over).
     // Same fixed-pool discipline as the backings table.
     // ------------------------------------------------------------------
-    #define MAX_USER_RESOURCE_GEOM 512
+    /* 1024 (2026-08-18, user direction): observed resource-id counts
+     * reach 0x295+ per session; a lazy-unref session could overflow
+     * 512 into the unclamped fallback — the mode this table exists to
+     * prevent. 16 bytes x 1024 = 16 KB per client. */
+    #define MAX_USER_RESOURCE_GEOM 1024
     struct user_resource_geom {
         uint32_t id;            // 0 = free slot
         uint32_t fmt, w, h;
@@ -606,6 +610,10 @@ private:
     // which case attachBackingUser must NOT clamp — a wrong-bpp
     // truncation would be worse than the wedge).
     uint64_t userResourceCapacity(uint32_t id);
+    // Transfer-side clamp (WebGL context-death head, 2026-08-18):
+    // bounded dims for a resource, false if unknown — callers must
+    // NOT clamp when unknown.
+    bool userResourceDims(uint32_t id, uint32_t* w, uint32_t* h);
 
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
