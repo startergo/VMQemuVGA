@@ -125,6 +125,22 @@ useless — Gecko makes zero glScissor calls).
   always on); truncate periodically or it re-enacts the 35 GB
   incident.
 
+**STREAM IDENTIFIER LANDED — zero hits, model insufficient (ca69ac4,
+2026-08-18):** parse-only scan of the 0x6008 virgl stream (header
+len<<20|cmd; TRANSFER3D=43, RESOURCE_INLINE_WRITE=9; box at +5..+10)
+logging any transfer box exceeding recorded (w,h). Result on the
+identifier boot: **0 hits while 4 fresh capacity errors fired
+host-side in the same window** — the box-vs-(w,h) bound is NOT the
+failing dimension. Remaining candidates: (a) box depth/array_size
+multiplying the IOV (scan and both clamps bound only w,h);
+(b) MSAA capacity accounting (host log shows the webgl page
+requesting samples: "Skipping 16 samples"); (c) dword-layout guess
+wrong (first-hit raw dump never fired — nothing hit). NEXT
+(pre-registered): capture the debug-log context lines around the next
+capacity error for a resource name; or log ALL stream transfers for
+one windowed capture and post-correlate by timestamp with the host
+errors.
+
 **WEDGE MECHANISM FOUND (2026-08-18, third occurrence — host forensics
 via UTM debug.log, which had been ON all along):**
 `vrend_renderer_transfer_internal: context error reported 0 "HOST" IOV
