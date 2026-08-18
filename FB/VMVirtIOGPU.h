@@ -582,6 +582,31 @@ private:
     void removeUserBacking(uint32_t resource_id);   // complete + release + zero slot
     void removeAllUserBackings();                    // for clientClose/free
 
+    // ------------------------------------------------------------------
+    // WEDGE CLAMP (2026-08-18): kext-side record of each user
+    // resource's (fmt,w,h), so attachBackingUser can clamp the walked
+    // IOV to the host's capacity. An oversized IOV raises a FATAL
+    // virglrenderer context error ("IOV data size exceeds resource
+    // capacity") — after which every later command on that context is
+    // dropped: the device-wedge mechanism, three occurrences
+    // (UTM debug.log forensics 2026-08-18: fmt16 1491x888 resource,
+    // capacity 2,646,816, backing walked 2,648,016 — 1,200 over).
+    // Same fixed-pool discipline as the backings table.
+    // ------------------------------------------------------------------
+    #define MAX_USER_RESOURCE_GEOM 512
+    struct user_resource_geom {
+        uint32_t id;            // 0 = free slot
+        uint32_t fmt, w, h;
+    };
+    user_resource_geom m_user_geom[MAX_USER_RESOURCE_GEOM];
+    void recordUserResourceGeom(uint32_t id, uint32_t fmt, uint32_t w,
+                                uint32_t h);
+    void dropUserResourceGeom(uint32_t id);
+    // Returns the host-side capacity in bytes, or 0 if unknown (in
+    // which case attachBackingUser must NOT clamp — a wrong-bpp
+    // truncation would be worse than the wedge).
+    uint64_t userResourceCapacity(uint32_t id);
+
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
                             OSDictionary* properties) APPLE_KEXT_OVERRIDE;

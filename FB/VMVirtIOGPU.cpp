@@ -6429,6 +6429,11 @@ bool VMVirtIOGPUUserClient::initWithTask(task_t owningTask, void* securityToken,
         m_user_backings[i].desc = nullptr;
     }
 
+    // WEDGE CLAMP: resource geometry table — all slots free.
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        m_user_geom[i].id = 0;
+    }
+
     // Initialize surface and context management with proper memory safety
     m_surfaces = OSArray::withCapacity(64);
     m_contexts = OSArray::withCapacity(16);
@@ -8286,8 +8291,75 @@ IOReturn VMVirtIOGPUUserClient::createResource3DEx(
           "fmt=%u bind=0x%x %ux%ux%u arr=%u resp=0x%x\n",
           resource_id, format, bind, width, height, depth, array_size,
           resp.type);
+    recordUserResourceGeom(resource_id, format, width, height);
     *out_resource_id = resource_id;
     return kIOReturnSuccess;
+}
+
+// ---- WEDGE CLAMP helpers -----------------------------------------------
+// bpp for the virtio formats this stack actually uses, established by
+// measurement (kernel-log arithmetic 2026-08-18: fmt1/67 = 4 B/px,
+// fmt16 = 2, fmt64 = 1). Unknown formats return 0 → NO clamping (a
+// wrong-bpp truncation would corrupt valid backings; the wedge is
+// preferable to silent data loss).
+static uint32_t virgl_fmt_bpp_clamptab(uint32_t fmt)
+{
+    switch (fmt) {
+        case 1:  return 4;   // B8G8R8A8_UNORM
+        case 16: return 2;   // 2 B/px (measured: res 1x1 fmt16 = 2 bytes)
+        case 64: return 1;   // 1 B/px (measured: 384x1 fmt64 = 384 bytes)
+        case 67: return 4;   // R8G8B8A8_UNORM
+        default: return 0;   // unknown — do not clamp
+    }
+}
+
+void VMVirtIOGPUUserClient::recordUserResourceGeom(uint32_t id,
+    uint32_t fmt, uint32_t w, uint32_t h)
+{
+    if (id == 0) return;
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id == id) {   // replace (recreate at same id)
+            m_user_geom[i].fmt = fmt;
+            m_user_geom[i].w = w;
+            m_user_geom[i].h = h;
+            return;
+        }
+    }
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id == 0) {
+            m_user_geom[i].id = id;
+            m_user_geom[i].fmt = fmt;
+            m_user_geom[i].w = w;
+            m_user_geom[i].h = h;
+            return;
+        }
+    }
+    // Table full: no clamp for this resource — log the anomaly.
+    IOLog("VMVirtIOGPUUserClient: geom table full — res=0x%x will "
+          "attach UNCLAMPED\n", id);
+}
+
+void VMVirtIOGPUUserClient::dropUserResourceGeom(uint32_t id)
+{
+    if (id == 0) return;
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id == id) {
+            m_user_geom[i].id = 0;
+            return;
+        }
+    }
+}
+
+uint64_t VMVirtIOGPUUserClient::userResourceCapacity(uint32_t id)
+{
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id == id) {
+            uint32_t bpp = virgl_fmt_bpp_clamptab(m_user_geom[i].fmt);
+            if (bpp == 0) return 0;
+            return (uint64_t)m_user_geom[i].w * m_user_geom[i].h * bpp;
+        }
+    }
+    return 0;   // unknown resource — do not clamp
 }
 
 // ---- 0x6003 attachBackingUser ------------------------------------------------
@@ -8381,17 +8453,47 @@ IOReturn VMVirtIOGPUUserClient::attachBackingUser(uint32_t resource_id,
     attach_cmd->resource_id = resource_id;
     attach_cmd->nr_entries = nr_entries;
 
+    /* WEDGE CLAMP (2026-08-18): virglrenderer treats an IOV larger
+     * than the resource capacity as a FATAL context error — every
+     * later command on that context is dropped (the three-occurrence
+     * device wedge; see m_user_geom's comment). Clamp the filled
+     * entries to the capacity when the geometry is KNOWN and the walk
+     * exceeds it. Unknown geometry (capacity 0) passes unclamped —
+     * never truncate on a guess. The clamp logs loudly: it fires only
+     * when the winsys handed us an oversized buffer, which is itself
+     * a defect to fix winsys-side. */
+    const uint64_t capacity = userResourceCapacity(resource_id);
+    uint64_t clamp_budget = 0;
+    bool clamping = false;
+    if (capacity > 0 && total_length > capacity) {
+        clamping = true;
+        clamp_budget = capacity;
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: CLAMP res=0x%x "
+              "walked %llu > capacity %llu — truncating IOV to "
+              "capacity (wedge prevention; winsys sizing defect "
+              "upstream)\n", resource_id,
+              (uint64_t)total_length, capacity);
+    }
+
     virtio_gpu_mem_entry* entries =
         (virtio_gpu_mem_entry*)(cmdbuf + sizeof(virtio_gpu_resource_attach_backing));
+    uint32_t nr_entries_sent = 0;
     {
         IOByteCount off = 0;
         for (uint32_t i = 0; i < nr_entries; i++) {
             IOByteCount seg_len = 0;
             IOPhysicalAddress seg_addr = desc->getPhysicalSegment(off, &seg_len,
                                                                    kIOMemoryMapperNone);
-            entries[i].addr = seg_addr;
-            entries[i].length = (uint32_t)seg_len;
-            entries[i].padding = 0;
+            if (clamping) {
+                if (clamp_budget == 0) break;
+                if ((uint64_t)seg_len > clamp_budget)
+                    seg_len = (IOByteCount)clamp_budget;
+                clamp_budget -= seg_len;
+            }
+            entries[nr_entries_sent].addr = seg_addr;
+            entries[nr_entries_sent].length = (uint32_t)seg_len;
+            entries[nr_entries_sent].padding = 0;
+            nr_entries_sent++;
             if (i < 16) {
                 IOLog("VMVirtIOGPUUserClient::attachBackingUser:   seg[%u] "
                       "addr=0x%llx len=%u\n", i, (uint64_t)seg_addr,
@@ -8403,6 +8505,7 @@ IOReturn VMVirtIOGPUUserClient::attachBackingUser(uint32_t resource_id,
             off += seg_len;
         }
     }
+    attach_cmd->nr_entries = nr_entries_sent;
 
     struct virtio_gpu_ctrl_hdr resp = {};
     IOReturn ret = m_gpu_device->sendDisplayCommand(&attach_cmd->hdr, cmd_size,
@@ -8471,6 +8574,7 @@ IOReturn VMVirtIOGPUUserClient::resourceUnref(uint32_t resource_id)
               "backing held — releasing defensively\n", resource_id);
         removeUserBacking(resource_id);
     }
+    dropUserResourceGeom(resource_id);
 
     struct virtio_gpu_resource_unref cmd = {};
     cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
