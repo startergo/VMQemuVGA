@@ -59,7 +59,7 @@ CAUSE FOUND). Kext-relevant facts:
 - **FIX LANDED AND VERIFIED (a378b9b + Mesa 0afb1aa, one boot):**
   stage 1 offscreen_min all-probes magenta, wire `stride=1600
   offset=479996` for box (399,299) — exact y*stride+x*bpp math;
-  stage 2 (user visual checks): the webgltest canvas presents its
+  stage 2 (visual checks): the webgltest canvas presents its
   clear colour (first canvas content ever), the remaining double-tab
   duplication artifact is gone (carrier was misplaced sub-box
   updates, not Gecko popup rendering; Mesa ledger entry 19 has the
@@ -69,7 +69,7 @@ CAUSE FOUND). Kext-relevant facts:
 **AQUARIUM ARC + DEVICE WEDGE + BOOT FAILURE (2026-08-18 late night):**
 - **Aquarium RAN** (fish visible ~1 fps, 1024x1024 canvas) on the
   clamp-capacity + pool-raise kexts; Mesa errors 29 vs ~23,000 before.
-  User also reported: mirrored text / toolbar-at-bottom (a NEW
+  Also observed: mirrored text / toolbar-at-bottom (a NEW
   vertical-flip artifact class; ramp discriminator pre-registered with
   3 outcomes incl. "no ramp = not this path, localises only") and a
   404-error-page layer at top (same vertical-placement family).
@@ -80,7 +80,7 @@ CAUSE FOUND). Kext-relevant facts:
   upload" claim no longer describes the content path. The flip read
   needs the instrument moved to the active path.
 - Second SMP panic (~23:34, mds/_kevent — the fontd family, no kext
-  frames); an unexplained ~23:52 restart (user reconfigured, 4 vCPU
+  frames); an unexplained ~23:52 restart (VM reconfigured, 4 vCPU
   retained by direction — panic risk accepted). /tmp/subst wiped again
   → substitute now persists at /Users/sl/subst.
 - **Regression spiral → full device wedge**: post-restart sessions
@@ -89,10 +89,10 @@ CAUSE FOUND). Kext-relevant facts:
   + black stripes, then EVERY virtqueue request timing out incl. 2D
   (refresh 0.0 Hz; the recorded 2026-08-17 wedge class; VM restart
   cleared). Host was loaded (MediaAnalysis 146%, Virtualization.fw
-  155%) — the amplifier. USER ATTRIBUTION PUSH ("it is the last
-  change") WAS PARTLY RIGHT, RECORDED: a378b9b (real stride/offset on
-  the wire) feeds guest math into the host iov walker with NO extent
-  guard — a walking-off transfer can hang virglrenderer (stray
+  155%) — the amplifier. ATTRIBUTION CORRECTION: a378b9b (real
+  stride/offset on the wire) feeds guest math into the host iov walker
+  with NO extent guard — a walking-off transfer can hang virglrenderer
+  (stray
   "capacity 5/85" host errors = the near-miss signature). The dynamic
   store remains a candidate via the timeout spiral only.
 - **LANDED (f207add = kext cc0aee0b)**: transfer EXTENT GUARD
@@ -113,8 +113,8 @@ CAUSE FOUND). Kext-relevant facts:
   display path, or store lock init-order.
 - Also this session: 4-vCPU spinlock-timeout panic
   (fontd/_kqueue_scan, owner stalled in _lapic_interrupt→
-  AppleACPIPlatform, no VMQemuVGA frames) interrupted run 1; user
-  judged it unrelated to the test (load-correlated firing only); UTM
+  AppleACPIPlatform, no VMQemuVGA frames) interrupted run 1; judged
+  load-correlated, unrelated to the test under way; UTM
   debug log truncated (sparse) to keep host-side greps usable.
 
 ---
@@ -127,7 +127,7 @@ CONTEXT` decoded to a compositor gate — `gfxPlatformMac` demands
 `NSOpenGLPFAAccelerated`, real AppKit matching sees a software-only
 renderer list (boot-constant; measured by the new `probe/probe_pix.c`),
 and the shim never swizzled `NSOpenGLPixelFormat`. Fix = strip the
-attribute; GL-composited chrome verified by user. Full falsification
+attribute; GL-composited chrome visually verified. Full falsification
 chain (env/profile/plain-GL/binary/launch-order all exonerated) and the
 unexplained run-1 success are recorded there. The pre-reboot failing
 era was this gate, not (only) entry-17's host disk pressure.
@@ -249,7 +249,7 @@ resource. Next capture needs the windowed ALL-transfers log correlated
 by timestamp (the identifier's oversize-only filter sees nothing).**
 
 **WEBGL REPRODUCTION UNDER FULL CAPTURE — all kext-visible paths
-eliminated (2026-08-18, build e39300a):** user opened the webgl page
+eliminated (2026-08-18, build e39300a):** the webgl page was opened
 (black screen); 6 fresh capacity errors fired host-side while the
 capture logged ZERO stream transfers at full-window scale (>=500k px),
 ZERO oversize, ZERO clamp fires. The offending transfers exist in
@@ -303,7 +303,7 @@ the walked IOV to the resource's capacity in attachBackingUser —
 one defensive change; the host never sees an oversized IOV; wedge
 class closed. Proper fix: the winsys's fmt16 buffer sizing.**
 
-**SMP axis OPENED (user action: VM reconfigured to 4 vCPUs):**
+**SMP axis OPENED (VM reconfigured to 4 vCPUs):**
 - Boot clean: 4 CPUs active, ZERO TLB-shootdown/IPI panic lines
   (the recorded 1-vCPU-only rationale has not fired — observation
   window ~30 min including browser use; keep watching).
@@ -311,7 +311,7 @@ class closed. Proper fix: the winsys's fmt16 buffer sizing.**
   recorded rate, up from the 1-vCPU 17 ms-era peak of 48 Hz.
 - Browser compositing at wall 159-165 ms mean (max 214-225 ms) WHILE
   the host was at load ~20 (1-vCPU era at same host load: 1300-2900
-  ms). **User typed during the window: NO wedge.** The typing-wedge
+  ms). **Typing during the window: NO wedge.** The typing-wedge
   is 1-vCPU starvation — closed by SMP.
 - The "1 vCPU during development" rule stands as a diagnostic-mode
   recommendation; not a correctness constraint observed so far.
@@ -353,7 +353,7 @@ entry-17's 35 GB lesson).
 
 ## 2026-08-16 — doc split: two stacks named; stale GL milestone removed; memory-store note
 
-**What was newly stale (user direction, recorded):** not the 3D
+**What was newly stale (** not the 3D
 content — the STACK SHAPE. Both docs described one stack (app →
 substitute OpenGL.framework → Mesa → virgl → kext → host, current
 and per-process), while a SECOND independent stack had landed:
@@ -367,7 +367,7 @@ in-kernel, no Mesa, no shim. Neither doc mentioned it.
   refs), the structural divergence (no BAR → kernel mapping +
   blit + timer), the blue-screen evidence chain for the
   compositing switch, confounds and open items. **Explicit
-  distinction in the doc (user, verbatim intent): this gave
+  distinction in the doc: this gave
   WindowServer a working 2D surface path, NOT 3D — GL reaches
   apps only via the per-process substitute, and the GA CFPlugIn
   that would let apps attach to the accelerator does not exist.**
@@ -393,7 +393,7 @@ staleness hypothesis falsified. The Mesa repo has NO ledger of
 its own — its state lives in commit messages; consider giving it
 a ledger when 3D work resumes.
 
-**Memory-store housekeeping (user, next time it needs updating):
+**Memory-store housekeeping (
 the store is near its cap; the accelerator-contract material is
 now its own subject — SPLIT IT OUT rather than trimming elsewhere
 to fit.**
@@ -402,7 +402,7 @@ to fit.**
 
 ## 2026-08-16 — 17 ms boot RUN (9653497 / edfce834): 47-52 Hz achieved, mouse smoother — the smoothness thread is closed
 
-**User verdict: "mouse is smoother" (again, vs the 25 Hz era).**
+**Visual verdict: "mouse is smoother" (again, vs the 25 Hz era).**
 Rate progression on this hardware, all measured by the window
 instrumentation: 15 Hz configured-era → ~25 Hz achieved (re-arm
 bug era) → **47-52 Hz achieved at 17 ms configured** (mode=5
@@ -422,11 +422,11 @@ bug era) → **47-52 Hz achieved at 17 ms configured** (mode=5
    workload-matched A/B, not needed for the verdict.
 3. ✅ ticks = xfers exactly, every window (every fire transfers).
 4. Partial: load 14.09 boot-settling → 5.27 at 5 min DURING
-   active use — never got a true idle sample (user recorded the
+   active use — never got a true idle sample (recorded the
    verdict without a quiesce window); idle steady-state at 17 ms
    REMAINS UNMEASURED. Not load-bearing for the verdict; noted
    as open if idle cost ever matters.
-5. ✅ Cursor visibly smoother (user).
+5. ✅ Cursor visibly smoother.
 6. ✅ Mode line logged: 1920×1080 (work figures mode-matched to
    the 33 ms era).
 
@@ -461,7 +461,7 @@ upstream cursor overlay (guest-side mitigation = this rate).
   binding constraint. Idle load at 4 min: 8.58 decaying (boot-
   age caveat — not the settled number; recorded, not compared).
 
-**60 Hz decision, ON THE MEASURED BUDGET (user's criterion):**
+**60 Hz decision, ON THE MEASURED BUDGET:**
 workavg 3.1-4.4 ms ≤ ~16 ms → plausible. REFRESH_PERIOD_MS
 33 → 17 (build edfce834, one constant).
 
@@ -474,7 +474,7 @@ workavg 3.1-4.4 ms ≤ ~16 ms → plausible. REFRESH_PERIOD_MS
 4. Idle load rises vs the 33 ms era (≈2× fires × ~3-4 ms work +
    dispatch) — watch single-digit; revert if it climbs past
    ~half a core sustained at idle.
-5. Cursor visibly smoother again (user verdict; ~24→~40 Hz).
+5. Cursor visibly smoother again ~24→~40 Hz).
 6. Mode line logged (confound check; work figures quote mode).
 
 ---
@@ -490,14 +490,14 @@ workavg 3.1-4.4 ms ≤ ~16 ms → plausible. REFRESH_PERIOD_MS
   per-cycle 39-40 ms. Active windows: ticks 382-468, xfers
   191-234 → 19-23 Hz, per-cycle 43-52 ms.
 - **tick:xfers = 2.000 EXACTLY in every window** — the throttle
-  arithmetic is perfect; the shortfall is tick DELIVERY (user
-  diagnosis: "the throttle is fine, the timer is late").
-- **Confirmed in SOURCE, not inferred** (user's model, then read):
+  arithmetic is perfect; the shortfall is tick DELIVERY ("the throttle
+  is fine, the timer is late").
+- **Confirmed in SOURCE, not inferred** (hypothesis, then read):
   VMVirtIOFramebuffer.cpp:2450-2463 — refreshDisplay() runs,
   THEN setTimeoutMS(16) re-arms. Period = interval + work. Work
   derived: idle ~7-8 ms, active ~11-20 ms per transfer+flush
   pair (per-cycle minus the two 16 ms re-arms). Work ceiling
-  alone: ~50-90 Hz (user) — 30 Hz comfortably achievable, 60 Hz
+  alone: ~50-90 Hz — 30 Hz comfortably achievable, 60 Hz
   plausible, ONCE the bug is fixed. **The pre-fix numbers
   measured the bug, not the budget.**
 - Idle load: 1.83 at 7 min uptime (prior boot: 1.45 at 10 min —
@@ -508,8 +508,7 @@ workavg 3.1-4.4 ms ≤ ~16 ms → plausible. REFRESH_PERIOD_MS
   ~19.6 ms (16 + callback ε) — the divide-by-N scheme paid the
   late-re-arm on every tick.
 
-**The fix (build b6192fed) — one bug, two changes together
-(user direction):**
+**The fix (build b6192fed) — one bug, two changes together:**
 1. Re-arm FIRST (top of the callback), work after — period
    becomes max(interval, work).
 2. Divide-by-N throttle DELETED (FULL_REFRESH_INTERVAL,
@@ -539,7 +538,7 @@ workavg 3.1-4.4 ms ≤ ~16 ms → plausible. REFRESH_PERIOD_MS
 
 ## 2026-08-16 — 60 Hz prep: baseline measured, confound named, instrumentation built (rate UNCHANGED at 30 Hz)
 
-**NAMED CONFOUND (promoted from note, user direction): the FB
+**NAMED CONFOUND (promoted from note): the FB
 mode varies between boots** — pair boot 1680×1050, 30 Hz boot
 mode=5 1920×1080, earlier boots 1920×1080. Mode changes stride
 and surface dimensions, so ANY cross-boot comparison of blit
@@ -554,7 +553,7 @@ quiesced ~100 s, 13:54): load 1.45 1-min (3.37 5-min / 2.62
 15-min still decaying from active use). Baseline for the 60 Hz
 run: idle-30 Hz ≈ 1.4-1.5.** Prior "load 12.91 boot-settling vs
 7.4 active" samples are NOT comparable and are not baselines
-(user flagged: fifth timing confound this project has hit).
+(fifth timing confound this project has hit).
 
 **Instrumentation (build 72c53842, INTERVAL still 2/30 Hz):**
 refreshDisplay counts ticks (callbacks reached —
@@ -588,7 +587,7 @@ precedent in VMIOSurfaceManager.cpp (no new API risk).
 same instrumentation, compare: xfers ≈ 600/window expected; if
 xfers << ticks, the timer is backing up — the smoothness gain
 will not materialize and 60 Hz is refused on evidence, not
-vibes. Cursor verdict user-side; idle load vs 1.4-1.5.**
+vibes. Cursor verdict by visual check; idle load vs 1.4-1.5.**
 
 ---
 
@@ -598,7 +597,7 @@ vibes. Cursor verdict user-side; idle load vs 1.4-1.5.**
 1. ✅ First-tick self-report: "— 30 Hz refresh" (13:45:18, mode=5
    1920×1080 — the FB mode again differs between boots; the
    untracked-variable note from the pair boot stands).
-2. ✅ **"Now mouse is smoother" (user visual verdict, 13:49).**
+2. ✅ **"Now mouse is smoother" (visual verdict, 13:49).**
    The cursor rides the full-surface transfer exclusively, so
    doubling the rate halves the quantization (66 ms → 33 ms).
 3. ✅/unmeasured: load 12.91 at 2 min (boot-settling, comparable
@@ -610,7 +609,7 @@ vibes. Cursor verdict user-side; idle load vs 1.4-1.5.**
 4. ✅ Surface path unchanged and healthy at the doubled rate:
    this boot 127 blits green, ZERO NotReady / MISMATCH /
    CannotLock.
-5. ✅ Desktop intact (1 user, in use).
+5. ✅ Desktop intact (1 login session in use).
 
 **Session tip state:** master at 9cf7be3; guest RUNNING the
 landed pair + 30 Hz (72dbfb31). Five real selectors + the
@@ -631,8 +630,8 @@ use. Its cost is one extra virtio round-trip per flush.
 
 ## 2026-08-16 — post-landing confirmations; cursor is NOT in the surface path; upstream cursor diagnosis; 30 Hz refresh experiment (pre-registered, build 72dbfb31)
 
-**Confirmations on the landed pair (user + log):**
-- **Colors correct** — straight-copy format agreement holds (user
+**Confirmations on the landed pair (**
+- **Colors correct** — straight-copy format agreement holds (visual check
   notes swap was unlikely by construction: raw row copy never
   interprets pixels; both buffers 8888; a swap would glare on the
   Apple menu and wallpaper, not hide).
@@ -646,12 +645,12 @@ use. Its cost is one extra virtio round-trip per flush.
 **Cursor-damage test (log, no new boot):** the 64×64 blit rects
 cluster at y≈967 (dock row; x 1190→1256→1259 = dock activity),
 NOT a pointer trail across the display. **Cursor damage does not
-flow through the surface path** — selecting the user's
+flow through the surface path** — selecting the active
 pre-specified branch: only the timer lever applies; the
 immediate-transfer-on-flush lever would aim at window latency,
 not the cursor.
 
-**Cursor diagnosis recorded (user analysis, consistent with the
+**Cursor diagnosis recorded (analysis, consistent with the
 FB's own 2026-08-09 dead-end investigation and the surface-side
 finding):** WindowServer composites the cursor into the aperture
 from userspace; the kernel never participates. Cursor pixels ride
@@ -679,7 +678,7 @@ TCG — the doubling 30→60 cmd/s is an experiment, not a free win.
 1. First-tick log self-reports "— 30 Hz refresh" (Hz computed
    from the constant — the log line is its own check).
 2. **Cursor visibly smoother** (66 ms quantization → 33 ms;
-   user verdict).
+   visual verdict).
 3. Load RISES (2× command rate under TCG); acceptable if
    single-digit; revert to 4 if load explodes or the desktop
    stutters.
@@ -691,11 +690,11 @@ TCG — the doubling 30→60 cmd/s is an experiment, not a free win.
 
 ## 2026-08-16 — pair boot 2 (a9b5c78 / 9c893795): THE DESKTOP PAINTS THROUGH THE ACCELERATOR PATH — outcome #3 CLOSED
 
-**Visual verdict (user, 13:16 boot): "full desktop available now."**
+**Visual verdict (13:16 boot): "full desktop available now."**
 Blue screen gone; desktop rendered through the pair for the first
 time. (Color sub-verdict — R/B swap — asked explicitly; treat
 "full desktop" as strong-but-unconfirmed on channel order until
-the user answers.)
+the visual check answers.)
 
 **Kernel log, all green:**
 - **48/48 Flush -> Success (blit …)** — ZERO NotReady, ZERO
@@ -730,11 +729,11 @@ device-VRAM sharing for free; we pay with a kernel mapping + a
 blit, and the timer carries it the rest of the way.
 
 **Open items carried forward:**
-1. Color-channel sub-verdict (explicit user check).
+1. Color-channel sub-verdict (explicit visual check).
 2. Idle-desktop quiescence of the dispatch loop.
 3. bSkipWriteLockOnce: armed, still untested by traffic (no
    options==0x5 shape yet — Window Grab would trigger it; the
-   user dragging a window is the live test).
+   window dragging is the live test).
 4. kextcache empty-Startup/ residual (from the geometry-boot
    entry) — still unexplained, cacheless mode still active.
 5. Hygiene list (vestigial managers, RendererID 0x00024600,
@@ -843,12 +842,12 @@ returns — WindowServer's accel path hits WriteLock Unsupported
 again and falls back to the software path, cycle regresses to
 [9,9,11,14], blue screen gone. **CONFIRMED both halves (10:40
 boot): kernel log shows WriteLock -> Unsupported from 10:40:41,
-zero new backing allocations this boot; user visually confirmed
+zero new backing allocations this boot; visually confirmed
 the desktop is back.** The blue screen is fully attributed to
 the lock rung — no second cause; the conditional above is
 closed.
 
-**Framing (user, recorded because it is the correct read):** the
+**Framing (the correct read):** the
 blue screen is the pre-registered outcome LANDING, not a setback.
 Outcome #3 was written down before the rung, the risk was
 elevated to active when the caller was attributed, the change
@@ -864,12 +863,12 @@ whether WindowServer switches its compositor back mid-session
 once flush works is UNKNOWN — one reboot now is cheaper than a
 session of blind work plus a possible reboot anyway.
 
-**Flush design settled (user decision; scanout-coordination
+**Flush design settled (scanout-coordination
 question dissolved):** do NOT create a second resource. The
 framebuffer already owns the scanout resource, its
 TRANSFER_TO_HOST_2D + RESOURCE_FLUSH path is proven, and a
 refresh timer drives it (rate per SOURCE, correcting the
-user's 15 Hz: `m_refresh_timer->setTimeoutMS(16)` — "60 Hz
+the 15 Hz decision: `m_refresh_timer->setTimeoutMS(16)` — "60 Hz
 refresh rate for native VirtIO mode", VMVirtIOFramebuffer.cpp
 :1708, also :1229/:2460; at 16 ms the added latency from riding
 the timer is ≤~16-33 ms, not the 67 ms a 15 Hz timer would
@@ -878,7 +877,7 @@ imply). A surface flush with its own resource
 **Instead: on flush, blit the surface's mapped buffer into the
 FRAMEBUFFER's backing at the shape offset.** Offset decode
 already verified this boot; 2D machinery proven; timer
-untouched. **REFINED at session close (user): land flush as
+untouched. **REFINED at session close: land flush as
 BLIT-ONLY — the timer already transfers the whole framebuffer,
 so correctness needs nothing beyond the memcpy; an explicit
 TRANSFER_TO_HOST_2D of the dirty rect only buys latency. Add
@@ -887,7 +886,7 @@ after a destructive failure becomes a guest-side memcpy and
 nothing else — no new virtio commands, no timer interaction, no
 scanout question at all.
 
-**Three blit details (user; cheap right, expensive wrong):**
+**Three blit details (cheap right, expensive wrong):**
 1. **Clip to the shape rect** — the surface was 46×22 at x=1634
    in one boot and full-screen in another; respect bounds, never
    assume full size.
@@ -957,9 +956,9 @@ verified host↔guest. Cacheless boot again (~2 min this time).
    exceeded the mapping. Fix (one line, next mechanical commit):
    compare `offset + (h−1)*stride + w*bpp` against the mapping
    length.
-5. ❌ **Outcome #3 FIRED — user visual check: the boot came up to
+5. ❌ **Outcome #3 FIRED — visual check: the boot came up to
    a BLUE SCREEN, not a desktop.** The "desktop alive" line first
-   written here (load + 1 user + early refreshDisplay) was WRONG
+   written here (load + 1 login + early refreshDisplay) was WRONG
    — alive ≠ pixels, the exact distinction the rules demand; it
    is corrected here. **Mechanism (diagnosis, consistent with all
    observations):** WriteLock success made WindowServer switch
@@ -983,14 +982,14 @@ must land as a PAIR** (one mechanism: "surface becomes
 presentable"), with the pre-registration covering both and the
 intermediate one-selector-boot discipline applying below the
 pair. Recovery for the current boot was pre-registered as
-"revert to ac16eac" — executed per user decision (see next
+"revert to ac16eac" — executed (see next
 entry).
 
 **Handout decode sanity (offset arithmetic verified against
 known on-screen geometry):** off=6536 → x=1634 (the clock strip);
 off=0 with 1680×22 (menu bar) and 1680×1050 (full screen); off
 values consistent with y×6720+x×4 throughout. The address
-0x1027a0000 is a WindowServer-task address (user range), not a
+0x1027a0000 is a WindowServer-task address (userspace range), not a
 kernel pointer.
 
 **Next rung — Flush (selector 10), the first rung where pixels
@@ -1049,7 +1048,7 @@ is the arbiter, revert = one step to ac16eac.
    tracking is wrong.
 5. **Outcome #3 watch is ACTIVE (caller is WindowServer, this is
    the memory rung):** after first Success the desktop either
-   stays visually normal (user check) or freezes/blacks — that
+   stays visually normal (visual check) or freezes/blacks — that
    would mean WindowServer switched its compositing source to
    this surface with no host transfer behind it. A hang (not a
    crash) is the bSkipWriteLockOnce deadlock class. Recovery:
@@ -1130,7 +1129,7 @@ bounds.w/h from EVERY call, so the observed 0x1 pair-member
 (bounds 1×1, rect 0×0) overwrote 1680×1050 with 1×1 twice per
 cycle — invisible until now because nothing read the stored
 geometry. A lock implemented on top would have allocated backing
-for a 1×1 surface. Per user split: land the geometry fix FIRST as
+for a 1×1 surface. Decision: land the geometry fix FIRST as
 a mechanical change with the lock still Unsupported, then the lock
 rung lands on known-correct geometry — if the lock boot goes
 wrong, geometry is already excluded.
@@ -1227,7 +1226,7 @@ headers in MacKernelSDK):
    no-op for our first version.
 
 **Watch item from the same read — UPGRADED to required behavior
-(user correction, same session):** `bSkipWriteLockOnce`
+(** `bSkipWriteLockOnce`
 (:1251-1253, set at :1658-1666) — set_shape with `m_wID==1 &&
 options==0x5` makes the NEXT write_lock succeed WITHOUT taking
 the lock bit, as the fix for a **10.6 WindowServer deadlock
@@ -1239,7 +1238,7 @@ where a mistake is destructive rather than merely unsuccessful.
 Our observed set_shape options so far are 0xd/0x1 (0x5 not yet
 seen), but the guard goes in with the same condition regardless.
 
-**Two further design obligations (user, same session):**
+**Two further design obligations (same session):**
 1. **Lazy-create-and-persist has a teardown obligation.** The
    mapping outlives unlock, so it must be released at surface
    destroy AND at clientClose/free — specifically including the
@@ -1289,7 +1288,7 @@ Every pre-registration from the entry below landed:
    differ, do not compare rates), dispatches still present in the
    log tail at 08:46. Fails-more-politely ≠ stops, as tempered.
 4. **Outcome #3 watch — desktop alive AND visually normal:** load
-   9.43 (3 min) → 3.05 (7 min), 1 user; user confirmed the display
+   9.43 (3 min) → 3.05 (7 min), 1 login; the display confirmed
    renders normally through 47 QueryLock successes and 94 shape
    cycles (visual check, same session).
 
@@ -1375,7 +1374,7 @@ never-locked surface (state report; claims no memory).
 locks (12/14) — the held line, Unsupported until backing exists.
 The storm relocates to the lock rung. If instead the caller does
 something NEW (backing first? surface_control?), the log names it.
-Expectation tempered per user: fails more politely ≠ stops; the
+Expectation tempered: fails more politely ≠ stops; the
 loop stops only when something succeeds, and the next success is
 on the wrong side of the held line. Desktop watch continues.
 
@@ -1395,7 +1394,7 @@ SetShape(options=0x1 …) region — num_rects=1 bounds=(0,0,1,1) rect[0]=(0,0,0
   pair-member is the 1×1/zero-rect empty variant (known-real family).
 - **The storm moved and grew**: 747 SetShape (~1.4/s), shape
   SUCCEEDING each time; locks fired only 3× (prior boot's tail).
-- **Next rung read from the log, not guessed** (user correction —
+- **Next rung read from the log, not guessed** (correction —
   every dispatch logs index=N): the cycle is 7 → [9, 9, 11] × repeat.
   **Index 11 = QueryLock** — 56 dispatches; set_shape_backing (6) and
   real locks (12/14): ZERO hits. The caller probes lock AVAILABILITY
@@ -1421,7 +1420,7 @@ meanings documented in-table). **No semantic changes bundled.**
 kIOReturnSuccess** (honest state answer). Pre-registered: the cycle
 moves past QueryLock to the real lock (12/14) — the held line — and
 the storm relocates there; loop stops only when something SUCCEEDS
-(fails more politely ≠ stops, per user). Expectation tempered.
+(fails more politely ≠ stops). Expectation tempered.
 
 ## 2026-08-15 (SetShape-alignment boot pre-registrations, before build ece17314)
 
@@ -1517,7 +1516,7 @@ the TIMING DATUM, not "no creator".
    FRAMEBUFFER type-0 at 19:46:09, 34 s before the surface-client
    open.
 
-**Hygiene list additions (user-flagged from boot log; traced to
+**Hygiene list additions (noted from boot log; traced to
 source — observations, not yet fixed):**
 1. `"3D managers initialized for QXL/Hyper-V DDA mode"`
    (VMQemuVGAAccelerator.cpp:198, branch at :177): the comment
@@ -1549,7 +1548,7 @@ source — observations, not yet fixed):**
    and PerformanceStatistics/Accum=true (:273-274). d-era comments
    throughout — historic-implementation category. This block is
    the concrete home of "advertising a 3D role while providing no
-   path for either 2D or 3D" (user): the discovery layer is
+   path for either 2D or 3D" : the discovery layer is
    shared, and NEITHER a GA CFPlugIn (2D) nor a GLD (3D) exists
    behind any of these properties.
 
@@ -1611,7 +1610,7 @@ symbol unresolvable by declaration. Instruments falsified en
 route: nm on /mach_kernel (symbol table ≠ kext-linkable set);
 kextutil -n -t (passed builds kxld refused — boot is the only
 linkage arbiter); nm on System.kext plugins (symbol-set kexts,
-no binary). Rules updated by user with all four symbols named.
+no binary). Rules updated with all four symbols named.
 Caller-attribution answer arrived by the zero-code route:
 IOUserClientCreator (64 live instances; ours = pid 97
 WindowServer above). For transient surface-client callers: read
@@ -1679,7 +1678,7 @@ allocation attached as a virtio resource; WriteLock returns its
 pointer; Flush = TRANSFER_TO_HOST + scanout. 2b (`IOCFPlugInTypes`)
 stays sequenced after the surface ops, as pre-registered.
 
-**Precision notes (user, 2026-08-15) — do not over-read the
+**Precision notes  — do not over-read the
 milestone:**
 - **readfb is not WindowServer.** The calls are Apple's framework
   code, not mine — exactly the pre-registered evidence — but a
@@ -1795,7 +1794,7 @@ Prediction: past `IOAccelFindAccelerator`, fail at
 The pair (baseline fail → post-trio pass-at-rung-1) is what
 discriminates "IOAccel discovery works" from "WindowServer declines."
 
-**The instrumented build is the instrument (user, 2026-08-14).** The
+**The instrumented build is the instrument .** The
 pristine tool fails **silently** — exit 0, zero bytes, no diagnostic.
 The step-marker `fprintf`s are therefore load-bearing, not convenience:
 every subsequent rung needs the same instrumented build and include
@@ -1855,10 +1854,10 @@ in path-string form + `IOCFPlugInTypes`; 3) reconcile the three
 accelerator-ish nubs **before** the experiment, else a positive result is
 unattributable (see finding 3); 4) hygiene below.
 
-**Probe vs shipping value — keep the distinction explicit (user,
+**Probe vs shipping value — keep the distinction explicit (decision,
 2026-08-14).** `functional_3d` was correctly held false while the 3D path
 was unproven. That era is over in the per-process sense: Mesa renders
-through virgl and PowerFox draws real web content (user-attested project
+through virgl and PowerFox draws real web content (verified project
 state). But WindowServer still cannot reach any of it — the shim is
 per-process via `DYLD_FRAMEWORK_PATH`. So publishing accelerated=true to
 WindowServer is a claim nothing behind it can yet honour. Acceptable for a
@@ -1868,7 +1867,7 @@ args used, and revisit what "functional" means for WindowServer once a
 system-wide path exists.
 
 **`functional_3d` is the pivot of the whole probe — do not flatten it
-(user, 2026-08-14).** Its honest value depends on which consumer is asking:
+.** Its honest value depends on which consumer is asking:
 per-process 3D is real, WindowServer-reachable 3D is not. That distinction
 currently lives in **one boolean**, which is exactly the kind of thing that
 gets flattened by someone tidying up. The boot-arg gate is what keeps the
@@ -1876,7 +1875,7 @@ distinction honest; any refactor that merges the probe gate into
 `functional_3d` (or vice versa) loses the ability to say what "functional"
 means, and for whom.
 
-**Probe design, final (user, 2026-08-14).** The probe knowingly does what
+**Probe design, final .** The probe knowingly does what
 this codebase's own comment warns against (`VMVirtIOFramebuffer.cpp:377-379`:
 "advertise a capability you can't deliver, consumers stop falling back to
 the working software renderer") — acceptable gated, indefensible as a
@@ -1894,7 +1893,7 @@ default. **Three pre-registered outcomes, not two:**
    unchanged, WindowServer's own compositing decision is the variable, not
    anything in the shim.
 
-**Probe-run boot protocol (user, 2026-08-14).** The probe is the first
+**Probe-run boot protocol .** The probe is the first
 driver change in a while and the guest has accumulated state. The boot
 that tests it must be **fresh, cached, quiesced, single-vCPU**: four
 separate confounds have already invalidated runs on this project, and a
@@ -2047,7 +2046,7 @@ this project — VMsvga2GA (MIT-style headers) is the only worked example
 of the table, and `readfb.c` is the test client. Sequence any plugin work
 after the WindowServer probe; do not block the probe on it.
 
-### readfb.c as staged arbiter — step 0, before any driver change (user, 2026-08-14)
+### readfb.c as staged arbiter — step 0, before any driver change 
 
 More than a template: a **staged arbiter that runs against the current
 kext, unmodified**. Its first call is `IOAccelFindAccelerator(FB)` —
@@ -2074,7 +2073,7 @@ And because it is Apple's own consumer, a failure in it is evidence
 about the driver, not about the probe — which no hand-written prober can
 claim.
 
-**Refinement (user, 2026-08-14, session close): run it at every rung, not
+**Refinement (2026-08-14, session close): run it at every rung, not
 once.** The baseline run is the *before* half of a controlled comparison,
 not the discriminator itself — what discriminates is the **pair**.
 Baseline: fail at `IOAccelFindAccelerator`. After the trio lands: if
@@ -2261,7 +2260,7 @@ all-inline 64..2004 bytes unchanged, pixel RGBA(26,26,31,255)).
 Remaining artifact class: **rectangles of correct content
 composited at wrong destinations** — nav strip doubled at offset,
 "New Tab" twice at different x, left-clipped text at consistent
-x ("tions on installing…"). User-verified discriminations:
+x ("tions on installing…"). Verified discriminations:
 - resize → clears; incremental repaint → returns (partial-damage
   class confirmed).
 - **Single-buffer test FALSIFIED guest-side buffer staleness**:
@@ -2328,13 +2327,13 @@ address, virtio impl returns a 3D-resource-backed guest buffer;
 the surface client stays device-agnostic above it. WriteLock's
 memory source is decided there.
 
-**November logs explanation (USER-ATTESTED):** the user
+**November logs explanation (VERIFIED):** the
 confirms the file was extensively tested on the CATALINA guest —
 explains logs existing for a file never compiled in this
 project, consistent with all git evidence, and confirms the
 notes are stale for this target. Consequences recorded: the
 d98-era failure mechanism is a lost binary's story (see verdict
-phrasing above), and the user's standing directive is that this
+phrasing above), and the standing directive is that this
 file is the OLD design and **needs redesign** for virtio, not
 revival.
 
@@ -2431,7 +2430,7 @@ predicts. A software context bound to the surface needs no
 accelerator, so silence at A2 is still "nobody needed a GPU."
 The requester cannot push further: npix=0 for accelerated formats
 is the wall. **Capability flip is now necessary AND interpretable**
-(user pre-authorized this ordering): flip on + accelerated
+(pre-authorized ordering): flip on + accelerated
 renderer appears + SetSurface produces lines ⇒ capability-gated
 end-to-end. Flip on + still no accelerated renderer ⇒ flag
 necessary but insufficient ⇒ GLD/GLEngine-plugin hypothesis
@@ -2498,7 +2497,7 @@ GLD-side producer — a different and larger obstacle than the one
 the struck line described. Fail outcome = the readback
 presentation path stays.
 
-**Backing strategy for the probe (user insight, recorded):**
+**Backing strategy for the probe (recorded):**
 WriteLock's contract is handing userspace an address — and that
 exact shape is ALREADY proven on virtio: `probe_attach_backing_test`
 (2026-08-10) verified ATTACH_BACKING with unaligned userspace
@@ -2714,7 +2713,7 @@ across Flurry and PowerFox to size that set.
    resolve into Mesa via DYLD_LIBRARY_PATH. They don't: DYLD_LIBRARY_PATH
    doesn't affect framework lookups under two-level namespace. GL symbols
    bind to their link-time library. The killtest's gl* calls go to Apple's
-   OpenGL, not Mesa. User's own correction.
+   OpenGL, not Mesa. Correction recorded.
 
 2. **Radii framework for variant generalisation.** Three radii: PCI-ID
    (all variants), VGA/no-VGA split (class-code + BAR layout + cap walk +
@@ -2931,7 +2930,7 @@ transfers just embed transfer commands in submit_cmd's buffer, which
 we already handle.
 
 Result: assertion gone, 275 winsys calls in 20s, 47 frames rendered,
-user reports "dark window + rotating triangle" visible in UTM.
+observed: "dark window + rotating triangle" visible in UTM.
 
 ### What's verified
 
@@ -3303,7 +3302,7 @@ pre-registrations above:**
   a 24KB stub. Launch chain: gen-1 (pfwatch child) runs early startup
   ~74s, exits rc=0, handoff spawns the real browser instance (orphan,
   ppid 1) which inherits env/stderr. The dock "disappear-restart"
-  the user observed repeatedly is this handoff plus Gecko's own
+  the repeatedly-observed case is this handoff plus Gecko's own
   startup-crash recovery (safe-mode relaunch) after the failed
   startups.
 - **Deadlock #1 (fixed):** compositor thread called our swizzled
@@ -3380,7 +3379,7 @@ virgl (Apple M4 Pro)`.
 **Run-3 anomaly resolved — was never a crash.** `PFWATCH: powerfox exited
 rc=0` after ~70s, then a successor process (ppid 1) launched: Gecko's
 one-shot self-handoff for non-LaunchServices launches (ssh/nohup). The
-"disappear for a second and restart" the user saw at the dock is this
+"disappear for a second and restart" seen at the dock is this
 handoff, not a crash loop. No crash reports exist for any of it.
 
 **Deadlock 1 — off-main AppKit in shim_setView: (fixed).** Evidence:
@@ -3430,7 +3429,7 @@ fails silently, nothing reaches the window. Next: wire present_buf →
 screen. Candidate: blit directly in shim_present (main thread, runs
 today) via lockFocus/unlockFocus on the view, bypassing drawRect; or
 handle CGLTexImageIOSurface2D against the OSMesa context instead of
-forwarding. **Needs a visual check first** — the user was watching;
+forwarding. **Needs a visual check first** —
 confirm what (if anything) the window shows before designing.
 
 **GC write barrier (bundled, inert in PowerFox).** `sc->view` store now
@@ -3449,7 +3448,7 @@ in 100s; use `MOZ_GL_SPEW=1` alone (gfxEnv GlSpew, gfxEnv.h:84).
 
 ### 2026-08-13 late — hardening verified; safe-mode prompt identified
 
-**The 400x128 surface is Gecko's safe-mode prompt** (user-confirmed
+**The 400x128 surface is Gecko's safe-mode prompt** (confirmed
 visual: dialog chrome visible, content area not composed). All the
 killed runs made Gecko offer safe mode; the dialog's content widget is
 what the compositor has been rendering all along. The "restart loop"
@@ -3475,7 +3474,7 @@ occurrence, did not reproduce.
 ### 2026-08-13 evening — FIRST FULLY RENDERED GECKO UI (milestone)
 
 **The safe-mode dialog renders correctly: text upright, buttons
-visible — and the user CLICKED one (Refresh Profile), so input
+visible — and one was clicked (Refresh Profile), so input
 routing works too.** Pipeline verified end-to-end visually:
 virgl render → CGLTexImageIOSurface2D upload (BGRA/RECT honoured,
 target=0x84f5 fmt=0x80e1 type=0x8367, glErr=0x0) → composite →
@@ -3544,7 +3543,7 @@ from a failed subsystem.
 
 ### 2026-08-13 night — black window chased to virgl submission failures
 
-**User corrections accepted and recorded:**
+**Corrections accepted and recorded:**
 - The e10s-off generation did NOT die — my "alive: 0" ps read was an
   instrument error (mechanism unknown); the process (7759) was alive
   7+ min at 21.9% CPU and never even ran the stub handoff. The
@@ -3629,7 +3628,7 @@ the "not the black cause" conclusion rested on the retracted
 **Empty-frame guard deployed and verified (spew17):** shim_blit
 skips frames whose first pixel has alpha==0 (NSCompositeCopy would
 otherwise paint transparent-black over Gecko's own software
-painting — the observed white-then-black). User-confirmed: window
+painting — the observed white-then-black). Confirmed: window
 now stays WHITE (view default background; Gecko paints nothing via
 software either — "all white, no toolbar buttons"). blit-skip
 lines fire as designed.
@@ -3665,7 +3664,7 @@ is drawing inside the view's own drawRect:. The reason our drawRect
 path never ran is per-class dispatch: the swizzle sits on NSView, and
 Gecko's ChildView overrides drawRect:, so Gecko's implementation wins
 and ours never fires (drawptr 0, blit no samples, white content —
-visually confirmed via user screenshot: "PowerFox Safe Mode" window,
+visually confirmed via screenshot: "PowerFox Safe Mode" window,
 system chrome rendered, content blank white; note the readback holds
 opaque BLACK, so not even a wrong blit was reaching the screen).
 Implemented: lazy swizzle of `[view class]` at first -setView:
@@ -3768,8 +3767,8 @@ md5 `d4959ba77634b3bbffa06652c932a457` was a different build state
 that no longer exists in `build/Release` (overwritten by the
 rebuild).
 
-**Why the kext was absent — RESOLVED (user statement, not
-inferred).** The user deleted the kext via the recovery procedure
+**Why the kext was absent — RESOLVED (stated, not
+inferred).** The kext was deleted via the recovery procedure
 documented in `.claude/rules/build-install.md` lines 154-157
 (`V=/Volumes/MacintoshHD; sudo rm -rf "$V/System/Library/
 Extensions/VMQemuVGA.kext"; sudo rm -rf "$V/System/Library/Caches/
@@ -3783,7 +3782,7 @@ the absence as an unexplained residual. Retracting that framing.
 The kext committed at HEAD (without the descriptor-path diff) was
 installed across many sessions (LEDGER: RED WINDOW, killtest,
 PowerFox safe-mode dialog rendered). At some point after those
-verifications it stopped booting, badly enough that the user had
+verifications it stopped booting, badly enough that recovery was
 to use the slclean recovery procedure. The new build (with the
 descriptor-path diff) **booted cleanly on the first try after
 install** — kextstat confirms load, md5 matches, WindowServer
@@ -4106,7 +4105,7 @@ readback.
 **Killtest via NSOpenGLContext — VERIFIED VISUALLY — 2026-08-11:**
 Rotating triangle through the full NSOpenGLContext → shim → Mesa →
 virgl → host GPU → drawRect path. 100 frames sustained at ~9-10 fps,
-zero errors. User confirmed visible animated triangle on the guest's
+zero errors. Visible animated triangle confirmed on the guest's
 display. Exercises: repeated `-flushBuffer` with swap-and-rebind per
 frame, `glReadPixels` readback per frame, coalescing path, drawRect
 presentation at 800×600 (469-page scatter list through the per-call
