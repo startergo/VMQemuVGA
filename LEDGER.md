@@ -66,6 +66,51 @@ CAUSE FOUND). Kext-relevant facts:
   attribution rewrite), and the browser stays fully interactive under
   WebGL load (URL-bar typing exercised, no wedge). Transient startup
   white once (~40 s) — recorded, watch for recurrence.
+**AQUARIUM ARC + DEVICE WEDGE + BOOT FAILURE (2026-08-18 late night):**
+- **Aquarium RAN** (fish visible ~1 fps, 1024x1024 canvas) on the
+  clamp-capacity + pool-raise kexts; Mesa errors 29 vs ~23,000 before.
+  User also reported: mirrored text / toolbar-at-bottom (a NEW
+  vertical-flip artifact class; ramp discriminator pre-registered with
+  3 outcomes incl. "no ramp = not this path, localises only") and a
+  404-error-page layer at top (same vertical-placement family).
+- Mirror hunt parked: ZERO CGLTexImageIOSurface2D calls ALL session —
+  including the WORKING fish session (pf_aq3 instrument signature
+  matches the broken pf_clean exactly). The chrome renders without the
+  IOSurface path in the current config; the 2026-08-13 "load-bearing
+  upload" claim no longer describes the content path. The flip read
+  needs the instrument moved to the active path.
+- Second SMP panic (~23:34, mds/_kevent — the fontd family, no kext
+  frames); an unexplained ~23:52 restart (user reconfigured, 4 vCPU
+  retained by direction — panic risk accepted). /tmp/subst wiped again
+  → substitute now persists at /Users/sl/subst.
+- **Regression spiral → full device wedge**: post-restart sessions
+  showed 3D submits timing out (472× `0xe00002d6` vs 9× in the healthy
+  fish run, SAME kext), GL context churn (13 probes vs 2), white pages
+  + black stripes, then EVERY virtqueue request timing out incl. 2D
+  (refresh 0.0 Hz; the recorded 2026-08-17 wedge class; VM restart
+  cleared). Host was loaded (MediaAnalysis 146%, Virtualization.fw
+  155%) — the amplifier. USER ATTRIBUTION PUSH ("it is the last
+  change") WAS PARTLY RIGHT, RECORDED: a378b9b (real stride/offset on
+  the wire) feeds guest math into the host iov walker with NO extent
+  guard — a walking-off transfer can hang virglrenderer (stray
+  "capacity 5/85" host errors = the near-miss signature). The dynamic
+  store remains a candidate via the timeout spiral only.
+- **LANDED (f207add = kext cc0aee0b)**: transfer EXTENT GUARD
+  (0x3008/0x3009 reject offset+(h-1)*stride+w*bpp+(d-1)*layer_stride >
+  capacity; unknown passes; XFER-EXTENT-REJECT logs) + 3D-class poll
+  budget (submitCommand poll_iters param; 2D keeps 150; 3D passes
+  600). Earlier tonight: capacity = full mip/layer/sample layout
+  (6504623 — 577 clamp fires had amputated every mip chain) and the
+  GEM-style dynamic backing store (ec2721f + cb291c9; the 512 pool
+  saturated at 1,730 full-failures per aquarium load; IOMallocZero is
+  outside the 10.6 KPI — kxld refused at boot, IOMalloc+memset).
+- **OPEN, BLOCKING: cc0aee0b FAILED TO BOOT** — installed, rebooted,
+  guest unreachable >6 min (no mDNS). Console read pending. If panic/
+  hang: recover via slclean, fall back to dd9b0d71 (the fish-run
+  kext), bisect {extent guard, poll budget, store} one per boot.
+  Suspects: guard rejecting a boot-critical transfer (XFER-EXTENT-
+  REJECT should be on the serial if so), poll budget vs the boot
+  display path, or store lock init-order.
 - Also this session: 4-vCPU spinlock-timeout panic
   (fontd/_kqueue_scan, owner stalled in _lapic_interrupt→
   AppleACPIPlatform, no VMQemuVGA frames) interrupted run 1; user
