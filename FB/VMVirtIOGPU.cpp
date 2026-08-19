@@ -8354,7 +8354,8 @@ IOReturn VMVirtIOGPUUserClient::createResource3DEx(
           "fmt=%u bind=0x%x %ux%ux%u arr=%u resp=0x%x\n",
           resource_id, format, bind, width, height, depth, array_size,
           resp.type);
-    recordUserResourceGeom(resource_id, format, width, height);
+    recordUserResourceGeom(resource_id, format, width, height, depth,
+                           array_size, last_level, nr_samples);
     *out_resource_id = resource_id;
     return kIOReturnSuccess;
 }
@@ -8377,7 +8378,8 @@ static uint32_t virgl_fmt_bpp_clamptab(uint32_t fmt)
 }
 
 void VMVirtIOGPUUserClient::recordUserResourceGeom(uint32_t id,
-    uint32_t fmt, uint32_t w, uint32_t h)
+    uint32_t fmt, uint32_t w, uint32_t h, uint32_t depth,
+    uint32_t array_size, uint32_t last_level, uint32_t nr_samples)
 {
     if (id == 0) return;
     for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
@@ -8385,6 +8387,10 @@ void VMVirtIOGPUUserClient::recordUserResourceGeom(uint32_t id,
             m_user_geom[i].fmt = fmt;
             m_user_geom[i].w = w;
             m_user_geom[i].h = h;
+            m_user_geom[i].depth = depth;
+            m_user_geom[i].array_size = array_size;
+            m_user_geom[i].last_level = last_level;
+            m_user_geom[i].nr_samples = nr_samples;
             return;
         }
     }
@@ -8394,6 +8400,10 @@ void VMVirtIOGPUUserClient::recordUserResourceGeom(uint32_t id,
             m_user_geom[i].fmt = fmt;
             m_user_geom[i].w = w;
             m_user_geom[i].h = h;
+            m_user_geom[i].depth = depth;
+            m_user_geom[i].array_size = array_size;
+            m_user_geom[i].last_level = last_level;
+            m_user_geom[i].nr_samples = nr_samples;
             return;
         }
     }
@@ -8432,7 +8442,31 @@ uint64_t VMVirtIOGPUUserClient::userResourceCapacity(uint32_t id)
         if (m_user_geom[i].id == id) {
             uint32_t bpp = virgl_fmt_bpp_clamptab(m_user_geom[i].fmt);
             if (bpp == 0) return 0;
-            return (uint64_t)m_user_geom[i].w * m_user_geom[i].h * bpp;
+            /* Full layout total, mirroring Mesa's virgl_resource_layout
+             * for this format set (measured strides = w*bpp exactly):
+             * sum over mip levels of (w>>l x h>>l), floored at 1x1,
+             * times layer count, times sample count, times bpp. Every
+             * term only GROWS the true size — an over-estimate merely
+             * declines to clamp (safe); the w*h*bpp of the pre-2026-08-18
+             * code UNDER-counted mip chains by 1/3 and amputated the
+             * mip tail of every textured resource (577 clamp fires on
+             * the aquarium page; each fatalled its context). */
+            const user_resource_geom& g = m_user_geom[i];
+            uint32_t last = g.last_level;
+            if (last > 31) last = 31;            /* corrupt wire guard */
+            uint64_t px = 0;
+            for (uint32_t l = 0; l <= last; l++) {
+                uint32_t lw = g.w >> l; if (lw == 0) lw = 1;
+                uint32_t lh = g.h >> l; if (lh == 0) lh = 1;
+                uint64_t lvl = (uint64_t)lw * lh;
+                /* 3D textures shrink per level; others keep depth as
+                 * layers-cubed is array_size's job. */
+                uint32_t ld = g.depth >> l; if (ld == 0) ld = 1;
+                lvl *= (g.array_size ? g.array_size : ld);
+                px += lvl;
+            }
+            uint32_t samples = g.nr_samples ? g.nr_samples : 1;
+            return px * bpp * samples;
         }
     }
     return 0;   // unknown resource — do not clamp

@@ -611,10 +611,18 @@ private:
     struct user_resource_geom {
         uint32_t id;            // 0 = free slot
         uint32_t fmt, w, h;
+        /* Full geometry from RESOURCE_CREATE_3D (2026-08-18, the
+         * aquarium capacity fix): w*h*bpp alone under-counted every
+         * mip-chained resource by 1/3 (256x128 RGBA full-mip total =
+         * 174,764 B vs naive 131,072 B), amputating the mip tail and
+         * fatal-erroring every mip transfer. 24 bytes x 1024. */
+        uint32_t depth, array_size, last_level, nr_samples;
     };
     user_resource_geom m_user_geom[MAX_USER_RESOURCE_GEOM];
     void recordUserResourceGeom(uint32_t id, uint32_t fmt, uint32_t w,
-                                uint32_t h);
+                                uint32_t h, uint32_t depth,
+                                uint32_t array_size, uint32_t last_level,
+                                uint32_t nr_samples);
     void dropUserResourceGeom(uint32_t id);
     // Returns the host-side capacity in bytes, or 0 if unknown (in
     // which case attachBackingUser must NOT clamp — a wrong-bpp
