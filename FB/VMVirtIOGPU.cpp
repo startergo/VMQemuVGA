@@ -6986,14 +6986,20 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                 }
                 /* args->scalarInput is const — pass the clamped box
                  * via locals (unclamped when the resource is
-                 * unknown). */
+                 * unknown). Scalars [9..11] (stride, layer_stride,
+                 * offset — the box's iov layout) are read when
+                 * present; pre-fix callers passed 9 scalars and the
+                 * zeros Wired below were the real values anyway. */
                 return m_gpu_device->transferToHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                       (uint32_t)args->scalarInput[1],  // level
                                                       bx, by,
                                                       (uint32_t)args->scalarInput[4],  // z
                                                       cbw, cbh,
                                                       (uint32_t)args->scalarInput[7],  // depth
-                                                      ctx_id);                         // ctx_id
+                                                      ctx_id,                          // ctx_id
+                                                      (args->scalarInputCount >= 10) ? (uint32_t)args->scalarInput[9]  : 0, // stride
+                                                      (args->scalarInputCount >= 11) ? (uint32_t)args->scalarInput[10] : 0, // layer_stride
+                                                      (args->scalarInputCount >= 12) ? (uint32_t)args->scalarInput[11] : 0);// offset
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferToHost3D\n");
             return kIOReturnBadArgument;
@@ -7040,28 +7046,32 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                               bx, by, cbw, cbh);
                     }
                 }
-                // Log what goes on the wire. Stride/layer_stride/offset are
-                // hardcoded to 0 in transferFromHost3D at line 7183-7185
-                // (host computes from format+width). A wrong host-side stride
-                // produces a plausible-looking partial readback rather than
-                // an error — exactly the failure mode hardest to read from a
-                // colour check.
-                if (t3009_log)
-                    IOLog("VMVirtIOGPUUserClient: 0x3009 wire: res=%u ctx=%u "
-                          "box=(%u,%u,%u, %ux%ux%u) stride=0 layer_stride=0 offset=0\n",
-                          (uint32_t)args->scalarInput[0], ctx_id,
-                          bx, by,
-                          (uint32_t)args->scalarInput[4], cbw, cbh,
-                          (uint32_t)args->scalarInput[7]);
-                /* args->scalarInput is const — pass the (possibly
-                 * clamped) box via locals. */
-                return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
-                                                        (uint32_t)args->scalarInput[1],  // level
-                                                        bx, by,
-                                                        (uint32_t)args->scalarInput[4],  // z
-                                                        cbw, cbh,
-                                                        (uint32_t)args->scalarInput[7],  // depth
-                                                        ctx_id);                         // ctx_id
+                // Log what goes on the wire — now the REAL values
+                // (2026-08-18 fix: stride/layer_stride/offset were
+                // hardcoded zeros; sub-box readbacks misplaced).
+                {
+                    uint32_t w_stride = (args->scalarInputCount >= 10) ? (uint32_t)args->scalarInput[9]  : 0;
+                    uint32_t w_lstride = (args->scalarInputCount >= 11) ? (uint32_t)args->scalarInput[10] : 0;
+                    uint32_t w_offset = (args->scalarInputCount >= 12) ? (uint32_t)args->scalarInput[11] : 0;
+                    if (t3009_log)
+                        IOLog("VMVirtIOGPUUserClient: 0x3009 wire: res=%u ctx=%u "
+                              "box=(%u,%u,%u, %ux%ux%u) stride=%u layer_stride=%u offset=%u\n",
+                              (uint32_t)args->scalarInput[0], ctx_id,
+                              bx, by,
+                              (uint32_t)args->scalarInput[4], cbw, cbh,
+                              (uint32_t)args->scalarInput[7],
+                              w_stride, w_lstride, w_offset);
+                    /* args->scalarInput is const — pass the (possibly
+                     * clamped) box via locals. */
+                    return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
+                                                            (uint32_t)args->scalarInput[1],  // level
+                                                            bx, by,
+                                                            (uint32_t)args->scalarInput[4],  // z
+                                                            cbw, cbh,
+                                                            (uint32_t)args->scalarInput[7],  // depth
+                                                            ctx_id,                          // ctx_id
+                                                            w_stride, w_lstride, w_offset);
+                }
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferFromHost3D\n");
             return kIOReturnBadArgument;
@@ -8974,7 +8984,9 @@ IOReturn CLASS::transferToHost2D(uint32_t resource_id, uint64_t offset,
 IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
                                  uint32_t x, uint32_t y, uint32_t z,
                                  uint32_t width, uint32_t height, uint32_t depth,
-                                 uint32_t ctx_id)
+                                 uint32_t ctx_id,
+                                 uint32_t stride, uint32_t layer_stride,
+                                 uint32_t offset)
 {
     if (!m_pci_device || !m_control_queue) {
         IOLog("VMVirtIOGPU::transferToHost3D: VirtIO GPU not ready\n");
@@ -9003,9 +9015,15 @@ IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
     cmd.hdr.ctx_id = ctx_id;  // was hardcoded 0 — bug fixed 2026-08-09
     cmd.resource_id = resource_id;
     cmd.level = level;
-    cmd.offset = 0;
-    cmd.stride = 0;
-    cmd.layer_stride = 0;
+    /* stride/layer_stride/offset: the box's layout in the guest backing.
+     * Wired as zeros until 2026-08-18 — vrend places sub-box rows at
+     * offset + row*stride, so zeros collapsed every offset box onto
+     * offset 0 (full-surface-at-origin boxes took a sequential host
+     * path and were correct, masking the bug on the 2D desktop while
+     * breaking every partial texture upload). */
+    cmd.offset = offset;
+    cmd.stride = stride;
+    cmd.layer_stride = layer_stride;
     cmd.box.x = x;
     cmd.box.y = y;
     cmd.box.z = z;
@@ -9036,7 +9054,9 @@ IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
 IOReturn CLASS::transferFromHost3D(uint32_t resource_id, uint32_t level,
                                    uint32_t x, uint32_t y, uint32_t z,
                                    uint32_t width, uint32_t height, uint32_t depth,
-                                   uint32_t ctx_id)
+                                   uint32_t ctx_id,
+                                   uint32_t stride, uint32_t layer_stride,
+                                   uint32_t offset)
 {
     if (!m_pci_device || !m_control_queue) {
         IOLog("VMVirtIOGPU::transferFromHost3D: VirtIO GPU not ready\n");
@@ -9063,9 +9083,11 @@ IOReturn CLASS::transferFromHost3D(uint32_t resource_id, uint32_t level,
     cmd.hdr.ctx_id = ctx_id;  // was hardcoded 0 — bug fixed 2026-08-09
     cmd.resource_id = resource_id;
     cmd.level = level;
-    cmd.offset = 0;
-    cmd.stride = 0;
-    cmd.layer_stride = 0;
+    /* Same fix as transferToHost3D (2026-08-18): zeros collapsed every
+     * offset readback — the WebGL-canvas / webgltest-pixel failure. */
+    cmd.offset = offset;
+    cmd.stride = stride;
+    cmd.layer_stride = layer_stride;
     cmd.box.x = x;
     cmd.box.y = y;
     cmd.box.z = z;
