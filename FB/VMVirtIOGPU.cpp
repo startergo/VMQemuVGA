@@ -6423,11 +6423,12 @@ bool VMVirtIOGPUUserClient::initWithTask(task_t owningTask, void* securityToken,
     m_probe_ctx_id = 0;
     m_probe_in_progress = false;
 
-    // Per-client backing-descriptor table for 0x6003/0x6004 — all slots free.
-    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
-        m_user_backings[i].resource_id = 0;
-        m_user_backings[i].desc = nullptr;
-    }
+    // Per-client backing store (GEM-style dynamic hash) — empty until
+    // the first attach allocates it. Lock exists from here on.
+    m_backing_tab = nullptr;
+    m_backing_cap = 0;
+    m_backing_live = 0;
+    m_backing_lock = IOLockAlloc();
 
     // WEDGE CLAMP: resource geometry table — all slots free.
     for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
@@ -6556,8 +6557,20 @@ void VMVirtIOGPUUserClient::free()
     // cleanup commands can still be sent. See LEDGER.md:911.
     probeAttachBackingUserCleanup();
 
-    // Release any held winsys backing descriptors (same pattern).
+    // Release any held winsys backing descriptors (same pattern), then
+    // free the store itself — the client is gone for good.
     removeAllUserBackings();
+    if (m_backing_lock) {
+        IOLockLock(m_backing_lock);
+        if (m_backing_tab) {
+            IOFree(m_backing_tab, m_backing_cap * sizeof(user_backing_entry));
+            m_backing_tab = nullptr;
+            m_backing_cap = 0;
+        }
+        IOLockUnlock(m_backing_lock);
+        IOLockFree(m_backing_lock);
+        m_backing_lock = nullptr;
+    }
 
     // SAFETY: Use safe release to prevent double-free
     OSSafeReleaseNULL(m_surfaces);
@@ -8165,63 +8178,157 @@ void VMVirtIOGPUUserClient::probeAttachBackingUserCleanup()
 // stale. Descriptor is completed in detachBackingUser instead.
 // =============================================================================
 
-// ---- Per-client backing-descriptor table helpers ------------------------------
+// ---- Per-client backing store (GEM-style dynamic hash) -----------------------
+
+/* Open addressing, linear probing, Knuth multiplicative hash, tombstones.
+ * All four public ops take m_backing_lock. Grows on demand — see the
+ * header comment for why the fixed pool is gone. */
+
+bool VMVirtIOGPUUserClient::backingStoreGrow(uint32_t newcap)
+{
+    /* Caller holds m_backing_lock. Allocate newcap entries (zeroed =
+     * all empty), re-insert the live ones, free the old table. */
+    user_backing_entry* nt =
+        (user_backing_entry*)IOMallocZero(newcap * sizeof(user_backing_entry));
+    if (!nt) return false;
+    for (uint32_t i = 0; i < m_backing_cap; i++) {
+        if (m_backing_tab[i].resource_id != 0 &&
+            m_backing_tab[i].resource_id != BACKING_TOMBSTONE) {
+            uint32_t j = (m_backing_tab[i].resource_id * 2654435761u) & (newcap - 1);
+            while (nt[j].resource_id != 0) j = (j + 1) & (newcap - 1);
+            nt[j] = m_backing_tab[i];
+        }
+    }
+    if (m_backing_tab) IOFree(m_backing_tab,
+                              m_backing_cap * sizeof(user_backing_entry));
+    m_backing_tab = nt;
+    m_backing_cap = newcap;
+    return true;
+}
 
 IOMemoryDescriptor* VMVirtIOGPUUserClient::findUserBacking(uint32_t resource_id)
 {
-    if (resource_id == 0) return nullptr;
-    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
-        if (m_user_backings[i].resource_id == resource_id) {
-            return m_user_backings[i].desc;
-        }
+    if (resource_id == 0 || !m_backing_tab) return nullptr;
+    IOLockLock(m_backing_lock);
+    IOMemoryDescriptor* found = nullptr;
+    uint32_t cap = m_backing_cap;
+    uint32_t i = (resource_id * 2654435761u) & (cap - 1);
+    for (uint32_t n = 0; n < cap; n++) {
+        uint32_t id = m_backing_tab[i].resource_id;
+        if (id == 0) break;                       /* empty — not present */
+        if (id == resource_id) { found = m_backing_tab[i].desc; break; }
+        i = (i + 1) & (cap - 1);
     }
-    return nullptr;
+    IOLockUnlock(m_backing_lock);
+    return found;
 }
 
 bool VMVirtIOGPUUserClient::addUserBacking(uint32_t resource_id, IOMemoryDescriptor* desc)
 {
     if (resource_id == 0 || !desc) return false;
-    // Reject duplicate — caller must detach before re-attaching.
-    if (findUserBacking(resource_id) != nullptr) return false;
-    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
-        if (m_user_backings[i].resource_id == 0) {
-            m_user_backings[i].resource_id = resource_id;
-            m_user_backings[i].desc = desc;
-            return true;
+    if (!m_backing_lock) return false;           /* init failed earlier */
+
+    IOLockLock(m_backing_lock);
+    if (!m_backing_tab) {
+        if (!backingStoreGrow(1024)) {            /* first attach */
+            IOLockUnlock(m_backing_lock);
+            IOLog("VMVirtIOGPUUserClient: backing store alloc FAILED\n");
+            return false;
         }
     }
-    return false;  // table full
+    /* Reject duplicate — caller must detach before re-attaching. */
+    {
+        uint32_t cap = m_backing_cap;
+        uint32_t i = (resource_id * 2654435761u) & (cap - 1);
+        bool dup = false;
+        for (uint32_t n = 0; n < cap; n++) {
+            uint32_t id = m_backing_tab[i].resource_id;
+            if (id == 0) break;
+            if (id == resource_id) { dup = true; break; }
+            i = (i + 1) & (cap - 1);
+        }
+        if (dup) { IOLockUnlock(m_backing_lock); return false; }
+    }
+    if (m_backing_live >= BACKING_LEAK_GUARD) {
+        IOLockUnlock(m_backing_lock);
+        IOLog("VMVirtIOGPUUserClient: backing store LEAK GUARD hit "
+              "(%u live) — runaway unref leak?\n", m_backing_live);
+        return false;
+    }
+    /* Grow at 70% load (tombstones count toward probe cost). */
+    if ((m_backing_live + m_backing_live / 2) >= m_backing_cap - m_backing_cap / 10) {
+        if (!backingStoreGrow(m_backing_cap * 2)) {
+            IOLockUnlock(m_backing_lock);
+            IOLog("VMVirtIOGPUUserClient: backing store GROW to %u FAILED\n",
+                  m_backing_cap * 2);
+            return false;
+        }
+    }
+    /* Insert: first tombstone, else the terminating empty slot. */
+    {
+        uint32_t cap = m_backing_cap;
+        uint32_t i = (resource_id * 2654435761u) & (cap - 1);
+        uint32_t tomb = 0xFFFFFFFFu;
+        for (uint32_t n = 0; n < cap; n++) {
+            uint32_t id = m_backing_tab[i].resource_id;
+            if (id == BACKING_TOMBSTONE && tomb == 0xFFFFFFFFu) tomb = i;
+            if (id == 0) {
+                if (tomb == 0xFFFFFFFFu) tomb = i;
+                break;
+            }
+            i = (i + 1) & (cap - 1);
+        }
+        m_backing_tab[tomb].resource_id = resource_id;
+        m_backing_tab[tomb].desc = desc;
+        m_backing_live++;
+    }
+    IOLockUnlock(m_backing_lock);
+    return true;
 }
 
 void VMVirtIOGPUUserClient::removeUserBacking(uint32_t resource_id)
 {
-    if (resource_id == 0) return;
-    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
-        if (m_user_backings[i].resource_id == resource_id) {
-            if (m_user_backings[i].desc) {
-                m_user_backings[i].desc->complete(kIODirectionInOut);
-                m_user_backings[i].desc->release();
+    if (resource_id == 0 || !m_backing_tab || !m_backing_lock) return;
+    IOLockLock(m_backing_lock);
+    uint32_t cap = m_backing_cap;
+    uint32_t i = (resource_id * 2654435761u) & (cap - 1);
+    for (uint32_t n = 0; n < cap; n++) {
+        uint32_t id = m_backing_tab[i].resource_id;
+        if (id == 0) break;
+        if (id == resource_id) {
+            if (m_backing_tab[i].desc) {
+                m_backing_tab[i].desc->complete(kIODirectionInOut);
+                m_backing_tab[i].desc->release();
             }
-            m_user_backings[i].resource_id = 0;
-            m_user_backings[i].desc = nullptr;
-            return;
+            m_backing_tab[i].resource_id = BACKING_TOMBSTONE;
+            m_backing_tab[i].desc = nullptr;
+            m_backing_live--;
+            break;
         }
+        i = (i + 1) & (cap - 1);
     }
+    IOLockUnlock(m_backing_lock);
 }
 
 void VMVirtIOGPUUserClient::removeAllUserBackings()
 {
-    for (int i = 0; i < MAX_USER_BACKINGS; i++) {
-        if (m_user_backings[i].resource_id != 0 && m_user_backings[i].desc) {
-            IOLog("VMVirtIOGPUUserClient: removeAllUserBackings releasing "
-                  "descriptor %p for resource=0x%x (client died)\n",
-                  m_user_backings[i].desc, m_user_backings[i].resource_id);
-            m_user_backings[i].desc->complete(kIODirectionInOut);
-            m_user_backings[i].desc->release();
+    if (!m_backing_lock) return;
+    IOLockLock(m_backing_lock);
+    if (m_backing_tab) {
+        for (uint32_t i = 0; i < m_backing_cap; i++) {
+            uint32_t id = m_backing_tab[i].resource_id;
+            if (id != 0 && id != BACKING_TOMBSTONE && m_backing_tab[i].desc) {
+                IOLog("VMVirtIOGPUUserClient: removeAllUserBackings releasing "
+                      "descriptor %p for resource=0x%x (client died)\n",
+                      m_backing_tab[i].desc, id);
+                m_backing_tab[i].desc->complete(kIODirectionInOut);
+                m_backing_tab[i].desc->release();
+            }
         }
-        m_user_backings[i].resource_id = 0;
-        m_user_backings[i].desc = nullptr;
+        memset(m_backing_tab, 0, m_backing_cap * sizeof(user_backing_entry));
     }
+    m_backing_live = 0;
+    IOLockUnlock(m_backing_lock);
 }
 
 // ---- 0x6000 createVirglContextEx ----------------------------------------------
@@ -8631,8 +8738,8 @@ IOReturn VMVirtIOGPUUserClient::attachBackingUser(uint32_t resource_id,
 
     // Store descriptor for later transfer/submit calls. NOT completed here.
     if (!addUserBacking(resource_id, desc)) {
-        IOLog("VMVirtIOGPUUserClient::attachBackingUser: FAIL backing table "
-              "full (%d entries)\n", MAX_USER_BACKINGS);
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: FAIL backing store "
+              "add (live=%u, duplicate or alloc failure)\n", m_backing_live);
         desc->complete(kIODirectionInOut);
         desc->release();
         return kIOReturnNoResources;

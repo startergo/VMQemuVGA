@@ -581,24 +581,31 @@ private:
      * compositor SIGSEGV at 0xb5). Unref frees slots correctly
      * (removeUserBacking); the limit was simply sized for a smaller
      * era. Entry ≈16 bytes → 512 = 8 KB per client. */
-    /* 8192 (2026-08-18, SECOND raise — the aquarium page saturated 512
-     * with 1,730 table-full failures in one load: every past-512 attach
-     * fails → Mesa GL_OUT_OF_MEMORY → page programs die → black stuck
-     * scene. First raise was 256→512 for a fresh-boot browser. Entry
-     * ≈16 bytes → 8192 = 128 KB per client. This is the stopgap; the
-     * structural fix — refcounted per-resource lifetime (GEM-style, as
-     * the Linux virtio-gpu driver does; no global pool to saturate) —
-     * is queued as its own design change. Linear find/add scans stay
-     * affordable at this size (host-side CPU, single client). */
-    #define MAX_USER_BACKINGS 8192
+    /* GEM-STYLE DYNAMIC BACKING STORE (user direction, 2026-08-18):
+     * the fixed pool saturated twice (256→512→8192 raises; the aquarium
+     * page alone blew 512 with 1,730 full-failures). Linux virtio-gpu
+     * has no cap because resources are kernel-lifetime GEM objects —
+     * same model here: an open-addressing hash keyed by resource_id
+     * that grows on demand (rehash at 70% load), tombstones on delete,
+     * and a leak-guard ceiling of 1M live entries that only fires on
+     * runaway leaks (real use peaks in the thousands). All ops take
+     * m_backing_lock — the fixed array was unsynchronized. Entry 16 B;
+     * the store allocates on first attach and frees with the client. */
     struct user_backing_entry {
-        uint32_t resource_id;       // 0 = free slot
+        uint32_t resource_id;       // 0 = empty, 0xFFFFFFFF = tombstone
+        uint32_t pad_;
         IOMemoryDescriptor* desc;
     };
-    user_backing_entry m_user_backings[MAX_USER_BACKINGS];
+    #define BACKING_TOMBSTONE 0xFFFFFFFFu
+    #define BACKING_LEAK_GUARD 1048576u
+    user_backing_entry* m_backing_tab;   // kalloc'd; null until first attach
+    uint32_t m_backing_cap;              // power of two
+    uint32_t m_backing_live;             // live entries
+    IOLock* m_backing_lock;
+    bool backingStoreGrow(uint32_t newcap);
     IOMemoryDescriptor* findUserBacking(uint32_t resource_id);
     bool addUserBacking(uint32_t resource_id, IOMemoryDescriptor* desc);
-    void removeUserBacking(uint32_t resource_id);   // complete + release + zero slot
+    void removeUserBacking(uint32_t resource_id);   // complete + release + tombstone
     void removeAllUserBackings();                    // for clientClose/free
 
     // ------------------------------------------------------------------
