@@ -264,9 +264,13 @@ private:
     // only called from instrumentation paths (throttled to first N submissions).
     uint16_t vringFreeDepth() const;
 
-    // Command processing
+    // Command processing. poll_iters: response-poll budget for the used
+    // ring (default 150 = the 2D microtransfer class; 3D batches pass 600
+    // — they do real host GL work and routinely exceed the short deadline
+    // under host load, and each dropped batch feeds Gecko's retry churn).
     IOReturn submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
-                          virtio_gpu_ctrl_hdr* resp, size_t resp_size);
+                          virtio_gpu_ctrl_hdr* resp, size_t resp_size,
+                          int poll_iters = 150);
     IOReturn processControlQueue();
 
     // Cursor queue (queue 1) — separate submit path, lock, and vring.
@@ -644,6 +648,15 @@ private:
     // which case attachBackingUser must NOT clamp — a wrong-bpp
     // truncation would be worse than the wedge).
     uint64_t userResourceCapacity(uint32_t id);
+    // TRANSFER EXTENT GUARD (2026-08-18, the device-wedge head): with
+    // real stride/offset on the wire (a378b9b), a guest value that walks
+    // the host's iov past the resource can hang virglrenderer's transfer
+    // loop — the whole-device wedge. Validates offset + (h-1)*stride +
+    // w*bpp (+ (d-1)*layer_stride) against the recorded capacity.
+    // Returns true when the transfer may proceed (including unknown
+    // capacity — never block on a guess); false = REJECT, caller logs.
+    bool transferExtentOK(uint32_t id, uint32_t stride, uint32_t layer_stride,
+                          uint32_t offset, uint32_t w, uint32_t h, uint32_t d);
     // Transfer-side clamp (WebGL context-death head, 2026-08-18):
     // bounded dims for a resource, false if unknown — callers must
     // NOT clamp when unknown.

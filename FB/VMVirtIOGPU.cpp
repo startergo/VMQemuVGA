@@ -1967,7 +1967,8 @@ uint16_t CLASS::vringFreeDepth() const
 // ---- Real submitCommand using VirtIO 1.0 split virtqueue ----
 
 IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
-                              virtio_gpu_ctrl_hdr* resp, size_t resp_size)
+                              virtio_gpu_ctrl_hdr* resp, size_t resp_size,
+                              int poll_iters)
 {
     // Parameter validation.
     // cmd_size limit matches m_cmd_buf's capacity (4096, set at init). The
@@ -2227,9 +2228,16 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     // log line's new spin_iter field — values <SPIN_ITERATIONS mean
     // the spin covered it; values >= SPIN_ITERATIONS mean we fell back.
     static const int SPIN_ITERATIONS = 10;
+    /* Poll budget is caller-class-aware (2026-08-18): 2D microtransfers
+     * keep the original 150-iteration budget; 3D batches (executeCommands)
+     * pass 600 — they do real host GL work and under host contention
+     * legitimately exceed the short budget, and every timed-out batch is
+     * a LOST batch whose loss feeds Gecko's context-retry churn (the
+     * 472-timeout spiral that preceded tonight's device wedge). */
+    if (poll_iters < SPIN_ITERATIONS) poll_iters = SPIN_ITERATIONS;
     bool timed_out = true;
     int poll_iter = 0;
-    for (int i = 0; i < 150; i++) {
+    for (int i = 0; i < poll_iters; i++) {
         if (i < SPIN_ITERATIONS) {
             IODelay(20);
         } else {
@@ -2250,8 +2258,8 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
         // is visible without ambiguity. The original `if (!noisy)` filter is documented
         // in LEDGER.md as a known logging gap.
         if (!noisy || instr) {
-            IOLog("VMVirtIOGPU::submitCommand: TIMEOUT on cmd 0x%x (no response after 150ms)\n",
-                  cmd->type);
+            IOLog("VMVirtIOGPU::submitCommand: TIMEOUT on cmd 0x%x (no response after %d polls)\n",
+                  cmd->type, poll_iters);
         }
         if (instr) {
             IOLog("VMVirtIOGPU::submit[%u] EXIT TIMEOUT avail_idx=%u used_idx=%u last_used=%u free_head=%u free_depth=%u cmd_desc=%u resp_desc=%u\n",
@@ -3429,9 +3437,13 @@ IOReturn CLASS::executeCommands(uint32_t context_id, IOMemoryDescriptor* command
     // Copy actual 3D command data after the header
     memcpy((uint8_t*)cmd + sizeof(virtio_gpu_cmd_submit), command_data, command_size);
     
-    // Submit to VirtIO GPU hardware
+    // Submit to VirtIO GPU hardware — extended poll budget: virgl
+    // batches do real host GL work (see submitCommand's poll_iters
+    // note; the 150-iteration default is the 2D microtransfer class,
+    // and dropped batches fed the churn spiral that preceded the
+    // 2026-08-18 device wedge).
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd->hdr, total_size, &resp, sizeof(resp));
+    IOReturn ret = submitCommand(&cmd->hdr, total_size, &resp, sizeof(resp), 600);
     
     // Cleanup
     IOFree(cmd, total_size);
@@ -7003,6 +7015,22 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                  * offset — the box's iov layout) are read when
                  * present; pre-fix callers passed 9 scalars and the
                  * zeros Wired below were the real values anyway. */
+                uint32_t w_stride  = (args->scalarInputCount >= 10) ? (uint32_t)args->scalarInput[9]  : 0;
+                uint32_t w_lstride = (args->scalarInputCount >= 11) ? (uint32_t)args->scalarInput[10] : 0;
+                uint32_t w_offset  = (args->scalarInputCount >= 12) ? (uint32_t)args->scalarInput[11] : 0;
+                /* EXTENT GUARD (the device-wedge head): reject before
+                 * the wire — see transferExtentOK. */
+                if (!transferExtentOK((uint32_t)args->scalarInput[0], w_stride,
+                                      w_lstride, w_offset, cbw, cbh,
+                                      (uint32_t)args->scalarInput[7])) {
+                    IOLog("VMVirtIOGPUUserClient: XFER-EXTENT-REJECT res=0x%x "
+                          "put box=(%u,%u %ux%ux%u) stride=%u lstride=%u "
+                          "off=%u — extent exceeds resource, guest bug\n",
+                          (uint32_t)args->scalarInput[0], bx, by, cbw, cbh,
+                          (uint32_t)args->scalarInput[7], w_stride, w_lstride,
+                          w_offset);
+                    return kIOReturnUnsupported;
+                }
                 return m_gpu_device->transferToHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                       (uint32_t)args->scalarInput[1],  // level
                                                       bx, by,
@@ -7010,8 +7038,8 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                                                       cbw, cbh,
                                                       (uint32_t)args->scalarInput[7],  // depth
                                                       ctx_id,                          // ctx_id
-                                                      (args->scalarInputCount >= 10) ? (uint32_t)args->scalarInput[9]  : 0, // stride
-                                                      (args->scalarInputCount >= 11) ? (uint32_t)args->scalarInput[10] : 0, // layer_stride
+                                                      w_stride,                        // stride
+                                                      w_lstride,                       // layer_stride
                                                       (args->scalarInputCount >= 12) ? (uint32_t)args->scalarInput[11] : 0);// offset
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferToHost3D\n");
@@ -7074,6 +7102,19 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                               (uint32_t)args->scalarInput[4], cbw, cbh,
                               (uint32_t)args->scalarInput[7],
                               w_stride, w_lstride, w_offset);
+                    /* EXTENT GUARD (the device-wedge head): reject
+                     * before the wire — see transferExtentOK. */
+                    if (!transferExtentOK((uint32_t)args->scalarInput[0], w_stride,
+                                          w_lstride, w_offset, cbw, cbh,
+                                          (uint32_t)args->scalarInput[7])) {
+                        IOLog("VMVirtIOGPUUserClient: XFER-EXTENT-REJECT res=0x%x "
+                              "get box=(%u,%u %ux%ux%u) stride=%u lstride=%u "
+                              "off=%u — extent exceeds resource, guest bug\n",
+                              (uint32_t)args->scalarInput[0], bx, by, cbw, cbh,
+                              (uint32_t)args->scalarInput[7], w_stride, w_lstride,
+                              w_offset);
+                        return kIOReturnUnsupported;
+                    }
                     /* args->scalarInput is const — pass the (possibly
                      * clamped) box via locals. */
                     return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
@@ -8582,6 +8623,30 @@ uint64_t VMVirtIOGPUUserClient::userResourceCapacity(uint32_t id)
     return 0;   // unknown resource — do not clamp
 }
 
+bool VMVirtIOGPUUserClient::transferExtentOK(uint32_t id,
+    uint32_t stride, uint32_t layer_stride, uint32_t offset,
+    uint32_t w, uint32_t h, uint32_t d)
+{
+    uint64_t capacity = userResourceCapacity(id);
+    if (capacity == 0) return true;    /* unknown — never block on a guess */
+
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id != id) continue;
+        uint32_t bpp = virgl_fmt_bpp_clamptab(m_user_geom[i].fmt);
+        if (bpp == 0) return true;
+
+        uint64_t extent = (uint64_t)offset;
+        if (h > 0) extent += (uint64_t)(h - 1) * stride;
+        extent += (uint64_t)w * bpp;
+        if (d > 0) extent += (uint64_t)(d - 1) * (uint64_t)layer_stride;
+
+        /* Saturating compare against capacity. */
+        if (extent > 0xFFFFFFFFull) return false;   /* absurd — reject */
+        return extent <= capacity;
+    }
+    return true;
+}
+
 // ---- 0x6003 attachBackingUser ------------------------------------------------
 //
 // Inline ATTACH_BACKING with persistent wiring. Mirrors the 0x5000 probe's
@@ -9175,15 +9240,16 @@ IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
     cmd.box.h = height;
     cmd.box.d = depth;
     
-    // Submit transfer to host 3D command
+    // Submit transfer to host 3D command — extended poll budget: 3D-class
+    // work, see submitCommand's poll_iters note.
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
-    
+    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 600);
+
     if (ret != kIOReturnSuccess) {
         IOLog("VMVirtIOGPU::transferToHost3D: Command failed: 0x%x\n", ret);
         return ret;
     }
-    
+
     {
         static uint32_t s_transfer_to_count = 0;
         if (s_transfer_to_count < 20) {
@@ -9239,9 +9305,10 @@ IOReturn CLASS::transferFromHost3D(uint32_t resource_id, uint32_t level,
     cmd.box.h = height;
     cmd.box.d = depth;
     
-    // Submit transfer from host 3D command
+    // Submit transfer from host 3D command — extended poll budget: 3D-class
+    // work, see submitCommand's poll_iters note.
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp));
+    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 600);
     
     if (ret != kIOReturnSuccess) {
         IOLog("VMVirtIOGPU::transferFromHost3D: Command failed: 0x%x\n", ret);
