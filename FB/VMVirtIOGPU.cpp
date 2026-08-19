@@ -101,7 +101,20 @@ bool CLASS::init(OSDictionary* properties)
     m_context_lock = IOLockAlloc();
     m_accelerator_service = nullptr;
 
-    return (m_contexts && m_resource_lock && m_context_lock && m_cursor_vq_lock);
+    /* Async 3D submit queue (2026-08-19) — fields only; the worker
+     * thread starts lazily on the first enqueue (v3dQueueStart). */
+    m_v3d_lock = IOLockAlloc();
+    m_v3d_head = m_v3d_tail = m_v3d_count = m_v3d_inflight = 0;
+    m_v3d_stop = false;
+    m_v3d_thread_up = false;
+    for (int i = 0; i < V3D_QUEUE_DEPTH; i++) {
+        m_v3d_queue[i].buf = nullptr;
+        m_v3d_queue[i].size = 0;
+        m_v3d_queue[i].ctx_id = 0;
+    }
+
+    return (m_contexts && m_resource_lock && m_context_lock && m_cursor_vq_lock
+            && m_v3d_lock);
 }
 
 void CLASS::free()
@@ -660,7 +673,10 @@ void CLASS::stop(IOService* provider)
         m_command_gate->release();
         m_command_gate = nullptr;
     }
-    
+
+    v3dQueueStop();
+    if (m_v3d_lock) { IOLockFree(m_v3d_lock); m_v3d_lock = nullptr; }
+
     cleanupVirtIOGPU();
     
     super::stop(provider);
@@ -3437,20 +3453,153 @@ IOReturn CLASS::executeCommands(uint32_t context_id, IOMemoryDescriptor* command
     // Copy actual 3D command data after the header
     memcpy((uint8_t*)cmd + sizeof(virtio_gpu_cmd_submit), command_data, command_size);
     
-    // Submit to VirtIO GPU hardware — extended poll budget: virgl
-    // batches do real host GL work (see submitCommand's poll_iters
-    // note; the 150-iteration default is the 2D microtransfer class,
-    // and dropped batches fed the churn spiral that preceded the
-    // 2026-08-18 device wedge).
+    // Submit to VirtIO GPU hardware. Called ONLY from the async worker
+    // (2026-08-19) — the poll budget is effectively unbounded but still
+    // finite (a hang detector, not a deadline): cold shader compiles
+    // measured 1 s to >10 s under host load and MUST complete — a
+    // dropped compile batch kills the compositor's programs.
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd->hdr, total_size, &resp, sizeof(resp), 6000);
-    
+    IOReturn ret = submitCommand(&cmd->hdr, total_size, &resp, sizeof(resp), 100000);
+
     // Cleanup
     IOFree(cmd, total_size);
     command_map->release();
     IOLockUnlock(m_context_lock);
-    
+
     return ret;
+}
+
+// ---- Async 3D submit queue --------------------------------------------------
+
+bool CLASS::v3dQueueStart()
+{
+    IOLockLock(m_v3d_lock);
+    if (m_v3d_thread_up) { IOLockUnlock(m_v3d_lock); return true; }
+    m_v3d_stop = false;
+    kern_return_t kr = kernel_thread_start(
+        [](void* arg, wait_result_t w) { static_cast<CLASS*>(arg)->v3dWorker(); },
+        this, &m_v3d_thread);
+    if (kr != KERN_SUCCESS) {
+        IOLog("VMVirtIOGPU: v3d worker thread FAILED to start (0x%x)\n", kr);
+        IOLockUnlock(m_v3d_lock);
+        return false;
+    }
+    m_v3d_thread_up = true;
+    IOLockUnlock(m_v3d_lock);
+    IOLog("VMVirtIOGPU: v3d async submit worker running\n");
+    return true;
+}
+
+void CLASS::v3dQueueStop()
+{
+    if (!m_v3d_thread_up) return;
+    m_v3d_stop = true;
+    /* Wait for the worker to exit (bounded — the worker's worst case is
+     * one in-flight submit at the 100000-iteration budget ≈ minutes under
+     * pathological load; stop() during teardown may legally block). */
+    for (int i = 0; i < 60000 && m_v3d_thread_up; i++) IOSleep(10);
+    m_v3d_thread_up = false;
+    /* Flush anything left in the FIFO. */
+    IOLockLock(m_v3d_lock);
+    while (m_v3d_count > 0) {
+        v3d_batch* b = &m_v3d_queue[m_v3d_head];
+        if (b->buf) IOFree(b->buf, b->size);
+        b->buf = nullptr; b->size = 0; b->ctx_id = 0;
+        m_v3d_head = (m_v3d_head + 1) % V3D_QUEUE_DEPTH;
+        m_v3d_count--;
+    }
+    IOLockUnlock(m_v3d_lock);
+    IOLog("VMVirtIOGPU: v3d async submit worker stopped\n");
+}
+
+void CLASS::v3dWorker()
+{
+    for (;;) {
+        if (m_v3d_stop) break;
+        v3d_batch b;
+        b.buf = nullptr; b.size = 0; b.ctx_id = 0;
+        IOLockLock(m_v3d_lock);
+        if (m_v3d_count > 0) {
+            b = m_v3d_queue[m_v3d_head];
+            m_v3d_queue[m_v3d_head].buf = nullptr;
+            m_v3d_head = (m_v3d_head + 1) % V3D_QUEUE_DEPTH;
+            m_v3d_count--;
+            m_v3d_inflight++;
+        }
+        IOLockUnlock(m_v3d_lock);
+        if (!b.buf) { IOSleep(1); continue; }
+
+        /* Submit synchronously with the unbounded-but-finite budget. */
+        IOBufferMemoryDescriptor* desc = IOBufferMemoryDescriptor::withBytes(
+            b.buf, b.size, kIODirectionOut);
+        if (desc) {
+            IOReturn ret = executeCommands(b.ctx_id, desc);
+            if (ret != kIOReturnSuccess) {
+                IOLog("VMVirtIOGPU: v3d worker submit FAIL ctx=0x%x "
+                      "size=%u ret=0x%x\n", b.ctx_id, b.size, ret);
+            }
+            desc->release();
+        } else {
+            IOLog("VMVirtIOGPU: v3d worker withBytes FAIL size=%u\n", b.size);
+        }
+        IOFree(b.buf, b.size);
+
+        IOLockLock(m_v3d_lock);
+        m_v3d_inflight--;
+        IOLockUnlock(m_v3d_lock);
+    }
+    m_v3d_thread_up = false;
+    /* Returning from a kernel_thread_start body terminates the thread —
+     * no explicit thread_terminate (KPI-avoidance, the IOMallocZero
+     * lesson). */
+}
+
+IOReturn CLASS::executeCommandsAsync(uint32_t context_id,
+                                     const void* bytes, uint32_t size)
+{
+    if (!bytes || size == 0 || size > 1024 * 1024) return kIOReturnBadArgument;
+    if (!v3dQueueStart()) return kIOReturnNoResources;
+
+    uint8_t* copy = (uint8_t*)IOMalloc(size);
+    if (!copy) return kIOReturnNoMemory;
+    memcpy(copy, bytes, size);
+
+    /* Backpressure: wait for space (bounded at 120 s — a full FIFO for
+     * that long means the host is truly wedged). */
+    for (int i = 0; i < 120000; i++) {
+        IOLockLock(m_v3d_lock);
+        if (m_v3d_count < V3D_QUEUE_DEPTH) {
+            v3d_batch* b = &m_v3d_queue[m_v3d_tail];
+            b->ctx_id = context_id;
+            b->size = size;
+            b->buf = copy;
+            m_v3d_tail = (m_v3d_tail + 1) % V3D_QUEUE_DEPTH;
+            m_v3d_count++;
+            IOLockUnlock(m_v3d_lock);
+            return kIOReturnSuccess;
+        }
+        IOLockUnlock(m_v3d_lock);
+        IOSleep(1);
+    }
+    IOFree(copy, size);
+    IOLog("VMVirtIOGPU: v3d queue FULL for 120s — dropping batch "
+          "ctx=0x%x size=%u (host wedged?)\n", context_id, size);
+    return kIOReturnTimeout;
+}
+
+IOReturn CLASS::drain3D(uint32_t timeout_ms)
+{
+    if (!m_v3d_thread_up) return kIOReturnSuccess;
+    for (uint32_t i = 0; i < timeout_ms; i++) {
+        IOLockLock(m_v3d_lock);
+        bool idle = (m_v3d_count == 0 && m_v3d_inflight == 0);
+        IOLockUnlock(m_v3d_lock);
+        if (idle) return kIOReturnSuccess;
+        IOSleep(1);
+    }
+    IOLog("VMVirtIOGPU: drain3D TIMEOUT after %u ms "
+          "(count=%u inflight=%u)\n", timeout_ms, m_v3d_count, m_v3d_inflight);
+    return kIOReturnTimeout;
 }
 
 IOReturn CLASS::setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height)
@@ -7031,6 +7180,13 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                           w_offset);
                     return kIOReturnUnsupported;
                 }
+                /* Transfers are the ordering boundary for the async
+                 * submit queue — drain before touching the backing. */
+                {
+                    IOReturn dret = m_gpu_device->drain3D(120000);
+                    if (dret != kIOReturnSuccess)
+                        IOLog("VMVirtIOGPUUserClient: 0x3008 drain TIMEOUT\n");
+                }
                 return m_gpu_device->transferToHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                       (uint32_t)args->scalarInput[1],  // level
                                                       bx, by,
@@ -7116,7 +7272,14 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                         return kIOReturnUnsupported;
                     }
                     /* args->scalarInput is const — pass the (possibly
-                     * clamped) box via locals. */
+                     * clamped) box via locals. Transfers order against
+                     * the async submit queue — drain first (the GET's
+                     * data is read from the backing on return). */
+                    {
+                        IOReturn dret = m_gpu_device->drain3D(120000);
+                        if (dret != kIOReturnSuccess)
+                            IOLog("VMVirtIOGPUUserClient: 0x3009 drain TIMEOUT\n");
+                    }
                     return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                             (uint32_t)args->scalarInput[1],  // level
                                                             bx, by,
@@ -7397,6 +7560,18 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                                           (uint32_t)args->scalarInput[1]);
             }
             return kIOReturnBadArgument;
+        }
+
+        case 0x600A: { // drain3D — ordering barrier for the async submit queue
+            /* scalarInput[0] = timeout_ms (default 120000). The winsys
+             * calls this from resource_wait; transfers call it
+             * internally. Returns kIOReturnTimeout if the host has not
+             * consumed every queued batch within the budget. */
+            uint32_t timeout_ms = 120000;
+            if (args->scalarInputCount >= 1 && args->scalarInput)
+                timeout_ms = (uint32_t)args->scalarInput[0];
+            if (!m_gpu_device) return kIOReturnNotReady;
+            return m_gpu_device->drain3D(timeout_ms);
         }
 
         default:
@@ -9104,18 +9279,26 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
         }
     }
 
-    IOReturn ret = m_gpu_device->executeCommands(ctx_id, cmd_desc);
-    cmd_desc->release();
+    /* ASYNC (2026-08-19): enqueue a copy and return — the worker thread
+     * submits serially with an unbounded-but-finite poll (cold shader
+     * compiles measured 1 s quiet / >10 s loaded; every fixed budget
+     * dropped compile batches and killed the compositor's programs).
+     * Ordering is enforced by drain3D: the synchronous transfers
+     * (0x3008/0x3009) drain before dispatching, and the winsys drains
+     * at its resource_wait points (0x600A). The hex-dump path above
+     * still sees the raw bytes pre-enqueue. */
+    cmd_desc->release();   /* unused — the queue makes its own copy */
+    IOReturn ret = m_gpu_device->executeCommandsAsync(ctx_id, commands, size);
 
     if (ret != kIOReturnSuccess) {
         IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
-              "executeCommands FAIL ret=0x%x\n", ctx_id, size, ret);
+              "enqueue FAIL ret=0x%x\n", ctx_id, size, ret);
     } else {
         static uint32_t s_submit_ok_count = 0;
         if (s_submit_ok_count < 20) {
             s_submit_ok_count++;
-            IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u ok\n",
-                  ctx_id, size);
+            IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
+                  "queued\n", ctx_id, size);
         }
     }
     return ret;

@@ -386,6 +386,50 @@ public:
     IOReturn createRenderContext(uint32_t* context_id);
     IOReturn destroyRenderContext(uint32_t context_id);
     IOReturn executeCommands(uint32_t context_id, IOMemoryDescriptor* commands);
+
+    /* ------------------------------------------------------------------
+     * ASYNC 3D SUBMIT QUEUE (2026-08-19 — the recorded debt paid:
+     * "fences stay NULL, valid only while submit_cmd polled
+     * synchronously"). Cold TGSI→GLSL→ANGLE→Metal compiles measured
+     * 1 s (quiet host) to >10 s (loaded host) — no fixed poll budget
+     * survives that variance, and every dropped compile batch killed
+     * the compositor's programs (the white-page / sparse-frame faces).
+     *
+     * Model (Linux virtio-gpu): submit queues and returns; completion
+     * is enforced by a DRAIN BARRIER at the points that need ordering
+     * — the synchronous transfers (0x3008/0x3009 drain first) and the
+     * winsys resource_wait (new 0x600A selector). The worker submits
+     * serially through the existing locked executeCommands with an
+     * effectively unbounded poll; the 2D display path is untouched.
+     *
+     * One shared FIFO at device level: FIFO order preserves cross-
+     * context submission order; drain is conservative (waits for all
+     * clients' batches — single-browser reality). The producer copies
+     * the bytes — Mesa memsets its cbuf the moment submit_cmd returns.
+     * ------------------------------------------------------------------ */
+    #define V3D_QUEUE_DEPTH 64
+    struct v3d_batch {
+        uint32_t ctx_id;
+        uint32_t size;              // bytes
+        uint8_t* buf;               // IOMalloc'd copy, owned by the entry
+    };
+    v3d_batch m_v3d_queue[V3D_QUEUE_DEPTH];
+    uint32_t m_v3d_head, m_v3d_tail, m_v3d_count;   // FIFO indices
+    uint32_t m_v3d_inflight;                         // worker holds one popped entry
+    IOLock* m_v3d_lock;
+    thread_t m_v3d_thread;
+    volatile bool m_v3d_stop;
+    volatile bool m_v3d_thread_up;
+    bool v3dQueueStart();       // idempotent; lazy on first enqueue
+    void v3dQueueStop();        // stop worker, flush entries, join
+    void v3dWorker();           // thread body
+    // Enqueue a copy; waits (bounded) for space. Returns kIOReturnSuccess
+    // when the batch is owned by the queue.
+    IOReturn executeCommandsAsync(uint32_t context_id,
+                                  const void* bytes, uint32_t size);
+    // Drain barrier: waits until FIFO empty AND worker idle, bounded
+    // by timeout_ms. Returns kIOReturnTimeout on expiry.
+    IOReturn drain3D(uint32_t timeout_ms);
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
