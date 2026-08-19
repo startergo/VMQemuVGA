@@ -16,7 +16,7 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-19 night (FENCE ERA LANDED + VERIFIED — kext bf8d36a: DRM VIRTGPU_WAIT contract, 25× throughput, zero fallbacks/timeouts. Face white→BLACK = compositor now assembles+presents but its program fails: uLayerRects/uLayerTransform uniform mismatches = OBJECT-TABLE CROSSING between Gecko's two GL threads; carrier hypothesis = the u_thread.h TLS gate (plain-global current-context), gate CONFIRMED compiler-mandated (clang refuses TLS for macos10.6 even with -femulated-tls; Mesa deleted the pthread-TSD fallback) → next task = restore TSD in mapi. OMTC-off pref still set in user.js. Mesa ledger entry 21 has the arc. Entries below)
+Last updated: 2026-08-19 late (TSD RESTORATION LANDED AND VERIFIED cross-repo (Mesa 503d14cadde, dylib 19d3f756 on the fence-era boot): the object-table uniform-crossing family went to ZERO — the two-thread stomp was the carrier. Every transport-layer bug class of the day now closed with a verified fix: is_busy famine → fences; serialization → fences (25×); uniform crossing → pthread TSD. Frontier reduced to ONE item: the recorded page-context shader family (entry 18) vs the empty layer tree — frames still uniformly zero with the compositor's own program fixed. Full arc: Mesa ledger entries 20–21. Entries below)
 
 ---
 
