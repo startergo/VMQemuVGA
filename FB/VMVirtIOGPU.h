@@ -408,10 +408,14 @@ public:
      * the bytes — Mesa memsets its cbuf the moment submit_cmd returns.
      * ------------------------------------------------------------------ */
     #define V3D_QUEUE_DEPTH 64
+    #define V3D_BATCH_MAX_RES 96    /* DRM execbuffer scale; winsys sends
+                                     * the cbuf's full resource list */
     struct v3d_batch {
         uint32_t ctx_id;
         uint32_t size;              // bytes
         uint8_t* buf;               // IOMalloc'd copy, owned by the entry
+        uint32_t res_count;                       // fence handle list
+        uint32_t res_handles[V3D_BATCH_MAX_RES];
     };
     v3d_batch m_v3d_queue[V3D_QUEUE_DEPTH];
     uint32_t m_v3d_head, m_v3d_tail, m_v3d_count;   // FIFO indices
@@ -426,10 +430,66 @@ public:
     // Enqueue a copy; waits (bounded) for space. Returns kIOReturnSuccess
     // when the batch is owned by the queue.
     IOReturn executeCommandsAsync(uint32_t context_id,
-                                  const void* bytes, uint32_t size);
+                                  const void* bytes, uint32_t size,
+                                  const uint32_t* res_handles,
+                                  uint32_t res_count);
     // Drain barrier: waits until FIFO empty AND worker idle, bounded
     // by timeout_ms. Returns kIOReturnTimeout on expiry.
     IOReturn drain3D(uint32_t timeout_ms);
+
+    /* ------------------------------------------------------------------
+     * PER-RESOURCE FENCES (2026-08-19 — the DRM contract, Linux
+     * virtgpu_ioctl.c @ 3a0dd7ba). The drain barrier above is
+     * conservative: it can only say "everything is done" or "something
+     * isn't", never "THIS resource is ready" — the approximation
+     * behind both 2026-08-19 bugs (the is_busy famine: any in-flight
+     * batch read as busy for every resource; the serialization: every
+     * transfer waited out every client's work).
+     *
+     * Model, matching the reference:
+     *  - every batch and every transfer takes a device-global seq at
+     *    VIRTQUEUE-DISPATCH time (worker pop / transfer dispatch),
+     *    recording last_seq for each resource the caller listed
+     *    (DRM's execbuffer bo_handles equivalent — the winsys sends
+     *    the cbuf resource list with the submit);
+     *  - the device processes the controlq IN ORDER, so completions
+     *    arrive in seq order and done_seq advances by assignment;
+     *  - completion of command N of a context implies all prior
+     *    commands of that context completed (virglrenderer executes a
+     *    context's stream serially) — the transfer's response has
+     *    always been this primitive, which is why readbacks were
+     *    correct before fences existed;
+     *  - WAIT(handle): block until done_seq >= last_seq[handle], 15 s
+     *    bound (15*HZ in the reference); NOWAIT flag = test only.
+     *  - Transfers stop draining globally; the winsys waits the
+     *    resource before dispatching (identical shape to upstream
+     *    virgl's transfer path).
+     * ------------------------------------------------------------------ */
+    #define FENCE_TABLE_SIZE 4096          /* linear-probe on id; 32 KB */
+    #define FENCE_WAIT_MS   15000          /* 15*HZ */
+    #define FENCE_FLAG_NOWAIT 1u
+    struct fence_entry {
+        uint32_t id;                       // 0 = free
+        uint32_t pad;
+        uint64_t last_seq;
+    };
+    fence_entry m_fence_tbl[FENCE_TABLE_SIZE];
+    uint64_t m_fence_seq;                  // last assigned
+    uint64_t m_fence_done;                 // last completed (in-order)
+    IOLock* m_fence_lock;
+    // Assign the next seq (dispatch time, under the lock — assignment
+    // order == virtqueue order).
+    uint64_t fenceSeqNext();
+    // Record a resource as touched by seq.
+    void fenceTouch(uint32_t res_id, uint64_t seq);
+    // Mark seq complete (controlq responses arrive in order).
+    void fenceDone(uint64_t seq);
+    // The WAIT ioctl: scalar[0]=res, scalar[1]=flags. Returns
+    // kIOReturnSuccess when ready; kIOReturnTimeout when still busy
+    // after FENCE_WAIT_MS (or immediately under NOWAIT).
+    IOReturn fenceWait(uint32_t res_id, uint32_t flags);
+    // Drop a resource's entry (unref).
+    void fenceDrop(uint32_t res_id);
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);

@@ -104,6 +104,17 @@ bool CLASS::init(OSDictionary* properties)
     /* Async 3D submit queue (2026-08-19) — fields only; the worker
      * thread starts lazily on the first enqueue (v3dQueueStart). */
     m_v3d_lock = IOLockAlloc();
+
+    /* Per-resource fences (2026-08-19) — table zeroed; seq/done start
+     * at 0, first assignment is 1. */
+    m_fence_lock = IOLockAlloc();
+    m_fence_seq = 0;
+    m_fence_done = 0;
+    for (int i = 0; i < FENCE_TABLE_SIZE; i++) {
+        m_fence_tbl[i].id = 0;
+        m_fence_tbl[i].pad = 0;
+        m_fence_tbl[i].last_seq = 0;
+    }
     m_v3d_head = m_v3d_tail = m_v3d_count = m_v3d_inflight = 0;
     m_v3d_stop = false;
     m_v3d_thread_up = false;
@@ -114,7 +125,7 @@ bool CLASS::init(OSDictionary* properties)
     }
 
     return (m_contexts && m_resource_lock && m_context_lock && m_cursor_vq_lock
-            && m_v3d_lock);
+            && m_v3d_lock && m_fence_lock);
 }
 
 void CLASS::free()
@@ -676,6 +687,7 @@ void CLASS::stop(IOService* provider)
 
     v3dQueueStop();
     if (m_v3d_lock) { IOLockFree(m_v3d_lock); m_v3d_lock = nullptr; }
+    if (m_fence_lock) { IOLockFree(m_fence_lock); m_fence_lock = nullptr; }
 
     cleanupVirtIOGPU();
     
@@ -3529,6 +3541,14 @@ void CLASS::v3dWorker()
         IOLockUnlock(m_v3d_lock);
         if (!b.buf) { IOSleep(1); continue; }
 
+        /* FENCE (DRM model): dispatch time — assign the seq and touch
+         * every resource the caller listed with the submit. Assignment
+         * under the lock == virtqueue order; the controlq responds in
+         * order, so fenceDone below advances monotonically. */
+        uint64_t fseq = fenceSeqNext();
+        for (uint32_t i = 0; i < b.res_count && i < V3D_BATCH_MAX_RES; i++)
+            fenceTouch(b.res_handles[i], fseq);
+
         /* WORKER HEARTBEAT (2026-08-19): every batch completion logs
          * elapsed ms + queue depth, UNCAPPED. The capped success logs
          * (submit/transfer ≤20 each) made steady-state activity
@@ -3549,6 +3569,7 @@ void CLASS::v3dWorker()
         if (desc) {
             IOReturn ret = executeCommands(b.ctx_id, desc);
             uint64_t t_end = mach_absolute_time();
+            fenceDone(fseq);
             IOLog("VMVirtIOGPU: v3d batch done ctx=0x%x size=%u "
                   "ms=%llu q=%u ret=0x%x\n",
                   b.ctx_id, b.size,
@@ -3556,6 +3577,9 @@ void CLASS::v3dWorker()
                   qdepth_after_pop, ret);
             desc->release();
         } else {
+            /* Fence completes even on failure — waiters must not hang
+             * on a batch that will never run. */
+            fenceDone(fseq);
             IOLog("VMVirtIOGPU: v3d worker withBytes FAIL size=%u\n", b.size);
         }
         IOFree(b.buf, b.size);
@@ -3571,9 +3595,12 @@ void CLASS::v3dWorker()
 }
 
 IOReturn CLASS::executeCommandsAsync(uint32_t context_id,
-                                     const void* bytes, uint32_t size)
+                                     const void* bytes, uint32_t size,
+                                     const uint32_t* res_handles,
+                                     uint32_t res_count)
 {
     if (!bytes || size == 0 || size > 1024 * 1024) return kIOReturnBadArgument;
+    if (res_count > V3D_BATCH_MAX_RES) res_count = V3D_BATCH_MAX_RES;
     if (!v3dQueueStart()) return kIOReturnNoResources;
 
     uint8_t* copy = (uint8_t*)IOMalloc(size);
@@ -3589,6 +3616,9 @@ IOReturn CLASS::executeCommandsAsync(uint32_t context_id,
             b->ctx_id = context_id;
             b->size = size;
             b->buf = copy;
+            b->res_count = res_count;
+            for (uint32_t i = 0; i < res_count; i++)
+                b->res_handles[i] = res_handles ? res_handles[i] : 0;
             m_v3d_tail = (m_v3d_tail + 1) % V3D_QUEUE_DEPTH;
             m_v3d_count++;
             IOLockUnlock(m_v3d_lock);
@@ -3616,6 +3646,91 @@ IOReturn CLASS::drain3D(uint32_t timeout_ms)
     IOLog("VMVirtIOGPU: drain3D TIMEOUT after %u ms "
           "(count=%u inflight=%u)\n", timeout_ms, m_v3d_count, m_v3d_inflight);
     return kIOReturnTimeout;
+}
+
+// ---- Per-resource fences (DRM virtgpu model — see header block) -------------
+
+uint64_t CLASS::fenceSeqNext()
+{
+    IOLockLock(m_fence_lock);
+    uint64_t s = ++m_fence_seq;
+    IOLockUnlock(m_fence_lock);
+    return s;
+}
+
+void CLASS::fenceTouch(uint32_t res_id, uint64_t seq)
+{
+    if (res_id == 0) return;
+    IOLockLock(m_fence_lock);
+    uint32_t h = res_id % FENCE_TABLE_SIZE;
+    for (uint32_t i = 0; i < FENCE_TABLE_SIZE; i++) {
+        uint32_t k = (h + i) % FENCE_TABLE_SIZE;
+        if (m_fence_tbl[k].id == res_id) {
+            if (seq > m_fence_tbl[k].last_seq) m_fence_tbl[k].last_seq = seq;
+            break;
+        }
+        if (m_fence_tbl[k].id == 0) {
+            m_fence_tbl[k].id = res_id;
+            m_fence_tbl[k].last_seq = seq;
+            break;
+        }
+    }
+    IOLockUnlock(m_fence_lock);
+}
+
+void CLASS::fenceDone(uint64_t seq)
+{
+    /* Controlq responses arrive in submission order; assignment and
+     * dispatch share m_fence_lock, so completion assignment here is
+     * monotonic. Only advance — never regress on a late stale seq. */
+    IOLockLock(m_fence_lock);
+    if (seq > m_fence_done) m_fence_done = seq;
+    IOLockUnlock(m_fence_lock);
+}
+
+IOReturn CLASS::fenceWait(uint32_t res_id, uint32_t flags)
+{
+    uint64_t need = 0;
+    IOLockLock(m_fence_lock);
+    uint32_t h = res_id % FENCE_TABLE_SIZE;
+    for (uint32_t i = 0; i < FENCE_TABLE_SIZE; i++) {
+        uint32_t k = (h + i) % FENCE_TABLE_SIZE;
+        if (m_fence_tbl[k].id == res_id) { need = m_fence_tbl[k].last_seq; break; }
+        if (m_fence_tbl[k].id == 0) break;             // unknown → idle
+    }
+    IOLockUnlock(m_fence_lock);
+
+    if (need <= m_fence_done) return kIOReturnSuccess; // signaled
+    if (flags & FENCE_FLAG_NOWAIT) return kIOReturnTimeout;
+
+    for (uint32_t i = 0; i < FENCE_WAIT_MS; i++) {     // 15 s, 15*HZ
+        IOSleep(1);
+        IOLockLock(m_fence_lock);
+        bool ready = (need <= m_fence_done);
+        IOLockUnlock(m_fence_lock);
+        if (ready) return kIOReturnSuccess;
+    }
+    IOLog("VMVirtIOGPU: fenceWait TIMEOUT res=%u need=%llu done=%llu\n",
+          res_id, (unsigned long long)need,
+          (unsigned long long)m_fence_done);
+    return kIOReturnTimeout;
+}
+
+void CLASS::fenceDrop(uint32_t res_id)
+{
+    if (res_id == 0) return;
+    IOLockLock(m_fence_lock);
+    uint32_t h = res_id % FENCE_TABLE_SIZE;
+    for (uint32_t i = 0; i < FENCE_TABLE_SIZE; i++) {
+        uint32_t k = (h + i) % FENCE_TABLE_SIZE;
+        if (m_fence_tbl[k].id == res_id) {
+            m_fence_tbl[k].id = 0;
+            m_fence_tbl[k].last_seq = 0;
+            break;
+        }
+        if (m_fence_tbl[k].id == 0) break;
+    }
+    IOLockUnlock(m_fence_lock);
 }
 
 IOReturn CLASS::setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height)
@@ -7196,14 +7311,15 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                           w_offset);
                     return kIOReturnUnsupported;
                 }
-                /* Transfers are the ordering boundary for the async
-                 * submit queue — drain before touching the backing. */
-                {
-                    IOReturn dret = m_gpu_device->drain3D(120000);
-                    if (dret != kIOReturnSuccess)
-                        IOLog("VMVirtIOGPUUserClient: 0x3008 drain TIMEOUT\n");
-                }
-                return m_gpu_device->transferToHost3D((uint32_t)args->scalarInput[0],  // resourceId
+                /* FENCE (DRM model): the winsys waits this resource
+                 * before dispatching (0x600B) — no global drain here.
+                 * The transfer itself takes a seq so later waiters can
+                 * see it complete (its response implies all prior
+                 * same-context work done). */
+                uint64_t fseq3008 = m_gpu_device->fenceSeqNext();
+                m_gpu_device->fenceTouch((uint32_t)args->scalarInput[0], fseq3008);
+                IOReturn ret3008 =
+                m_gpu_device->transferToHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                       (uint32_t)args->scalarInput[1],  // level
                                                       bx, by,
                                                       (uint32_t)args->scalarInput[4],  // z
@@ -7213,6 +7329,8 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                                                       w_stride,                        // stride
                                                       w_lstride,                       // layer_stride
                                                       (args->scalarInputCount >= 12) ? (uint32_t)args->scalarInput[11] : 0);// offset
+                m_gpu_device->fenceDone(fseq3008);
+                return ret3008;
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferToHost3D\n");
             return kIOReturnBadArgument;
@@ -7288,15 +7406,15 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                         return kIOReturnUnsupported;
                     }
                     /* args->scalarInput is const — pass the (possibly
-                     * clamped) box via locals. Transfers order against
-                     * the async submit queue — drain first (the GET's
-                     * data is read from the backing on return). */
-                    {
-                        IOReturn dret = m_gpu_device->drain3D(120000);
-                        if (dret != kIOReturnSuccess)
-                            IOLog("VMVirtIOGPUUserClient: 0x3009 drain TIMEOUT\n");
-                    }
-                    return m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
+                     * clamped) box via locals. FENCE model: the winsys
+                     * waited this resource before dispatching (0x600B);
+                     * the transfer takes a seq and completes it — its
+                     * response implies all prior same-context work is
+                     * done, so the backing read on return is ordered. */
+                    uint64_t fseq3009 = m_gpu_device->fenceSeqNext();
+                    m_gpu_device->fenceTouch((uint32_t)args->scalarInput[0], fseq3009);
+                    IOReturn ret3009 =
+                    m_gpu_device->transferFromHost3D((uint32_t)args->scalarInput[0],  // resourceId
                                                             (uint32_t)args->scalarInput[1],  // level
                                                             bx, by,
                                                             (uint32_t)args->scalarInput[4],  // z
@@ -7304,6 +7422,8 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                                                             (uint32_t)args->scalarInput[7],  // depth
                                                             ctx_id,                          // ctx_id
                                                             w_stride, w_lstride, w_offset);
+                    m_gpu_device->fenceDone(fseq3009);
+                    return ret3009;
                 }
             }
             IOLog("VMVirtIOGPUUserClient: Invalid parameters for transferFromHost3D\n");
@@ -7578,16 +7698,40 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             return kIOReturnBadArgument;
         }
 
-        case 0x600A: { // drain3D — ordering barrier for the async submit queue
-            /* scalarInput[0] = timeout_ms (default 120000). The winsys
-             * calls this from resource_wait; transfers call it
-             * internally. Returns kIOReturnTimeout if the host has not
-             * consumed every queued batch within the budget. */
+        case 0x600A: { // drain3D — RETIRED ordering barrier (fence era);
+            // kept for winsys compatibility probes. The fence-era winsys
+            // uses 0x600B; a call here still works (waits everything out)
+            // but should not appear in steady state.
             uint32_t timeout_ms = 120000;
             if (args->scalarInputCount >= 1 && args->scalarInput)
                 timeout_ms = (uint32_t)args->scalarInput[0];
             if (!m_gpu_device) return kIOReturnNotReady;
+            {
+                static uint32_t s_drain_calls = 0;
+                if (s_drain_calls < 8) {
+                    s_drain_calls++;
+                    IOLog("VMVirtIOGPUUserClient: 0x600A drain called in "
+                          "fence era (count=%u) — winsys predates fences?\n",
+                          s_drain_calls);
+                }
+            }
             return m_gpu_device->drain3D(timeout_ms);
+        }
+
+        case 0x600B: { // fenceWait — the DRM VIRTGPU_WAIT contract
+            /* scalarInput[0] = resource handle, scalarInput[1] = flags
+             * (bit0 = NOWAIT). Blocking: up to 15 s (15*HZ in the
+             * reference) or until the resource's last fence completes.
+             * Returns kIOReturnSuccess when ready (including unknown
+             * resource = idle), kIOReturnTimeout when still busy. */
+            if (args->scalarInputCount >= 1 && args->scalarInput) {
+                uint32_t res = (uint32_t)args->scalarInput[0];
+                uint32_t flags = (args->scalarInputCount >= 2)
+                                 ? (uint32_t)args->scalarInput[1] : 0;
+                if (!m_gpu_device) return kIOReturnNotReady;
+                return m_gpu_device->fenceWait(res, flags);
+            }
+            return kIOReturnBadArgument;
         }
 
         default:
@@ -9051,6 +9195,7 @@ IOReturn VMVirtIOGPUUserClient::resourceUnref(uint32_t resource_id)
         removeUserBacking(resource_id);
     }
     dropUserResourceGeom(resource_id);
+    m_gpu_device->fenceDrop(resource_id);   // fence table entry dies with the resource (GEM lifetime)
 
     struct virtio_gpu_resource_unref cmd = {};
     cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
@@ -9189,6 +9334,34 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
     if (!m_gpu_device->supports3D()) return kIOReturnUnsupported;
     if (size > 1024 * 1024) return kIOReturnBadArgument;  // 1 MB safety cap
 
+    /* FENCE FRAME (2026-08-19, DRM execbuffer model): the winsys may
+     * prefix the blob with the command buffer's resource-handle list —
+     * [u32 0x31454346 'FCE1'][u32 cres][u32 handles × cres][blob].
+     * The kext records last_seq for each handle at dispatch time so
+     * 0x600B WAIT can express per-resource readiness (Linux: execbuffer
+     * bo_handles → dma_resv). No magic = legacy raw blob, no handles
+     * (fences then never gate that batch's resources — same semantics
+     * as the pre-fence era, still correct because the winsys falls back
+     * to resource_wait only when handles were supplied). */
+    const uint32_t* sub_handles = NULL;
+    uint32_t sub_count = 0;
+    {
+        const uint32_t* dw = (const uint32_t*)commands;
+        if (size >= 8 && dw[0] == 0x31454346u) {
+            uint32_t cres = dw[1];
+            if (cres <= 256 && (uint64_t)(8 + (uint64_t)cres * 4) <= size) {
+                sub_count = cres;
+                sub_handles = &dw[2];
+                commands = (const void*)((const uint8_t*)commands + 8 + cres * 4);
+                size -= (uint32_t)(8 + cres * 4);
+            } else {
+                IOLog("VMVirtIOGPUUserClient: FENCE FRAME BAD cres=%u "
+                      "size=%u — treating as legacy blob\n", cres, size);
+            }
+        }
+    }
+    if (!commands || size == 0) return kIOReturnBadArgument;
+
     /* STREAM IDENTIFIER (2026-08-18) — PARSE-ONLY scan for the
      * oversized-transfer head. The attach/transfer clamps cover the
      * kext's explicit selectors, but the host debug log shows the
@@ -9299,12 +9472,12 @@ IOReturn VMVirtIOGPUUserClient::submitVirglCommandsEx(uint32_t ctx_id,
      * submits serially with an unbounded-but-finite poll (cold shader
      * compiles measured 1 s quiet / >10 s loaded; every fixed budget
      * dropped compile batches and killed the compositor's programs).
-     * Ordering is enforced by drain3D: the synchronous transfers
-     * (0x3008/0x3009) drain before dispatching, and the winsys drains
-     * at its resource_wait points (0x600A). The hex-dump path above
-     * still sees the raw bytes pre-enqueue. */
+     * Ordering since the fence era: the winsys sends the cbuf resource
+     * list (FCE1 frame above) and waits per-resource via 0x600B; the
+     * global drain is retired. */
     cmd_desc->release();   /* unused — the queue makes its own copy */
-    IOReturn ret = m_gpu_device->executeCommandsAsync(ctx_id, commands, size);
+    IOReturn ret = m_gpu_device->executeCommandsAsync(ctx_id, commands, size,
+                                                      sub_handles, sub_count);
 
     if (ret != kIOReturnSuccess) {
         IOLog("VMVirtIOGPUUserClient::submitVirglCommandsEx: ctx=0x%x size=%u "
