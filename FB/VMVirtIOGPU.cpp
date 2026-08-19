@@ -3443,7 +3443,7 @@ IOReturn CLASS::executeCommands(uint32_t context_id, IOMemoryDescriptor* command
     // and dropped batches fed the churn spiral that preceded the
     // 2026-08-18 device wedge).
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd->hdr, total_size, &resp, sizeof(resp), 600);
+    IOReturn ret = submitCommand(&cmd->hdr, total_size, &resp, sizeof(resp), 6000);
     
     // Cleanup
     IOFree(cmd, total_size);
@@ -9243,7 +9243,7 @@ IOReturn CLASS::transferToHost3D(uint32_t resource_id, uint32_t level,
     // Submit transfer to host 3D command — extended poll budget: 3D-class
     // work, see submitCommand's poll_iters note.
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 600);
+    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 6000);
 
     if (ret != kIOReturnSuccess) {
         IOLog("VMVirtIOGPU::transferToHost3D: Command failed: 0x%x\n", ret);
@@ -9308,7 +9308,7 @@ IOReturn CLASS::transferFromHost3D(uint32_t resource_id, uint32_t level,
     // Submit transfer from host 3D command — extended poll budget: 3D-class
     // work, see submitCommand's poll_iters note.
     struct virtio_gpu_ctrl_hdr resp = {};
-    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 600);
+    IOReturn ret = submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 6000);
     
     if (ret != kIOReturnSuccess) {
         IOLog("VMVirtIOGPU::transferFromHost3D: Command failed: 0x%x\n", ret);
