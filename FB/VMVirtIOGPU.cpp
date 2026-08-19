@@ -3529,15 +3529,31 @@ void CLASS::v3dWorker()
         IOLockUnlock(m_v3d_lock);
         if (!b.buf) { IOSleep(1); continue; }
 
+        /* WORKER HEARTBEAT (2026-08-19): every batch completion logs
+         * elapsed ms + queue depth, UNCAPPED. The capped success logs
+         * (submit/transfer ≤20 each) made steady-state activity
+         * invisible twice today; minutes-long gaps between work bursts
+         * could not be attributed (worker-busy vs idle-park). This line
+         * is the gap anatomy: ms large = host chewing one batch
+         * (compile); queue large = producer backpressure; silence =
+         * nobody submitting. mach_absolute_time is ns on this target. */
+        uint64_t t_start = mach_absolute_time();
+        uint32_t qdepth_after_pop = 0;
+        IOLockLock(m_v3d_lock);
+        qdepth_after_pop = m_v3d_count;
+        IOLockUnlock(m_v3d_lock);
+
         /* Submit synchronously with the unbounded-but-finite budget. */
         IOBufferMemoryDescriptor* desc = IOBufferMemoryDescriptor::withBytes(
             b.buf, b.size, kIODirectionOut);
         if (desc) {
             IOReturn ret = executeCommands(b.ctx_id, desc);
-            if (ret != kIOReturnSuccess) {
-                IOLog("VMVirtIOGPU: v3d worker submit FAIL ctx=0x%x "
-                      "size=%u ret=0x%x\n", b.ctx_id, b.size, ret);
-            }
+            uint64_t t_end = mach_absolute_time();
+            IOLog("VMVirtIOGPU: v3d batch done ctx=0x%x size=%u "
+                  "ms=%llu q=%u ret=0x%x\n",
+                  b.ctx_id, b.size,
+                  (unsigned long long)((t_end - t_start) / 1000000ULL),
+                  qdepth_after_pop, ret);
             desc->release();
         } else {
             IOLog("VMVirtIOGPU: v3d worker withBytes FAIL size=%u\n", b.size);
