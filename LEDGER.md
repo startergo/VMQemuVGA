@@ -20,6 +20,61 @@ Last updated: 2026-08-17 (session: the compositor gate found+fixed in Mesa-VirGL
 
 ---
 
+## 2026-08-18 (session) — CANVAS/WEBGL ROOT CAUSE PINS A KEXT DEFECT: 0x3008/0x3009 write stride=0/offset=0 on the wire
+
+Full chain and evidence live in the Mesa-VirGL ledger (entry 19, ROOT
+CAUSE FOUND). Kext-relevant facts:
+
+- **The bug:** our 0x3008/0x3009 constructors hardcode
+  `stride=0 layer_stride=0 offset=0` in the virtio-gpu transfer
+  commands (visible in our own log: "0x3009 wire: ... stride=0
+  layer_stride=0 offset=0" on every transfer). vrend places sub-box
+  data at `y*stride + x*bpp` → stride 0 collapses every row toward
+  offset 0. Full-surface-at-origin transfers take a sequential host
+  path that is correct — which is why the 2D desktop (full-window
+  refreshes at 0,0) and chrome presents always worked while every
+  offset read / partial upload silently corrupts. This is the
+  WebGL-canvas, webgltest-pixel, and offscreen-killtest failure, one
+  bug.
+- **Proof geometry (offscreen_min, guest /Users/sl/):** texture
+  cleared magenta; probe(0,0)=255,0,255,255 while (1,0),(0,1),(10,0),
+  (0,10),(399,299),(200,150) all read 0,0,0,0; a full 400x300
+  readback returns 120000/120000 magenta. Guest-side offset math
+  verified upstream-correct (virgl_resource.c:932-933,551).
+- **FIX (pre-registered, not built):** 0x3008/0x3009 selectors accept
+  stride/layer_stride/offset (extend scalar inputs 9→12, winsys side
+  sends trans->base.stride / trans->l_stride / trans->offset) and put
+  them on the wire. Deploy kext + libOSMesa together; verify with
+  offscreen_min (all probes magenta) then webgltest.html in-browser
+  (canvas light blue — the first canvas content ever).
+- **Corrections banked:** the stream identifier (ca69ac4) parses the
+  virgl header with the WRONG layout — assumed len<<20|cmd, actual
+  cmd|(obj<<8)|(len<<16) (virgl_protocol.h:152, verified against live
+  streams) — its zero-hit scan results are meaningless; fix the parser
+  when next touching that code. The kext's submit hex dump (first 20
+  dwords × first 20 calls) truncated exactly before the CLEAR in the
+  minimal repro and produced a false "clear never submitted" reading —
+  the winsys-side VIRGL_IOKIT_DUMP (full stream, env-gated) is now the
+  stream source of truth.
+- **FIX LANDED AND VERIFIED (a378b9b + Mesa 0afb1aa, one boot):**
+  stage 1 offscreen_min all-probes magenta, wire `stride=1600
+  offset=479996` for box (399,299) — exact y*stride+x*bpp math;
+  stage 2 user verdicts verbatim: **"now is blue!"** (webgltest canvas
+  presents its clear colour — first canvas content ever) and **"No
+  more double tab corruption!"** (the remaining duplication artifact
+  class died with the same fix — carrier was misplaced sub-box
+  updates, not Gecko popup rendering; Mesa ledger entry 19 has the
+  attribution rewrite). Browser fully interactive ("I can type
+  about:config in the URL!"). Transient startup white once (~40 s) —
+  recorded, watch for recurrence.
+- Also this session: 4-vCPU spinlock-timeout panic
+  (fontd/_kqueue_scan, owner stalled in _lapic_interrupt→
+  AppleACPIPlatform, no VMQemuVGA frames) interrupted run 1; user
+  judged it unrelated to the test (load-correlated firing only); UTM
+  debug log truncated (sparse) to keep host-side greps usable.
+
+---
+
 ## 2026-08-17 — cross-repo session: compositor gate fixed (Mesa baf08516); kext-side data; typing cliff
 
 **Headline work lives in the Mesa-VirGL ledger, entry 18** (commit
