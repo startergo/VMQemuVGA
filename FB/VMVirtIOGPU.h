@@ -581,7 +581,16 @@ private:
      * compositor SIGSEGV at 0xb5). Unref frees slots correctly
      * (removeUserBacking); the limit was simply sized for a smaller
      * era. Entry ≈16 bytes → 512 = 8 KB per client. */
-    #define MAX_USER_BACKINGS 512
+    /* 8192 (2026-08-18, SECOND raise — the aquarium page saturated 512
+     * with 1,730 table-full failures in one load: every past-512 attach
+     * fails → Mesa GL_OUT_OF_MEMORY → page programs die → black stuck
+     * scene. First raise was 256→512 for a fresh-boot browser. Entry
+     * ≈16 bytes → 8192 = 128 KB per client. This is the stopgap; the
+     * structural fix — refcounted per-resource lifetime (GEM-style, as
+     * the Linux virtio-gpu driver does; no global pool to saturate) —
+     * is queued as its own design change. Linear find/add scans stay
+     * affordable at this size (host-side CPU, single client). */
+    #define MAX_USER_BACKINGS 8192
     struct user_backing_entry {
         uint32_t resource_id;       // 0 = free slot
         IOMemoryDescriptor* desc;
