@@ -16,7 +16,290 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-19 (canvas WEBGL transport+clamp+store+wedge arc closed through the morning: budget escalation proves no fixed poll survives host-load variance — async submit+fence pre-registered as the durable design; false-alarm boot failure resolved to host mDNS; sparse-frame mechanism closed. Prior: compositor gate fixed in Mesa-VirGL baf08516 — GL chrome restored; 2D refresh workavg degradation datum 3.4→15 ms under host contention; typing-cliff frontier; entry below)
+Last updated: 2026-08-19 night (FENCE ERA LANDED + VERIFIED — kext bf8d36a: DRM VIRTGPU_WAIT contract, 25× throughput, zero fallbacks/timeouts. Face white→BLACK = compositor now assembles+presents but its program fails: uLayerRects/uLayerTransform uniform mismatches = OBJECT-TABLE CROSSING between Gecko's two GL threads; carrier hypothesis = the u_thread.h TLS gate (plain-global current-context), gate CONFIRMED compiler-mandated (clang refuses TLS for macos10.6 even with -femulated-tls; Mesa deleted the pthread-TSD fallback) → next task = restore TSD in mapi. OMTC-off pref still set in user.js. Mesa ledger entry 21 has the arc. Entries below)
+
+---
+
+## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
+
+**The operator-driven pivot ("there is no storm — look for errors, look
+for the debug log") was correct on all counts:**
+- **Heartbeat kext** `57c98d3` (b492386f binary): 1,354 batches, 0–15 ms
+  each, q=0 always, ret=0x0 always, quiet host. NO STORM. All
+  compile-cost and starvation theories dead.
+- **The errors were in stderr all along** (my earlier uniq-filter buried
+  them — instrument lesson recorded): `glFramebufferTexture2D(non-
+  existent texture 2)`, `glReadPixels(incomplete framebuffer)`,
+  `glUseProgram GL_INVALID_VALUE` + the recorded page-shader family.
+- **Dump-on-skip instrument** (Mesa 7600c38): about:blank frames are
+  UNIFORMLY ZERO (8 BMPs, nonzero_bytes=16 = header only) — the
+  empty-guard is INNOCENT; the compositor composes literally nothing.
+- **Compositor gate: OPEN** — PIXFMT_STRIP fires ×2 every run
+  (08-17's gate fix works). **CGL sharing: dormant** — share=0x0
+  observed at context creation (matches entry 19's provider read);
+  sharelist plumbing now correct anyway (7600c38), falsified as the
+  white carrier by observation.
+- **is_busy famine: FIXED** (a88c72eb4b4): uploads 34→433+ puts with
+  content-sized boxes, verified boot-free on the async kext.
+- **Linux reference** (virtgpu_ioctl.c @ 3a0dd7ba, operator-directed):
+  WAIT is per-resource (gem handle → dma_resv, 15 s, NOWAIT flag);
+  transfers are async-with-fence (command carries fence, ioctl returns,
+  sync at WAIT); every submit/transfer carries a fence. Our global
+  drain + global busy probe cannot express per-resource readiness —
+  both of the day's bugs came from that approximation.
+
+**Elimination table for the white face (empty compositor output):**
+gate OPEN; sharing dormant; uploads flowing; worker fast; frames zero.
+Remaining candidates: Gecko delivers an EMPTY layer tree (client-side
+decision — MOZ_DUMP_PAINTING on the next launch answers from Gecko's
+side, zero code), or the compositor's draws no-op (program/FBO
+assembly — the stderr error family, attribution pending: about:blank
+showed NO framebuffer errors yet still-zero frames, weakening the
+compositor-FBO reading).
+
+**FENCE DESIGN (chartered, matching virtgpu_ioctl.c — the active task):**
+- Completion primitive: virglrenderer executes a context's stream
+  serially ⇒ the device response to command N of a context implies all
+  prior commands of that context complete. The transfer's response is
+  already this primitive (why readbacks were always correct).
+- KEXT: device-global seq; every 0x6008 batch (at worker pop) and every
+  0x3008/0x3009 (at dispatch) takes one; per-resource `last_seq` table
+  (extend the existing 1024-entry geometry table); `done_seq` advances
+  on each completion; new 0x600B WAIT selector: scalar[0]=res,
+  scalar[1]=flags(NOWAIT) — block until done_seq ≥ last_seq[res], 15 s
+  bound, NOWAIT = test → real is_busy. Remove the global
+  drain-before-transfer (virtqueue order + WAIT(res) give correctness).
+- WINSYS: submit_cmd already has the resource list per cbuf
+  (virgl_iokit_add_res accumulates res_bo[0..cres) — DRM-model port);
+  append cres handles to the 0x6008 input; resource_wait → 0x600B
+  blocking; resource_is_busy → 0x600B NOWAIT (retires the return-false
+  interim); transfer_put/get wait(res) instead of global drain.
+- Deploy as ONE pair, one boot, heartbeat as the verifier.
+
+**FENCE ERA LANDED AND BOOT-VERIFIED (17:08–17:16, the DRM contract —
+kext `bf8d36a` (binary 252700bd) + winsys `c462bdbb` (dylib 3196d235),
+one pair, one boot):**
+- Implemented: device-global seq at virtqueue-dispatch time; per-resource
+  last_seq (4096-entry table) fed by the FCE1-framed handle list each
+  submit carries (execbuffer bo_handles equivalent; 96-handle cap both
+  sides, truncation logs); done_seq advances per response (controlq
+  responds in order); 0x600B WAIT (15 s block / NOWAIT test =
+  dma_resv_wait_timeout / test_signaled); transfers fence themselves;
+  global drain retired (0x600A logs if ever called); unref drops the
+  entry. Both 2026-08-19 bugs are now structurally impossible (the
+  global busy probe and the global drain no longer exist).
+- Boot: clean, 2D 54.9 Hz. Browser run: **70,922 batches in ~3 min
+  (~400/s vs ~15/s pre-fence — 25×)**, batch times 0–3 ms, q=0,
+  **zero drain-fallback calls, zero fence timeouts**, wall mean
+  43→18 ms across windows. Throughput and correctness predictions
+  both landed.
+- **Window STILL WHITE — as pre-registered: fences are the sync model,
+  not the layer-tree carrier.** The empty-layer-tree item is now fully
+  isolated: frames uniformly zero (dump evidence), gate open, uploads
+  flowing, pipeline fast, fences correct — AND the 14:40 softpipe run
+  (no virgl, no kext 3D, pure CPU Mesa) showed the SAME empty face ⇒
+  the carrier is UPSTREAM of the entire transport: the Gecko↔substitute
+  contract, where the client side never delivers layers to ANY
+  compositor backend. Transport stack exonerated end-to-end.
+- NEXT (the one remaining frontier for a rendering browser):
+  (a) Gecko-side layer logging (MOZ_LOG=LayerManager / gfx critical
+  notes; MOZ_DUMP_PAINTING produced ZERO output this run — itself a
+  datum: nothing paints through the dumpable paths);
+  (b) the substitute's context/view contract vs the recorded
+  "first launch after reboot composites, later launches fail" law;
+  (c) the recorded page-error family (glUseProgram INVALID_VALUE,
+  non-existent texture 2, incomplete framebuffer) re-examined at the
+  STATE-TRACKER level (Mesa st / Gecko glue), not the transport.
+
+**Guest state at session end:** fence kext 252700bd installed+booted;
+subst = 3196d235 (fences) + substitute 2dea3581 (sharelist+dumps);
+browser left running; /tmp/pf_fence.log carries the fence-era run;
+fish kext preserved at /tmp/VMQemuVGA_fish.kext.
+
+---
+
+## 2026-08-19 (async-submit era boot — PRE-REGISTERED before deploy)
+
+**The change (one variable, deployed as an inseparable pair):** kext
+`45d538e` (0x6008 → enqueue-only; one device-level kernel worker drains a
+64-deep FIFO serially through executeCommands with poll 100000 = hang
+detector, not deadline; new 0x600A drain3D(timeout); 0x3008/0x3009 drain
+first) + Mesa winsys `faea295` (transfer_put/get call drain; resource_wait
+IS drain; resource_is_busy = 1 ms drain probe). Inseparable because the
+old winsys assumed sync submit (submit-return = host consumed); against
+the new kext it would read/write backings while batches sit in the FIFO.
+Old kext + new winsys is also broken (0x600A → unsupported → drains are
+no-ops; ordering silently lost). Only the pair is valid.
+
+**Fresh build artifacts:** kext md5 `38fcfe691eb8908d49b70992713788be`
+(CFBundleVersion 8.0.0d82), built 2026-08-19 ~13:1x from 45d538e (clean
+tree). Guest pre-state at deploy: kext md5 `dd5d324da6a4146ab747d810fcc3507c`
+(presumably the 5e5029e poll-6000 build that rendered aquarium; the local
+copy was overwritten, so commit attribution of dd5d324d is NOT verified),
+subst at `/Users/sl/subst` dated Aug 18 23:44 (fish-run era). Guest
+rebooted 13:08 before this session's deploy — pre-existing state, not a
+symptom of anything here.
+
+**Predictions (stated before the boot):**
+1. **Boot:** kext links and loads. The boot-risk symbol is
+   `kernel_thread_start` — attributed to the com.apple.kpi.kern set by
+   header/MacKernelSDK read, NOT yet by boot; boot is the arbiter
+   (kextutil -n -t cannot fully vouch, the 0xdc008016 lesson). If kxld
+   refuses: recover via slclean, `git revert 45d538e`-equivalent (rebuild
+   from 5e5029e), redeploy. A boot failure with the 0xdc008016 signature =
+   kernel_thread_start outside the 10.6 KPI, falsifying the header read.
+2. **Worker start is lazy:** "v3d async submit worker running" appears on
+   FIRST 3D submit, not at boot. Absence at boot is not a failure.
+3. **The eliminated class:** `0xe00002d6` submit timeouts ≈ 0 across
+   browser cold compiles incl. under host load; the white-page face
+   (dropped compile batches killing compositor programs) must not recur.
+   Aquarium should render with Mesa error counts comparable to the 6000
+   fish-run (28-29).
+4. **New failure faces to watch (each with its exact log string):**
+   "v3d queue FULL for 120s" (host wedged under backpressure),
+   "drain3D TIMEOUT after %u ms (count=%u inflight=%u)" (record the
+   count/inflight values — they separate queue-backlog from
+   one-stuck-submit), "v3d worker submit FAIL ctx=0x%x".
+5. **2D untouched:** refresh workavg ~3-4 ms, ~45-48 Hz on a quiet host
+   (the worker path never runs for 2D).
+6. **Falsifier for "async took":** if `0xe00002d6` still appears while
+   adjacent drain3D probes report count=0 inflight=0, the failing submit
+   is NOT going through the worker — some caller still reaches
+   executeCommands directly. Check submitVirglCommandsEx paths first.
+7. **Latency face (new, by design):** every 0x3008/0x3009 and every
+   resource_wait now blocks until ALL queued batches complete
+   (conservative barrier). The browser does ~2 full-frame 0x3009 per
+   composite → composite cost moves from submit to drain. If the guest
+   UI stalls (U-state) with no kernel errors, suspect the drain holding
+   under a slow host — the 120 s bound is the ceiling, and that is the
+   trade bought for never dropping a compile.
+
+**Not in this boot (unchanged, still open):** WebGL1-page correctness
+(texture-target mismatch storm, Mesa ledger), stream-identifier parser
+wrong header layout (ca69ac4 correction), shim dump-on-skip instrument,
+mirror hunt (parked), UTM debug-log growth.
+
+**RESULTS (same day, ~13:40–14:30):**
+- **P1 CONFIRMED** — boot clean, zero kxld/link/panic lines in the new
+  boot's kernel.log; kext started 13:40:23; `kernel_thread_start` passed
+  the boot arbiter. kextutil -n -t on the guest pre-boot showed only the
+  expected /tmp-ownership complaints. Cache note: `kextcache -system-caches`
+  wrote `Startup/Extensions.mkext` 9,800,503 B (mtime trails kextcache's
+  exit — the write is asynchronous) and **no kernelcache**; mkextunpack
+  extraction shows **VMQemuVGA is NOT in the mkext at all** → kernel
+  loaded from /S/L/E by necessity (cacheless-equivalent; the new binary
+  is the only copy anywhere — by-elimination attribution is sound).
+- **P2 CONFIRMED** — "v3d async submit worker running" at 13:57:47, on
+  the first 3D submit, lazy as designed (kernel.log line 3738).
+- **P3 CONFIRMED at the kernel** — through browser startup's compile
+  storm: `0xe00002d6` count 0, "queue FULL" 0, "drain3D TIMEOUT" 0,
+  "worker submit FAIL" 0; 92 `resp_type=0x1100` completions in the 3D
+  era; transfers both directions (10 toHost + 19 fromHost in the capped
+  window). **P5 CONFIRMED** — 2D at 46.0–54.9 Hz, workavg 2.4–3.5 ms,
+  for the whole session incl. under 3D load.
+- **P7 LANDED (the white window):** browser launched 13:56:15, first 3D
+  at 13:57:47, window opened WHITE ~13:58 and stayed white ≥ 20 guest-min
+  with NO chrome. `sample` of pid 397 (3 captures, 14:01:54 / 14:08:43 /
+  14:13:55 guest) shows both threads of the recorded face:
+  main thread in `SendFlushRendering → PR_WaitCondVar`;
+  Compositor thread in `RecvFlushRendering → CompositeToTarget →
+  CompositorOGL::EndFrame → GLContextCGL::SwapBuffers →
+  shim_flushBuffer(+3505/+2910) → _mesa_ReadPixels / st_glFinish →
+  st_manager_flush_frontbuffer → virgl_resource_transfer_map →
+  {virgl_iokit_resource_wait (0x600A) | virgl_iokit_transfer_get (0x3009)}
+  → IOConnectCallMethod → mach_msg_trap`. Samples split ~50/50 between
+  resource_wait and transfer_get across captures — the compositor
+  PROGRESSES through readbacks (stack moves: ReadPixels phase →
+  flush_front phase → back), i.e. NOT a single stuck call: each readback
+  carries the worker's full submit latency (drain semantics), and the
+  shim's present path does MULTIPLE full-frame readbacks per flushBuffer.
+  Same two-thread face as the recorded 2026-08-13 deadlock
+  (cgl_shim.mm:672-687) but the block point is kernel round-trips, not
+  [view bounds]. Related recorded class: "transient startup white (~40 s)"
+  — this one is 30× longer and counting.
+- **Amplifier, killed:** host load 7.7–9.5 with mediaanalysisd at 146–166%
+  (same daemon as the morning arc). `killall`/`kill -9` respawn instantly
+  via launchd; `launchctl bootout gui/$(id -u)/com.apple.mediaanalysisd`
+  stops it (unprivileged). spotlightknowledged 66% + mdworker 48%
+  resisted bootout and kept chewing; sudo mdutil needs the host password.
+  Guest clock drifted ~7 min behind host under starvation — kernel.log
+  timestamps are GUEST time; correlate against host time with drift in
+  mind.
+- **INSTRUMENT CORRECTION (the session's biggest):** ALL steady-state
+  success logging in the kext is capped at first-20 — submit "queued"
+  (s_submit_ok_count<20), the hex dump (s_hex_dump_count<20), transfer
+  successes (s_transfer_to_count<20, s_transfer_from_count<20). Log
+  silence after the first 20 of each class means "no FAILURES", NOT "no
+  activity". Mid-session I read ~10 min of 3D silence as "submits
+  stopped" — FALSE; failure lines (enqueue FAIL, 0xe00002d6, drain
+  TIMEOUT, queue FULL, worker FAIL, transfer "Command failed") are the
+  only uncapped signals and all stayed at zero. Same lesson as the
+  truncated hex dump (2026-08-18), now in three more places.
+- **Dead code noticed:** submitVirglCommandsEx builds `cmd_desc`
+  (withBytes) and immediately releases it unused beside the async path.
+  Cleanup candidate, no behavior impact.
+
+**NEXT (pre-registered):**
+1. **Quiet-host relaunch** (mediaanalysisd booted out, spotlight settled,
+   host load <2): same page, same kext. Prediction: composites complete,
+   window paints, wall figures comparable to the 133–300 ms era. If it
+   STILL whites on a quiet host → the readback-carries-submit-cost model
+   is falsified and the stall is structural (then instrument the shim's
+   T1–T6 splits live).
+2. **Worker heartbeat, uncapped:** periodic IOLog from the worker (every
+  N submits: "v3d worker: N batches, last submit X ms") so steady-state
+  activity is observable without per-call volume. Cheap, removes the
+  capped-log ambiguity class.
+3. **Structural queue (design, not this session):** per-resource fences
+  instead of conservative global drains (drain3D waits on ALL clients/
+  batches); and audit how many full-frame readbacks one flushBuffer
+   performs (ReadPixels + flush_front→read_buffer seen in-sample) — the
+  present path multiplies the per-readback cost.
+
+**AFTERNOON ARC (same day, 14:22–14:40) — the model chain, including two
+of my own calls falsified:**
+- **Kill + quiet-host relaunch #1 (14:22, pid 875):** still white at
+  8 min; compositor sampled in `st_glFinish → read_buffer →
+  resource_wait → mach_msg` again. I CALLED THIS "structural, starvation
+  model falsified" — **WRONG, PREMATURE**: I killed it at 14:30 before
+  startup could finish. See below.
+- **Fresh-connection control (the session's cleanest instrument):**
+  `test_virgl_clear` (own OSMesa ctx, own user client) launched WHILE the
+  browser was stalled: **frame 1598+ of clear cycles, colors visibly
+  changing on screen (user-confirmed visual)** — same kext, same worker,
+  same FIFO, same host, 3D WORKS. Rules out device/kext-global-state/host
+  in one observation; localises the white face INSIDE the browser
+  process. Not the shim-lock convoy either: sample shows NO thread piled
+  on pthread_mutex (main is in cond_wait = IPC; only the compositor is
+  in IOKit).
+- **Instrumented relaunch (14:30:49, pid 1099, SHIM_TIMING=1 +
+  VIRGL_IOKIT_DEBUG=1, zero code changes):** THE GRIND IS REAL AND
+  MEASURED — `frame[6604] wall=64–83 ms submit=5.6–16.8 transfer=18.6–
+  49.5 lock=0.1 ms size=5536096B`, ~22 fps average, 13,214 submits +
+  13,214 transfer_gets (1531×904 full-frame readbacks) + 34 transfer_puts
+  (all 18×18 cursor sprites) in ~5 min. The compositor NEVER STICKS —
+  every earlier "stuck in resource_wait" sample was a snapshot of the
+  dominant phase of a grinding loop. Also falsifies my "8 min still
+  white = structural" call: startup at TCG speed simply outlasted my
+  observation window.
+- **SPARSE-FRAME FACE CONFIRMED IN THE ASYNC ERA, direct evidence:**
+  `blit-skip[1..5] empty frame p0=0x00000000 — Gecko's own paint stands`
+  (capped at 5 logs) — thousands of composited frames are FULLY
+  TRANSPARENT (first-pixel check), so nothing presents; the white window
+  = Gecko's own software paint. **This falsifies the OLD attribution**
+  (empty frames = programs killed by dropped compile batches): zero
+  drops, zero Mesa errors in stderr, submits flowing — frames are empty
+  for a different reason. Main thread spends ~65% of samples in
+  SendFlushRendering (one synchronous wait per composite), so content/
+  layer building gets only the inter-wait slices — "startup not yet
+  finished" and "layer tree never fills" are the two live readings;
+  time-boxed observation continues.
+- **Mechanism notes banked:** Mesa's transfer_map is LINEAR (wait →
+  transfer_get → wait), not a busy-loop — the is_busy 1 ms probe only
+  fires on the PIPE_MAP_DONTBLOCK path Gecko doesn't take here. Content
+  uploads ride INLINE_WRITE inside 0x6008 batches (why put=34 is not
+  alarming by itself). The readback cost is the #1 structural target:
+  2 full-frame readbacks per present at 83 ms/frame quiet-host.
 
 ---
 
