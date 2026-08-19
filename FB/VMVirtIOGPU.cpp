@@ -8187,10 +8187,13 @@ void VMVirtIOGPUUserClient::probeAttachBackingUserCleanup()
 bool VMVirtIOGPUUserClient::backingStoreGrow(uint32_t newcap)
 {
     /* Caller holds m_backing_lock. Allocate newcap entries (zeroed =
-     * all empty), re-insert the live ones, free the old table. */
+     * all empty), re-insert the live ones, free the old table.
+     * IOMalloc+memset, NOT IOMallocZero — that symbol is outside the
+     * 10.6 KPI and kxld refuses it at boot (0xdc008016, this session). */
     user_backing_entry* nt =
-        (user_backing_entry*)IOMallocZero(newcap * sizeof(user_backing_entry));
+        (user_backing_entry*)IOMalloc(newcap * sizeof(user_backing_entry));
     if (!nt) return false;
+    memset(nt, 0, newcap * sizeof(user_backing_entry));
     for (uint32_t i = 0; i < m_backing_cap; i++) {
         if (m_backing_tab[i].resource_id != 0 &&
             m_backing_tab[i].resource_id != BACKING_TOMBSTONE) {
