@@ -59,14 +59,13 @@ CAUSE FOUND). Kext-relevant facts:
 - **FIX LANDED AND VERIFIED (a378b9b + Mesa 0afb1aa, one boot):**
   stage 1 offscreen_min all-probes magenta, wire `stride=1600
   offset=479996` for box (399,299) — exact y*stride+x*bpp math;
-  stage 2 user verdicts verbatim: **"now is blue!"** (webgltest canvas
-  presents its clear colour — first canvas content ever) and **"No
-  more double tab corruption!"** (the remaining duplication artifact
-  class died with the same fix — carrier was misplaced sub-box
+  stage 2 (user visual checks): the webgltest canvas presents its
+  clear colour (first canvas content ever), the remaining double-tab
+  duplication artifact is gone (carrier was misplaced sub-box
   updates, not Gecko popup rendering; Mesa ledger entry 19 has the
-  attribution rewrite). Browser fully interactive ("I can type
-  about:config in the URL!"). Transient startup white once (~40 s) —
-  recorded, watch for recurrence.
+  attribution rewrite), and the browser stays fully interactive under
+  WebGL load (URL-bar typing exercised, no wedge). Transient startup
+  white once (~40 s) — recorded, watch for recurrence.
 - Also this session: 4-vCPU spinlock-timeout panic
   (fontd/_kqueue_scan, owner stalled in _lapic_interrupt→
   AppleACPIPlatform, no VMQemuVGA frames) interrupted run 1; user
