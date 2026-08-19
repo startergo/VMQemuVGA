@@ -16,7 +16,7 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-17 (session: the compositor gate found+fixed in Mesa-VirGL baf08516 — GL chrome restored; 2D refresh workavg degradation datum 3.4→15 ms under host contention; typing-cliff frontier; entry below)
+Last updated: 2026-08-19 (canvas WEBGL transport+clamp+store+wedge arc closed through the morning: budget escalation proves no fixed poll survives host-load variance — async submit+fence pre-registered as the durable design; false-alarm boot failure resolved to host mDNS; sparse-frame mechanism closed. Prior: compositor gate fixed in Mesa-VirGL baf08516 — GL chrome restored; 2D refresh workavg degradation datum 3.4→15 ms under host contention; typing-cliff frontier; entry below)
 
 ---
 
@@ -110,7 +110,40 @@ CAUSE FOUND). Kext-relevant facts:
   kext), bisect {extent guard, poll budget, store} one per boot.
   Suspects: guard rejecting a boot-critical transfer (XFER-EXTENT-
   REJECT should be on the serial if so), poll budget vs the boot
-  display path, or store lock init-order.
+  display path, or store lock init-order. RESOLVED NEXT MORNING: the
+  "boot failure" was a FALSE ALARM — the guest booted fine; the
+  HOST's mDNS resolution had died and ssh-by-name failing was read as
+  guest-down. Fallback recorded: ssh alias `sl-ip` (192.168.64.40 +
+  id_rsa_slqemu + legacy host-key algos) in ~/.ssh/config.
+  Reachability ≠ guest state.
+- **Budget escalation verdict (2026-08-19 morning)**: 600 (≈1 s at
+  4 vCPU; ~1.6 ms/iteration measured from consecutive-FAIL
+  timestamps) still dropped compile-carrying compositor batches →
+  white-page face. 6000 (≈10 s) let the aquarium RENDER (fish ~1
+  fps, 28 Mesa errors) — but a fresh FAIL at 11:04:15 (ctx 0x102)
+  shows a cold compile exceeding even 10 s under host load. NO fixed
+  poll budget survives host-load variance (fish-run compiles fit in
+  1 s; the morning's needed >10). DURABLE DESIGN (pre-registered,
+  next change): ASYNC SUBMIT + FENCE — the Linux virtio-gpu model
+  (dma_fence per submit/transfer; wait on resource reservations
+  before reuse/readback).
+- **Storm anatomy** (VIRGL_IOKIT_DUMP captures, /Users/sl/pf_dump.log,
+  persistent): failing batches were compositor ctx-0x100
+  shader-carrying frames (13420/12980 B — surface creates incl. a
+  depth-format-as-color and an RGBA-as-ZS binding, FB bind, clear,
+  large TGSI shader, draws). The RGBA-as-ZS pattern appears in
+  SUCCEEDED batches too — tolerated, exonerated. Submissions RESUMED
+  after each drop (incl. a 25,765-dword batch): the host recovers;
+  the dropped batches were expensive-not-invalid.
+- **Sparse-frame mechanism closed**: 58.9k composited frames against a
+  black screen = compositor running with dead programs (dropped
+  compile batch) → frames compose empty → the shim's blit-skip
+  (first-pixel-transparent check, cgl_shim.mm:1144-1155) returns
+  BEFORE the SHIM_DUMP_BUFFER block, so empty frames never dump and
+  never present; only Gecko's software paint shows (white
+  cleared-but-unfilled rectangles + one chrome corner fragment).
+  Instrument fix queued: dump on skip too — an empty-buffer dump is
+  itself a datum.
 - Also this session: 4-vCPU spinlock-timeout panic
   (fontd/_kqueue_scan, owner stalled in _lapic_interrupt→
   AppleACPIPlatform, no VMQemuVGA frames) interrupted run 1; judged
