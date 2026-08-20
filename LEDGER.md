@@ -260,9 +260,19 @@ mirror hunt (parked), UTM debug-log growth.
 of my own calls falsified:**
 - **Kill + quiet-host relaunch #1 (14:22, pid 875):** still white at
   8 min; compositor sampled in `st_glFinish → read_buffer →
-  resource_wait → mach_msg` again. I CALLED THIS "structural, starvation
-  model falsified" — **WRONG, PREMATURE**: I killed it at 14:30 before
-  startup could finish. See below.
+  resource_wait → mach_msg` again. This was called "structural, starvation
+  model falsified" — **WRONG, PREMATURE**: the process was killed at 14:30
+  before startup could finish. See below.
+  **Superseded 2026-08-19 (evening) — do not re-open the starvation question
+  on the strength of this retraction.** What was premature was *this
+  particular* 14:30 call, not the model's fate. The starvation and
+  compile-cost models were killed properly later the same day by direct
+  measurement: heartbeat kext `57c98d3` (binary b492386f) logged 1,354
+  batches at 0–15 ms each, `q=0` always, `ret=0x0` always, quiet host —
+  **NO STORM**. Separately, the typing-wedge was identified as genuine
+  1-vCPU starvation and closed by SMP. Neither leaves an open starvation
+  question; re-running a starvation test measures something already
+  measured.
 - **Fresh-connection control (the session's cleanest instrument):**
   `test_virgl_clear` (own OSMesa ctx, own user client) launched WHILE the
   browser was stalled: **frame 1598+ of clear cycles, colors visibly
