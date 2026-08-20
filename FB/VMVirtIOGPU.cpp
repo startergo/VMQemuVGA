@@ -122,6 +122,8 @@ bool CLASS::init(OSDictionary* properties)
     m_hblit_ctx = 0;
     m_hblit_attached_res = 0;
     m_hblit_res = 0;
+    m_hblit_dst_res = 1;   // VGA-convention 2D framebuffer; setscanout() updates
+    m_hblit_attached_dst = 0;
     m_hblit_rect.valid = false;
     m_hblit_rect.x = m_hblit_rect.y = m_hblit_rect.w = m_hblit_rect.h = 0;
     for (int i = 0; i < V3D_QUEUE_DEPTH; i++) {
@@ -3756,21 +3758,29 @@ IOReturn CLASS::hostBlit3D(uint32_t res3d, uint32_t src_fmt,
                            uint32_t src_w, uint32_t src_h,
                            uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
-    if (!m_display_resource_id) return kIOReturnNotReady;
+    uint32_t dst_res = m_hblit_dst_res;
+    if (!dst_res) dst_res = m_display_resource_id;
+    if (!dst_res) return kIOReturnNotReady;
     if (!res3d || !w || !h || !src_w || !src_h) return kIOReturnBadArgument;
 
     /* Lazy blit context + attach both resources (virgl cross-context
-     * requirement). Desktop res attaches once; the 3D res on change. */
+     * requirement). The desktop surface can CHANGE (mode switches,
+     * WindowServer rebinding) — attach-cache by id and re-attach on
+     * change. */
     if (!m_hblit_ctx) {
         IOReturn r = createRenderContext(&m_hblit_ctx);
         if (r != kIOReturnSuccess) return r;
-        IOLog("VMVirtIOGPU: hostBlit ctx=%u created\n", m_hblit_ctx);
-        r = ctxAttachResourceCmd(m_hblit_ctx, m_display_resource_id);
+        IOLog("VMVirtIOGPU: hostBlit ctx=%u created (dst res %u)\n",
+              m_hblit_ctx, dst_res);
+        m_hblit_attached_dst = 0;
+    }
+    if (m_hblit_attached_dst != dst_res) {
+        IOReturn r = ctxAttachResourceCmd(m_hblit_ctx, dst_res);
         if (r != kIOReturnSuccess) {
-            IOLog("VMVirtIOGPU: hostBlit attach desktop res FAIL 0x%x\n", r);
+            IOLog("VMVirtIOGPU: hostBlit attach DST res %u FAIL 0x%x\n", dst_res, r);
             return r;
         }
-        m_hblit_attached_res = 0;
+        m_hblit_attached_dst = dst_res;
     }
     if (m_hblit_attached_res != res3d) {
         IOReturn r = ctxAttachResourceCmd(m_hblit_ctx, res3d);
@@ -3787,7 +3797,7 @@ IOReturn CLASS::hostBlit3D(uint32_t res3d, uint32_t src_fmt,
     dw[0] = 16u | (0u << 8) | (21u << 16);          // VIRGL_CMD0(BLIT, 0, 21)
     dw[1] = 0xfu;                                    // mask=RGBA, filter=nearest, no scissor/blend
     dw[2] = 0; dw[3] = 0;
-    dw[4] = m_display_resource_id;                   // dst res
+    dw[4] = dst_res;                                 // dst res
     dw[5] = 0;                                       // dst level
     dw[6] = 1;                                       // dst format: VIRGL_FORMAT_B8G8R8A8_UNORM
     dw[7] = x; dw[8] = y; dw[9] = 0;
@@ -3814,7 +3824,7 @@ IOReturn CLASS::hostBlit3D(uint32_t res3d, uint32_t src_fmt,
     flush_cmd.hdr.flags = 0;
     flush_cmd.hdr.fence_id = 0;
     flush_cmd.hdr.ctx_id = 0;
-    flush_cmd.resource_id = m_display_resource_id;
+    flush_cmd.resource_id = dst_res;
     flush_cmd.r.x = x; flush_cmd.r.y = y;
     flush_cmd.r.width = w; flush_cmd.r.height = h;
     struct virtio_gpu_ctrl_hdr flush_resp = {};
@@ -6370,6 +6380,12 @@ IOReturn CLASS::setscanout(uint32_t scanout_id, uint32_t resource_id,
         IOLog("VMVirtIOGPU::setscanout: Set scanout command failed: 0x%x\n", ret);
         return ret;
     }
+
+    /* Host-side blit dst tracking: the live desktop surface is whatever
+     * the scanout is bound to (VGA-mode boots never call this — then the
+     * resource-1 convention stands). */
+    if (scanout_id == 0 && resource_id != 0)
+        m_hblit_dst_res = resource_id;
     
     // CRITICAL: Notify framebuffer when 3D resource takes over scanout
     // Resource ID 1 is the 2D framebuffer. Any other resource is a 3D resource.

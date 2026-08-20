@@ -521,6 +521,9 @@ public:
     } m_hblit_rect;
     uint32_t m_hblit_res;              // last presented 3D resource
     uint32_t m_hblit_src_fmt, m_hblit_src_w, m_hblit_src_h;  // for re-issue
+    uint32_t m_hblit_dst_res;           // desktop surface: setscanout record,
+                                        // else resource 1 (VGA-convention 2D fb)
+    uint32_t m_hblit_attached_dst;      // dst res currently attached to the ctx
     // Encode+submit the BLIT and RESOURCE_FLUSH; attaches resources to
     // the blit ctx as needed. src_w/src_h/src_fmt from the geometry
     // table (caller-side lookup).
