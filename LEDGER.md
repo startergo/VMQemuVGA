@@ -22,7 +22,7 @@ Last updated: 2026-08-19 late (TSD RESTORATION LANDED AND VERIFIED cross-repo (M
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
-**The operator-driven pivot ("there is no storm — look for errors, look
+**The pivot ("there is no storm — look for errors, look
 for the debug log") was correct on all counts:**
 - **Heartbeat kext** `57c98d3` (b492386f binary): 1,354 batches, 0–15 ms
   each, q=0 always, ret=0x0 always, quiet host. NO STORM. All
@@ -41,7 +41,7 @@ for the debug log") was correct on all counts:**
   white carrier by observation.
 - **is_busy famine: FIXED** (a88c72eb4b4): uploads 34→433+ puts with
   content-sized boxes, verified boot-free on the async kext.
-- **Linux reference** (virtgpu_ioctl.c @ 3a0dd7ba, operator-directed):
+- **Linux reference** (virtgpu_ioctl.c @ 3a0dd7ba):
   WAIT is per-resource (gem handle → dma_resv, 15 s, NOWAIT flag);
   transfers are async-with-fence (command carries fence, ioctl returns,
   sync at WAIT); every submit/transfer carries a fence. Our global
@@ -266,7 +266,7 @@ of my own calls falsified:**
 - **Fresh-connection control (the session's cleanest instrument):**
   `test_virgl_clear` (own OSMesa ctx, own user client) launched WHILE the
   browser was stalled: **frame 1598+ of clear cycles, colors visibly
-  changing on screen (user-confirmed visual)** — same kext, same worker,
+  changing on screen — visually confirmed** — same kext, same worker,
   same FIFO, same host, 3D WORKS. Rules out device/kext-global-state/host
   in one observation; localises the white face INSIDE the browser
   process. Not the shim-lock convoy either: sample shows NO thread piled
@@ -364,7 +364,7 @@ CAUSE FOUND). Kext-relevant facts:
   needs the instrument moved to the active path.
 - Second SMP panic (~23:34, mds/_kevent — the fontd family, no kext
   frames); an unexplained ~23:52 restart (VM reconfigured, 4 vCPU
-  retained by direction — panic risk accepted). /tmp/subst wiped again
+  retained — panic risk accepted). /tmp/subst wiped again
   → substitute now persists at /Users/sl/subst.
 - **Regression spiral → full device wedge**: post-restart sessions
   showed 3D submits timing out (472× `0xe00002d6` vs 9× in the healthy
@@ -1008,9 +1008,9 @@ TCG — the doubling 30→60 cmd/s is an experiment, not a free win.
 
 **Visual verdict (13:16 boot): "full desktop available now."**
 Blue screen gone; desktop rendered through the pair for the first
-time. (Color sub-verdict — R/B swap — asked explicitly; treat
+time. (Color sub-verdict — R/B swap: treat
 "full desktop" as strong-but-unconfirmed on channel order until
-the visual check answers.)
+checked on screen.)
 
 **Kernel log, all green:**
 - **48/48 Flush -> Success (blit …)** — ZERO NotReady, ZERO
