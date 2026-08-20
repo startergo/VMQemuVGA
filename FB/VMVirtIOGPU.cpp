@@ -118,6 +118,12 @@ bool CLASS::init(OSDictionary* properties)
     m_v3d_head = m_v3d_tail = m_v3d_count = m_v3d_inflight = 0;
     m_v3d_stop = false;
     m_v3d_thread_up = false;
+    /* host-side blit state */
+    m_hblit_ctx = 0;
+    m_hblit_attached_res = 0;
+    m_hblit_res = 0;
+    m_hblit_rect.valid = false;
+    m_hblit_rect.x = m_hblit_rect.y = m_hblit_rect.w = m_hblit_rect.h = 0;
     for (int i = 0; i < V3D_QUEUE_DEPTH; i++) {
         m_v3d_queue[i].buf = nullptr;
         m_v3d_queue[i].size = 0;
@@ -3731,6 +3737,116 @@ void CLASS::fenceDrop(uint32_t res_id)
         if (m_fence_tbl[k].id == 0) break;
     }
     IOLockUnlock(m_fence_lock);
+}
+
+// ---- Host-side blit (see header block) ---------------------------------------
+
+IOReturn CLASS::ctxAttachResourceCmd(uint32_t ctx_id, uint32_t resource_id)
+{
+    struct virtio_gpu_ctx_resource cmd = {};
+    initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
+                            ctx_id, false);
+    cmd.resource_id = resource_id;
+    cmd.padding = 0;
+    struct virtio_gpu_ctrl_hdr resp = {};
+    return submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 6000);
+}
+
+IOReturn CLASS::hostBlit3D(uint32_t res3d, uint32_t src_fmt,
+                           uint32_t src_w, uint32_t src_h,
+                           uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    if (!m_display_resource_id) return kIOReturnNotReady;
+    if (!res3d || !w || !h || !src_w || !src_h) return kIOReturnBadArgument;
+
+    /* Lazy blit context + attach both resources (virgl cross-context
+     * requirement). Desktop res attaches once; the 3D res on change. */
+    if (!m_hblit_ctx) {
+        IOReturn r = createRenderContext(&m_hblit_ctx);
+        if (r != kIOReturnSuccess) return r;
+        IOLog("VMVirtIOGPU: hostBlit ctx=%u created\n", m_hblit_ctx);
+        r = ctxAttachResourceCmd(m_hblit_ctx, m_display_resource_id);
+        if (r != kIOReturnSuccess) {
+            IOLog("VMVirtIOGPU: hostBlit attach desktop res FAIL 0x%x\n", r);
+            return r;
+        }
+        m_hblit_attached_res = 0;
+    }
+    if (m_hblit_attached_res != res3d) {
+        IOReturn r = ctxAttachResourceCmd(m_hblit_ctx, res3d);
+        if (r != kIOReturnSuccess) {
+            IOLog("VMVirtIOGPU: hostBlit attach 3D res 0x%x FAIL 0x%x\n", res3d, r);
+            return r;
+        }
+        m_hblit_attached_res = res3d;
+    }
+
+    /* VIRGL_CCMD_BLIT (16), len 21: header + S0 + scissor2 + dst(9) +
+     * src(9). Src Y inverted: bottom-left (GL) → top-left (scanout). */
+    uint32_t dw[1 + 21];
+    dw[0] = 16u | (0u << 8) | (21u << 16);          // VIRGL_CMD0(BLIT, 0, 21)
+    dw[1] = 0xfu;                                    // mask=RGBA, filter=nearest, no scissor/blend
+    dw[2] = 0; dw[3] = 0;
+    dw[4] = m_display_resource_id;                   // dst res
+    dw[5] = 0;                                       // dst level
+    dw[6] = 1;                                       // dst format: VIRGL_FORMAT_B8G8R8A8_UNORM
+    dw[7] = x; dw[8] = y; dw[9] = 0;
+    dw[10] = w; dw[11] = h; dw[12] = 1;
+    dw[13] = res3d;                                  // src res
+    dw[14] = 0;                                      // src level
+    dw[15] = src_fmt;
+    dw[16] = 0; dw[17] = src_h - h;                  // src y INVERTED (flip)
+    dw[18] = 0; dw[19] = w; dw[20] = h; dw[21] = 1;
+
+    IOBufferMemoryDescriptor* desc = IOBufferMemoryDescriptor::withBytes(
+        dw, sizeof(dw), kIODirectionOut);
+    if (!desc) return kIOReturnNoMemory;
+    IOReturn ret = executeCommands(m_hblit_ctx, desc);
+    desc->release();
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU: hostBlit submit FAIL 0x%x\n", ret);
+        return ret;
+    }
+
+    /* Flush the desktop region so the host displays it now. */
+    struct virtio_gpu_resource_flush flush_cmd = {};
+    flush_cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
+    flush_cmd.hdr.flags = 0;
+    flush_cmd.hdr.fence_id = 0;
+    flush_cmd.hdr.ctx_id = 0;
+    flush_cmd.resource_id = m_display_resource_id;
+    flush_cmd.r.x = x; flush_cmd.r.y = y;
+    flush_cmd.r.width = w; flush_cmd.r.height = h;
+    struct virtio_gpu_ctrl_hdr flush_resp = {};
+    submitCommand(&flush_cmd.hdr, sizeof(flush_cmd),
+                  &flush_resp, sizeof(flush_resp), 6000);
+
+    m_hblit_rect.x = x; m_hblit_rect.y = y;
+    m_hblit_rect.w = w; m_hblit_rect.h = h;
+    m_hblit_rect.valid = true;
+    m_hblit_res = res3d;
+    m_hblit_src_fmt = src_fmt;
+    m_hblit_src_w = src_w;
+    m_hblit_src_h = src_h;
+    return kIOReturnSuccess;
+}
+
+void CLASS::hostBlitReissueIfIntersecting(uint32_t x, uint32_t y,
+                                          uint32_t w, uint32_t h)
+{
+    if (!m_hblit_rect.valid || !m_hblit_res) return;
+    uint32_t ax2 = m_hblit_rect.x + m_hblit_rect.w;
+    uint32_t ay2 = m_hblit_rect.y + m_hblit_rect.h;
+    uint32_t bx2 = x + w, by2 = y + h;
+    if (x >= ax2 || m_hblit_rect.x >= bx2 ||
+        y >= ay2 || m_hblit_rect.y >= by2)
+        return;
+    /* Intersecting: the transfer overwrote the window's region of the
+     * desktop resource with stale guest content. Re-issue the GPU blit
+     * (idempotent, host-side, sub-ms). Recursion-safe: the blit path
+     * never calls transferToHost2D. */
+    hostBlit3D(m_hblit_res, m_hblit_src_fmt, m_hblit_src_w, m_hblit_src_h,
+               m_hblit_rect.x, m_hblit_rect.y, m_hblit_rect.w, m_hblit_rect.h);
 }
 
 IOReturn CLASS::setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height)
@@ -7734,6 +7850,31 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             return kIOReturnBadArgument;
         }
 
+        case 0x600C: { // hostBlit3D — the host-side present (no guest readback)
+            /* scalarInput: [0]=3D resource, [1..4]=window rect x,y,w,h
+             * (desktop coords). CONTRACT: the caller (winsys
+             * flush_frontbuffer) has already fence-waited the resource,
+             * so prior 3D work is complete host-side when the blit
+             * reads. Geometry (fmt + full src dims) from the table. */
+            if (args->scalarInputCount >= 5 && args->scalarInput) {
+                uint32_t res = (uint32_t)args->scalarInput[0];
+                uint32_t x = (uint32_t)args->scalarInput[1];
+                uint32_t y = (uint32_t)args->scalarInput[2];
+                uint32_t w = (uint32_t)args->scalarInput[3];
+                uint32_t h = (uint32_t)args->scalarInput[4];
+                uint32_t fmt = 0, sw = 0, sh = 0;
+                if (!userResourceFmt(res, &fmt) ||
+                    !userResourceDims(res, &sw, &sh)) {
+                    IOLog("VMVirtIOGPUUserClient: 0x600C res=0x%x NOT in "
+                          "geometry table — cannot blit\n", res);
+                    return kIOReturnUnsupported;
+                }
+                if (!m_gpu_device) return kIOReturnNotReady;
+                return m_gpu_device->hostBlit3D(res, fmt, sw, sh, x, y, w, h);
+            }
+            return kIOReturnBadArgument;
+        }
+
         default:
             IOLog("VMVirtIOGPUUserClient: Unsupported method selector %u - returning unsupported\n", selector);
             // CRITICAL: Return kIOReturnUnsupported for unknown selectors
@@ -8922,6 +9063,19 @@ bool VMVirtIOGPUUserClient::userResourceDims(uint32_t id,
     return false;
 }
 
+/* Host-side blit support: the VIRGL format recorded at create time —
+ * the BLIT command's src-format field needs it. */
+bool VMVirtIOGPUUserClient::userResourceFmt(uint32_t id, uint32_t* fmt)
+{
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id == id) {
+            if (fmt) *fmt = m_user_geom[i].fmt;
+            return true;
+        }
+    }
+    return false;
+}
+
 uint64_t VMVirtIOGPUUserClient::userResourceCapacity(uint32_t id)
 {
     for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
@@ -9556,7 +9710,13 @@ IOReturn CLASS::transferToHost2D(uint32_t resource_id, uint64_t offset,
         IOLog("VMVirtIOGPU::transferToHost2D: Command failed: 0x%x\n", ret);
         return ret;
     }
-    
+
+    /* Host-side blit overwrite rule: guest memory never holds the 3D
+     * window's pixels — a transfer intersecting the presented window
+     * rect just clobbered them with stale content. Re-issue the GPU
+     * blit (host-side, idempotent; see the header block). */
+    hostBlitReissueIfIntersecting(x, y, width, height);
+
     // Suppress noisy logging - transfer succeeded silently
     return kIOReturnSuccess;
 }

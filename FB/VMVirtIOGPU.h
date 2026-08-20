@@ -490,6 +490,48 @@ public:
     IOReturn fenceWait(uint32_t res_id, uint32_t flags);
     // Drop a resource's entry (unref).
     void fenceDrop(uint32_t res_id);
+
+    /* ------------------------------------------------------------------
+     * HOST-SIDE BLIT (2026-08-19, the recorded design): a GPU-side
+     * VIRGL_CCMD_BLIT from the 3D front resource into the DESKTOP
+     * SCANOUT RESOURCE at the window's rect — the composited frame
+     * goes to the display without the 5.5 MB guest readback (measured
+     * 130 ms mean per-flush wall: submit 44-68 + transfer 61-76; the
+     * transfer half IS the readback). BLIT (not RESOURCE_COPY_REGION)
+     * because the src box's inverted Y does the bottom-left→top-left
+     * flip for free and it tolerates the format difference.
+     *
+     * Issuing context: a kext-owned display-blit context; BOTH
+     * resources CTX_ATTACHed to it (cross-context virgl requires it).
+     * Ordering: the winsys waits the resource (fences) before 0x600C,
+     * so prior 3D work is complete host-side when the blit reads.
+     *
+     * OVERWRITE RULE (the 2D-refresh fight): guest memory never holds
+     * the window's pixels, so any TRANSFER_TO_HOST_2D intersecting the
+     * window rect would erase the blit (~17 ms cadence). Rule: re-issue
+     * the blit after EVERY intersecting transferToHost2D — idempotent,
+     * last-writer-wins, all under the kext's own serialization; a
+     * sub-ms host-side copy at tick rate is free.
+     * ------------------------------------------------------------------ */
+    uint32_t m_hblit_ctx;              // lazy; 0 = not created
+    uint32_t m_hblit_attached_res;     // 3D res currently attached to the ctx
+    struct {
+        uint32_t x, y, w, h;
+        bool valid;
+    } m_hblit_rect;
+    uint32_t m_hblit_res;              // last presented 3D resource
+    uint32_t m_hblit_src_fmt, m_hblit_src_w, m_hblit_src_h;  // for re-issue
+    // Encode+submit the BLIT and RESOURCE_FLUSH; attaches resources to
+    // the blit ctx as needed. src_w/src_h/src_fmt from the geometry
+    // table (caller-side lookup).
+    IOReturn hostBlit3D(uint32_t res3d, uint32_t src_fmt,
+                        uint32_t src_w, uint32_t src_h,
+                        uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+    // The re-blit rule's hook: called at the end of transferToHost2D.
+    void hostBlitReissueIfIntersecting(uint32_t x, uint32_t y,
+                                       uint32_t w, uint32_t h);
+    // Send CTX_ATTACH_RESOURCE on the given context.
+    IOReturn ctxAttachResourceCmd(uint32_t ctx_id, uint32_t resource_id);
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
@@ -765,6 +807,7 @@ private:
     // bounded dims for a resource, false if unknown — callers must
     // NOT clamp when unknown.
     bool userResourceDims(uint32_t id, uint32_t* w, uint32_t* h);
+    bool userResourceFmt(uint32_t id, uint32_t* fmt);  // host-side blit src format
 
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
