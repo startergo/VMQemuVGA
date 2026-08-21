@@ -12,7 +12,9 @@
 // before replacement (kernel-log newUserClient lines, 2026-08-20):
 // ZERO type-2 opens in any recorded boot — no caller existed.
 #include "VMQemuVGAAccelerator.h"
+#include "VMAccelSurfaceClient.h"   /* the surface registry (milestone 2) */
 #include <IOKit/IOLib.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
 
 #define CLASS VMQemuVGA3DUserClient
 #define super IOUserClient
@@ -61,14 +63,14 @@ static const IOExternalMethodDispatch sMethods[kVM2DNumMethods] = {
         .checkStructureOutputSize = 0,
     },
     [kVM2DLockMemory] = {          // milestone 2: the app-task surface view
-        .function = (IOExternalMethodAction) &CLASS::sStub,
+        .function = (IOExternalMethodAction) &CLASS::sLockMemory,
         .checkScalarInputCount = 1,
         .checkStructureInputSize = 0,
         .checkScalarOutputCount = 0,
         .checkStructureOutputSize = 2 * sizeof(uint64_t),
     },
     [kVM2DUnlockMemory] = {
-        .function = (IOExternalMethodAction) &CLASS::sStub,
+        .function = (IOExternalMethodAction) &CLASS::sUnlockMemory,
         .checkScalarInputCount = 1,
         .checkStructureInputSize = 0,
         .checkScalarOutputCount = 1,
@@ -224,6 +226,7 @@ bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type,
     m_task = owningTask;
     m_bound_id = 0xFFFFFFFFFFFFFFFFull;
     m_bound_options = 0;
+    m_app_map = nullptr;
 
     return true;
 }
@@ -246,6 +249,11 @@ bool CLASS::start(IOService* provider)
 IOReturn CLASS::clientClose()
 {
     IOLog("VMQemuVGA3DUserClient: clientClose\n");
+
+    if (m_app_map) {
+        m_app_map->release();
+        m_app_map = nullptr;
+    }
 
     if (isInactive() == false) {
         terminate();
@@ -354,15 +362,89 @@ IOReturn CLASS::sSetSurface(OSObject* target, void* reference,
     args->structureOutputSize = 11 * sizeof(uint32_t);
 
     if (options & 0x800u) {
+        /* CGS-surface binding (milestone 2 rung 2): look up FRESH —
+         * the surface's lifetime belongs to its creating client. */
+        VMAccelSurface* s = vmSurfaceRegistryFind((uint32_t)id_or_index);
+        if (!s) {
+            IOLog("VMQemuVGA3DUserClient: SetSurface id=%llu opts=0x%x — "
+                  "NO SUCH SURFACE in registry — refusing\n",
+                  id_or_index, options);
+            return kIOReturnNoResources;
+        }
+        uint32_t* out = (uint32_t*)args->structureOutput;
+        out[0] = s->width;  out[1] = s->height;
+        out[2] = s->bytes_per_pixel;
+        out[3] = s->bytes_per_row;
         IOLog("VMQemuVGA3DUserClient: SetSurface id=%llu opts=0x%x — "
-              "CGS path NOT BACKED yet (milestone 2 store) — refusing\n",
-              id_or_index, options);
-        return kIOReturnNoResources;
+              "BOUND (%ux%u bpp=%u row=%u)\n",
+              id_or_index, options, s->width, s->height,
+              s->bytes_per_pixel, s->bytes_per_row);
+        me->m_bound_id = id_or_index;
+        me->m_bound_options = options;
+        return kIOReturnSuccess;
     }
     IOLog("VMQemuVGA3DUserClient: SetSurface fbIndex=%llu opts=0x%x — "
           "framebuffer destination bound\n", id_or_index, options);
     me->m_bound_id = id_or_index;
     me->m_bound_options = options;
+    return kIOReturnSuccess;
+}
+
+/* LockMemory: the APP-TASK view of the bound surface's backing.
+ * struct-out = {address, rowBytes} (worked example VMsvga2GA.cpp:593).
+ * Requires WindowServer to have write-locked once (the backing is
+ * lazy-created there); refuses loudly otherwise. */
+IOReturn CLASS::sLockMemory(OSObject* target, void* reference,
+                            IOExternalMethodArguments* args)
+{
+    CLASS* me = (CLASS*)target;
+    if (!(me->m_bound_options & 0x800u) || me->m_bound_id == 0xFFFFFFFFFFFFFFFFull) {
+        IOLog("VMQemuVGA3DUserClient: LockMemory — no CGS surface bound\n");
+        return kIOReturnNotReady;
+    }
+    VMAccelSurface* s = vmSurfaceRegistryFind((uint32_t)me->m_bound_id);
+    if (!s) {
+        IOLog("VMQemuVGA3DUserClient: LockMemory — bound surface VANISHED "
+              "(owner died?)\n");
+        return kIOReturnNotReady;
+    }
+    if (!s->backing_memory) {
+        IOLog("VMQemuVGA3DUserClient: LockMemory — backing not yet created "
+              "(no WindowServer write-lock)\n");
+        return kIOReturnNotReady;
+    }
+    if (me->m_app_map) {
+        /* Already mapped in this task — hand the existing view. */
+        uint64_t* out = (uint64_t*)args->structureOutput;
+        out[0] = me->m_app_map->getVirtualAddress();
+        out[1] = s->bytes_per_row;
+        return kIOReturnSuccess;
+    }
+    IOMemoryMap* map = s->backing_memory->createMappingInTask(
+        me->m_task, 0, kIOMapAnywhere);
+    if (!map) {
+        IOLog("VMQemuVGA3DUserClient: LockMemory — app-task mapping FAILED\n");
+        return kIOReturnNoMemory;
+    }
+    me->m_app_map = map;
+    uint64_t* out = (uint64_t*)args->structureOutput;
+    out[0] = map->getVirtualAddress();
+    out[1] = s->bytes_per_row;
+    IOLog("VMQemuVGA3DUserClient: LockMemory — app view %llx row=%u\n",
+          (unsigned long long)out[0], s->bytes_per_row);
+    return kIOReturnSuccess;
+}
+
+/* UnlockMemory: drop the app-task view (scalar-out = swap flags, 0). */
+IOReturn CLASS::sUnlockMemory(OSObject* target, void* reference,
+                              IOExternalMethodArguments* args)
+{
+    CLASS* me = (CLASS*)target;
+    if (me->m_app_map) {
+        me->m_app_map->release();
+        me->m_app_map = nullptr;
+    }
+    args->scalarOutput[0] = 0;
     return kIOReturnSuccess;
 }
 

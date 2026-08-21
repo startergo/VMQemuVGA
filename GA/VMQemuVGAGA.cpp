@@ -31,6 +31,8 @@ extern "C" {
 enum {
     kVM2DSetSurface = 0,
     kVM2DGetConfig = 1,
+    kVM2DLockMemory = 5,
+    kVM2DUnlockMemory = 6,
     kVM2DFinish = 7,
     kVM2DReadConfigs = 16,
     kVM2DUseAccelUpdates = 21,
@@ -43,6 +45,12 @@ enum {
                                           0x0A, 0x7B, 0x3C, 0x41))
 
 #define GALog(...) do { fprintf(stderr, "VMQemuVGAGA: " __VA_ARGS__); } while (0)
+
+typedef struct _SurfaceInfo {
+    void* d0;                  /* reserved for an image handle (unused) */
+    vm_address_t addr;         /* cached LockMemory view */
+    uintptr_t cgsSurfaceID;    /* the CGS surface id from AllocateSurface */
+} SurfaceInfo;
 
 typedef struct _GAType {
     IOGraphicsAcceleratorInterface* _interface;
@@ -257,10 +265,6 @@ VM_UNSUPPORTED(vmCapabilities)
 VM_UNSUPPORTED(vmFlush)
 VM_UNSUPPORTED(vmSynchronize)
 VM_UNSUPPORTED(vmGetBeamPosition)
-VM_UNSUPPORTED(vmAllocateSurface)
-VM_UNSUPPORTED(vmFreeSurface)
-VM_UNSUPPORTED(vmLockSurface)
-VM_UNSUPPORTED(vmUnlockSurface)
 VM_UNSUPPORTED(vmSwapSurface)
 VM_UNSUPPORTED(vmGetBlitter)
 VM_UNSUPPORTED(vmWaitComplete)
@@ -288,15 +292,12 @@ static IOReturn vmSetSurface(void* myInstance, IOOptionBits options,
         return kIOReturnNotReady;
 
     if (options & 0x800U) {
-        /* CGS-surface destination: input[0] = cgsSurfaceID from the
-         * surface's interfaceRef. The kernel refuses this path until
-         * the surface store is wired (loudly) — propagate its verdict. */
-        if (!surface)
+        /* CGS-surface destination: the id lives in the surface's
+         * SurfaceInfo (set at AllocateSurface). */
+        if (!surface || !surface->interfaceRef)
             return kIOReturnBadArgument;
-        GALog("SetSurface: CGS id path (surface=%p) — kernel verdict\n",
-              surface);
-        input[0] = (uint64_t)(uintptr_t)surface;   /* placeholder id:
-                                                      milestone 2 store */
+        SurfaceInfo* si = (SurfaceInfo*)surface->interfaceRef;
+        input[0] = (uint64_t)si->cgsSurfaceID;
         input[1] = options;
     } else {
         input[0] = me->_framebufferIndex;
@@ -324,6 +325,139 @@ static IOReturn vmSetDestination(void* myInstance, IOOptionBits options,
     return vmSetSurface(myInstance, options, surface);
 }
 
+// ---- Surface slots (milestone 2 rung 2) ----------------------------------
+
+static IOReturn vmAllocateSurface(void* myInstance, IOOptionBits options,
+                                  IOBlitSurface* surface, void* cgsSurfaceID)
+{
+    GAType* me = (GAType*)myInstance;
+    GALog("AllocateSurface(opts=%#x surface=%p cgsID=%p)\n",
+          (unsigned)options, (void*)surface, cgsSurfaceID);
+    if (!me || !surface)
+        return kIOReturnBadArgument;
+    if (!me->_context)
+        return kIOReturnNotReady;
+    if (!(options & kIOBlitHasCGSSurface)) {
+        /* Non-CGS allocation paths are not part of this design — the
+         * GA path exists to bind CGS surfaces, not to invent new ones. */
+        GALog("AllocateSurface: non-CGS path UNSUPPORTED\n");
+        return kIOReturnUnsupported;
+    }
+    SurfaceInfo* si = (SurfaceInfo*)calloc(1, sizeof(SurfaceInfo));
+    if (!si)
+        return kIOReturnNoMemory;
+    si->cgsSurfaceID = (uintptr_t)cgsSurfaceID;
+    surface->interfaceRef = (IOBlitMemoryRef)si;
+    /* The binding itself: worked example routes through SetSurface
+     * with 0x800 (format bits ORed per pixelFormat). */
+    IOOptionBits bind_opts = 0x800U;
+    switch (surface->pixelFormat) {
+        case kIO32BGRAPixelFormat: bind_opts |= 0x100U; break;
+        default: break;
+    }
+    IOReturn rc = vmSetSurface(myInstance, bind_opts | options, surface);
+    if (rc != kIOReturnSuccess) {
+        GALog("AllocateSurface: bind FAILED 0x%x — freeing si\n", rc);
+        free(si);
+        surface->interfaceRef = 0;
+        return rc;
+    }
+    GALog("AllocateSurface: bound cgsID=%llu\n",
+          (unsigned long long)si->cgsSurfaceID);
+    return kIOReturnSuccess;
+}
+
+static IOReturn vmUnlockSurface(void* myInstance, IOOptionBits options,
+                                IOBlitSurface* surface, IOOptionBits* swapFlags);
+
+static IOReturn vmFreeSurface(void* myInstance, IOOptionBits options,
+                              IOBlitSurface* surface)
+{
+    GAType* me = (GAType*)myInstance;
+    GALog("FreeSurface(opts=%#x surface=%p)\n", (unsigned)options,
+          (void*)surface);
+    if (!me || !surface)
+        return kIOReturnBadArgument;
+    SurfaceInfo* si = (SurfaceInfo*)surface->interfaceRef;
+    if (!si)
+        return kIOReturnNotReady;
+    if (si->addr) {
+        /* Drop any held lock view before freeing the record. */
+        vmUnlockSurface(myInstance, options, surface, NULL);
+    }
+    free(si);
+    surface->interfaceRef = 0;
+    /* Rebind the context to the framebuffer destination (worked
+     * example's vmFreeSurface resets destination). */
+    return vmSetSurface(myInstance, kIOBlitFramebufferDestination, NULL);
+}
+
+static IOReturn vmLockSurface(void* myInstance, IOOptionBits options,
+                              IOBlitSurface* surface, vm_address_t* address)
+{
+    GAType* me = (GAType*)myInstance;
+    if (!me || !surface || !address)
+        return kIOReturnBadArgument;
+    if (!me->_context)
+        return kIOReturnNotReady;
+    SurfaceInfo* si = (SurfaceInfo*)surface->interfaceRef;
+    if (!si)
+        return kIOReturnNotReady;
+    if (si->addr) {
+        *address = si->addr;
+        return kIOReturnSuccess;
+    }
+    uint64_t input = options;
+    uint64_t struct_out[2];
+    size_t struct_out_cnt = sizeof(struct_out);
+    IOReturn rc = IOConnectCallMethod(me->_context, kVM2DLockMemory,
+                                      &input, 1,
+                                      NULL, 0,
+                                      NULL, 0,
+                                      &struct_out[0], &struct_out_cnt);
+    if (rc != kIOReturnSuccess) {
+        GALog("LockSurface: kernel 0x%x\n", rc);
+        return rc;
+    }
+    *address = (vm_address_t)struct_out[0];
+    surface->rowBytes = (UInt32)struct_out[1];
+    /* accessFlags=2 — the QuickTime lesson, worked example :606. */
+    surface->accessFlags = 2;
+    si->addr = *address;
+    GALog("LockSurface: addr=%llx row=%u\n",
+          (unsigned long long)struct_out[0], surface->rowBytes);
+    return kIOReturnSuccess;
+}
+
+static IOReturn vmUnlockSurface(void* myInstance, IOOptionBits options,
+                                IOBlitSurface* surface, IOOptionBits* swapFlags)
+{
+    GAType* me = (GAType*)myInstance;
+    if (!me || !surface)
+        return kIOReturnBadArgument;
+    if (!me->_context)
+        return kIOReturnNotReady;
+    SurfaceInfo* si = (SurfaceInfo*)surface->interfaceRef;
+    if (!si)
+        return kIOReturnNotReady;
+    if (!si->addr)
+        return kIOReturnSuccess;
+    uint64_t input = options;
+    uint64_t output = 0;
+    uint32_t output_cnt = 1;
+    IOReturn rc = IOConnectCallMethod(me->_context, kVM2DUnlockMemory,
+                                      &input, 1,
+                                      NULL, 0,
+                                      &output, &output_cnt,
+                                      NULL, NULL);
+    if (swapFlags)
+        *swapFlags = (IOOptionBits)output;
+    if (rc == kIOReturnSuccess)
+        si->addr = 0;
+    GALog("UnlockSurface -> 0x%x\n", rc);
+    return rc;
+}
+
 // ---- Factory ------------------------------------------------------------
 
 static void _buildGAFTbl()
@@ -344,10 +478,10 @@ static void _buildGAFTbl()
     ga.Flush = (IOReturn (*)(void*, IOOptionBits))vmFlush;
     ga.Synchronize = (IOReturn (*)(void*, UInt32, UInt32, UInt32, UInt32, UInt32))vmSynchronize;
     ga.GetBeamPosition = (IOReturn (*)(void*, IOOptionBits, SInt32*))vmGetBeamPosition;
-    ga.AllocateSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*, void*))vmAllocateSurface;
-    ga.FreeSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*))vmFreeSurface;
-    ga.LockSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*, vm_address_t*))vmLockSurface;
-    ga.UnlockSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*, IOOptionBits*))vmUnlockSurface;
+    ga.AllocateSurface = vmAllocateSurface;
+    ga.FreeSurface = vmFreeSurface;
+    ga.LockSurface = vmLockSurface;
+    ga.UnlockSurface = vmUnlockSurface;
     ga.SwapSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*, IOOptionBits*))vmSwapSurface;
     ga.SetDestination = vmSetDestination;
     ga.__gaInterfaceReserved[1] = (void*)vmSetSurface;

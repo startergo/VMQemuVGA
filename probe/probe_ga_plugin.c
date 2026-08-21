@@ -27,11 +27,21 @@
 #include <IOKit/IOCFPlugIn.h>
 #include <IOKit/graphics/IOGraphicsInterface.h>
 
-int main(void)
+int main(int argc, char** argv)
 {
     /* The milestone-1 gate: the plugin refuses Start unless this env
      * var is set in ITS process — which is this one. */
     setenv("VM_GA_PROBE", "1", 1);
+
+    /* Milestone-2 rung 2: optional CGS surface id (argv[1]) — a real
+     * wID from the kernel log's SetIDMode lines. With it, the probe
+     * exercises Allocate/Lock/Unlock/Free; without it, that rung
+     * skips. argv[2], if present, is a deliberate UNKNOWN id for the
+     * negative control. */
+    int have_id = (argc > 1 && argv[1][0]);
+    unsigned long cgs_id = have_id ? strtoul(argv[1], NULL, 0) : 0;
+    unsigned long bad_id = (argc > 2 && argv[2][0]) ? strtoul(argv[2], NULL, 0)
+                                                    : 0xDEAD;
 
     kern_return_t kr;
     io_service_t fb;
@@ -113,6 +123,54 @@ int main(void)
     if (prc != kIOReturnSuccess) {
         printf("*** context OPEN but NOT USABLE — first real 2D call "
                "refused ***\n");
+        fflush(stdout);
+    }
+
+    if (have_id) {
+        /* CGS-surface rung: Allocate(kIOBlitHasCGSSurface, id) binds
+         * through the registry; Lock hands the app-task view. */
+        IOBlitSurface surf;
+        memset(&surf, 0, sizeof(surf));
+        surf.pixelFormat = kIO32BGRAPixelFormat;
+        surf.size.width = 0; surf.size.height = 0;   /* bound surface's */
+        prc = vt->AllocateSurface(ga, kIOBlitHasCGSSurface, &surf,
+                                  (void*)cgs_id);
+        printf("AllocateSurface(cgsID=0x%lx) -> 0x%x\n", cgs_id, prc);
+        fflush(stdout);
+        if (prc == kIOReturnSuccess) {
+            vm_address_t addr = 0;
+            prc = vt->LockSurface(ga, 0, &surf, &addr);
+            printf("LockSurface -> 0x%x addr=0x%lx rowBytes=%u\n",
+                   prc, (unsigned long)addr, surf.rowBytes);
+            fflush(stdout);
+            if (prc == kIOReturnSuccess && addr) {
+                /* Read the first pixel — the view is REAL if it reads. */
+                volatile uint32_t* px = (volatile uint32_t*)addr;
+                printf("LockSurface: first pixel = 0x%x\n", *px);
+                fflush(stdout);
+            }
+            IOOptionBits swap = 0;
+            prc = vt->UnlockSurface(ga, 0, &surf, &swap);
+            printf("UnlockSurface -> 0x%x swap=0x%x\n", prc, swap);
+            fflush(stdout);
+            prc = vt->FreeSurface(ga, 0, &surf);
+            printf("FreeSurface -> 0x%x\n", prc);
+            fflush(stdout);
+        }
+
+        /* Negative control: an id that cannot be in the registry must
+         * be REFUSED (NoResources) — a silent success here would be
+         * an unbacked bind. */
+        IOBlitSurface bad;
+        memset(&bad, 0, sizeof(bad));
+        bad.pixelFormat = kIO32BGRAPixelFormat;
+        prc = vt->AllocateSurface(ga, kIOBlitHasCGSSurface, &bad,
+                                  (void*)bad_id);
+        printf("NEGATIVE AllocateSurface(unknown 0x%lx) -> 0x%x "
+               "(expect 0xe00002bd NoResources)\n", bad_id, prc);
+        fflush(stdout);
+    } else {
+        printf("(no cgs id argument — surface rung skipped)\n");
         fflush(stdout);
     }
 

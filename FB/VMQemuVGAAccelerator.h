@@ -340,6 +340,10 @@ private:
     task_t m_task;
     uint64_t m_bound_id;        // SetSurface binding: cgsSurfaceID or fbIndex
     uint32_t m_bound_options;
+    /* App-task view of the bound surface's backing (two-task
+     * two-view: WindowServer maps via its client; the app maps via
+     * THIS client's owning task). Released at unlock/close. */
+    IOMemoryMap* m_app_map;
 
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
@@ -368,6 +372,10 @@ public:
                                   IOExternalMethodArguments* args);
     static IOReturn sFinish(OSObject* target, void* reference,
                             IOExternalMethodArguments* args);
+    static IOReturn sLockMemory(OSObject* target, void* reference,
+                                IOExternalMethodArguments* args);
+    static IOReturn sUnlockMemory(OSObject* target, void* reference,
+                                  IOExternalMethodArguments* args);
     static IOReturn sUseAccelUpdates(OSObject* target, void* reference,
                                      IOExternalMethodArguments* args);
     static IOReturn sStub(OSObject* target, void* reference,

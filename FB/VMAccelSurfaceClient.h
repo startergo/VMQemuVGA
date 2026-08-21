@@ -40,6 +40,19 @@ struct VMAccelSurface {
     task_t owning_task;
 };
 
+/* Cross-client surface registry (2026-08-21, GA milestone 2): the
+ * type-2 "2D context" client binds CGS surfaces BY ID; the surfaces
+ * live in VMAccelSurfaceClient instances (one surface each, id set at
+ * SetIDMode). This registry lets the type-2 client find them without
+ * a second connection (the worked example solved the same reach with
+ * a vendor-message broadcast; a registry is the direct equivalent).
+ * LIFETIME RULE for consumers: look up FRESH on every operation and
+ * hold no pointer across calls — the owning client may die and free
+ * the surface at any time. */
+bool vmSurfaceRegistryAdd(uint32_t id, VMAccelSurface* s);
+void vmSurfaceRegistryRemove(VMAccelSurface* s);
+VMAccelSurface* vmSurfaceRegistryFind(uint32_t id);
+
 class VMAccelSurfaceClient : public IOUserClient
 {
     OSDeclareDefaultStructors(VMAccelSurfaceClient);

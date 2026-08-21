@@ -252,6 +252,7 @@ void CLASS::stop(IOService* provider)
      * funnel through clientClose/clientDied -> terminate -> stop.
      * Same leak shape as the backing-descriptor table fix. */
     if (m_surface) {
+        vmSurfaceRegistryRemove(m_surface);
         if (m_surface->is_locked)
             IOLog("VMAccelSurfaceClient: stop with lock HELD "
                   "(client died mid-lock?) — releasing anyway\n");
@@ -477,6 +478,74 @@ IOReturn CLASS::setShapeBacking(void *p1, void *p2, void *p3, void *p4, void *p5
     return kIOReturnUnsupported;
 }
 
+/* ---- Cross-client surface registry (GA milestone 2) -------------------- */
+
+#define VM_SURFACE_REGISTRY_MAX 16
+struct VMRegEntry { uint32_t id; VMAccelSurface* s; };
+static VMRegEntry s_vmreg[VM_SURFACE_REGISTRY_MAX];
+static IOLock* s_vmreg_lock = NULL;
+
+static void vmreg_lock_init(void)
+{
+    if (!s_vmreg_lock)
+        s_vmreg_lock = IOLockAlloc();
+}
+
+bool vmSurfaceRegistryAdd(uint32_t id, VMAccelSurface* s)
+{
+    vmreg_lock_init();
+    if (!s || id == 0) return false;
+    IOLockLock(s_vmreg_lock);
+    bool ok = false;
+    for (int i = 0; i < VM_SURFACE_REGISTRY_MAX; i++) {
+        if (s_vmreg[i].s == s) {          /* re-setIDMode: update id */
+            s_vmreg[i].id = id;
+            ok = true;
+            break;
+        }
+    }
+    if (!ok) {
+        for (int i = 0; i < VM_SURFACE_REGISTRY_MAX; i++) {
+            if (s_vmreg[i].s == NULL) {
+                s_vmreg[i].id = id;
+                s_vmreg[i].s = s;
+                ok = true;
+                break;
+            }
+        }
+    }
+    IOLockUnlock(s_vmreg_lock);
+    return ok;
+}
+
+void vmSurfaceRegistryRemove(VMAccelSurface* s)
+{
+    if (!s || !s_vmreg_lock) return;
+    IOLockLock(s_vmreg_lock);
+    for (int i = 0; i < VM_SURFACE_REGISTRY_MAX; i++) {
+        if (s_vmreg[i].s == s) {
+            s_vmreg[i].s = NULL;
+            s_vmreg[i].id = 0;
+        }
+    }
+    IOLockUnlock(s_vmreg_lock);
+}
+
+VMAccelSurface* vmSurfaceRegistryFind(uint32_t id)
+{
+    if (!s_vmreg_lock) return NULL;
+    IOLockLock(s_vmreg_lock);
+    VMAccelSurface* found = NULL;
+    for (int i = 0; i < VM_SURFACE_REGISTRY_MAX; i++) {
+        if (s_vmreg[i].s && s_vmreg[i].id == id) {
+            found = s_vmreg[i].s;
+            break;
+        }
+    }
+    IOLockUnlock(s_vmreg_lock);
+    return found;
+}
+
 IOReturn CLASS::setIDMode(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
     /* First REAL selector (2026-08-15). Argument semantics verified
@@ -504,6 +573,9 @@ IOReturn CLASS::setIDMode(void *p1, void *p2, void *p3, void *p4, void *p5, void
         m_surface->surface_id = wid;
         m_surface->pixel_format = modebits;
         m_surface->bytes_per_pixel = bpp;
+        /* GA milestone 2: publish to the cross-client registry so the
+         * type-2 context can bind this surface by id. */
+        vmSurfaceRegistryAdd(wid, m_surface);
     }
     IOLog("VMAccelSurfaceClient: SetIDMode(wID=0x%x modebits=0x%x "
           "depth=0x%x bpp=%u%s) -> STORED\n",
