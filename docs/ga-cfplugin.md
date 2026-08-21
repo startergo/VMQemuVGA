@@ -178,6 +178,31 @@ ours can instead call the surface objects directly (same kext).
 4. **The substitute wires in.** CGLFlushDrawable in host-present mode
    drives the GA path; the shim's rect stash retires.
 
+## The COM call shape (learned 2026-08-21, cost one teardown arc)
+
+`QueryInterface` returns the **object** — a struct whose first field
+points at the vtable (`GAType._interface` → the plugin's static
+`IOGraphicsAcceleratorInterface`). The correct caller pattern:
+
+```c
+void* obj = <from QueryInterface>;
+IOGraphicsAcceleratorInterface* vt = *(IOGraphicsAcceleratorInterface***)obj;
+vt->Method(obj, ...);   // the OBJECT is thisPointer
+```
+
+Calling slots directly off the object reads misaligned fields —
+sometimes a working function by luck, sometimes `0x0` (RIP=0 crash;
+crash report shows the instance in rdi). Evidence chain: slot-dump
+disagreed with call outcomes → raw quadword dump mapped every word onto
+the GAType fields (context 0x1903 = 6403, accelerator 0x1803 = 6147,
+config {0,100}) → one-deref pattern → balanced teardown, exit 0.
+Milestone-2 callers (the substitute, the relay driver) use this shape.
+
+**Usability rung (milestone 2's first proof):** a context that opens is
+not proven usable — the SetIDMode lesson. The probe's next addition
+after Start is a real `SetSurface` call (selector 0), which is also
+milestone 2's first kernel implementation.
+
 ## Non-goals / cautions
 
 - Do NOT book this as readback elimination (adoption doc cost-estimate
