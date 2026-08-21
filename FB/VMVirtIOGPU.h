@@ -579,6 +579,16 @@ public:
     // property (IOAccelerator3D, model = "VirtIO GPU 3D", etc.) so the eventual
     // flip is one line. See m_3d_functional comment above.
     bool is3DFunctional() const { return m_3d_functional; }
+    // vm-cap3d boot-arg (2026-08-21 pre-registered flip experiment, LEDGER):
+    // a PUBLICATION-only gate for the 3D-capability booleans. Reads the boot
+    // arg once; m_3d_functional itself is never touched by it. Every live
+    // publication site of IOAccelerator3D / IOGraphicsAccelerator /
+    // IODisplayAccelerated / IOAcceleratorFamily on the virtio path publishes
+    // (functional_3d || this gate) — including the overwrite sites in
+    // VMVirtIOFramebuffer::open() and ::isConsoleDevice(), which would
+    // otherwise clobber the flip after start(). Ordinary boots (no arg)
+    // are byte-identical to the previous behavior.
+    static bool cap3dPublishGate();
     IOReturn enableFeature(uint32_t feature_flags);
     uint32_t readVirtIODeviceFeatures() const;
     bool supportsFeature(uint32_t feature_flags) const;

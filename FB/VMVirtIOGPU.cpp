@@ -6,6 +6,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <libkern/OSByteOrder.h>
+#include <pexpert/pexpert.h>
 
 // Include advanced managers so subclass can instantiate them
 #include "VMShaderManager.h"
@@ -19,6 +20,19 @@
 #define super IOAccelerator
 
 OSDefineMetaClassAndStructors(VMVirtIOGPU, IOAccelerator);
+
+/* vm-cap3d publication gate — see VMVirtIOGPU.h cap3dPublishGate().
+ * Boot-arg read once, cached; ordinary boots (no arg) return false and
+ * every gated site publishes exactly what it published before. */
+bool VMVirtIOGPU::cap3dPublishGate()
+{
+    static int gate = -1;
+    if (gate < 0) {
+        int v = 0;
+        gate = (PE_parse_boot_argn("vm-cap3d", &v, sizeof(v)) && v != 0) ? 1 : 0;
+    }
+    return gate != 0;
+}
 
 bool CLASS::init(OSDictionary* properties)
 {
@@ -454,9 +468,16 @@ bool CLASS::start(IOService* provider)
     // d74 origin: 3D acceleration properties on parent device so system_profiler can see them.
     // Values from m_3d_functional (currently always false — see VMVirtIOGPU.h). The transport
     // being offered (supports3D() == true) does not mean rendering works.
-    setProperty("IOGraphicsAccelerator", m_3d_functional ? kOSBooleanTrue : kOSBooleanFalse);
-    setProperty("IOAccelerator3D",       m_3d_functional ? kOSBooleanTrue : kOSBooleanFalse);
+    // vm-cap3d flip experiment: the two capability BOOLEANS additionally honor
+    // the publication gate (pre-registered LEDGER 2026-08-21); m_3d_functional
+    // itself and every other property here are untouched by the gate.
+    const bool cap3d_publish = m_3d_functional || cap3dPublishGate();
+    setProperty("IOGraphicsAccelerator", cap3d_publish ? kOSBooleanTrue : kOSBooleanFalse);
+    setProperty("IOAccelerator3D",       cap3d_publish ? kOSBooleanTrue : kOSBooleanFalse);
     setProperty("IOAcceleratorFamily", "IOGraphicsFamily");
+    IOLog("VMVirtIOGPU: capability booleans — m_3d_functional=%d vm-cap3d gate=%d -> publishing %s\n",
+          m_3d_functional ? 1 : 0, cap3dPublishGate() ? 1 : 0,
+          cap3d_publish ? "YES" : "no");
     
     // d74: ENABLE accelerator types array
     OSArray* accelTypes = OSArray::withCapacity(4);

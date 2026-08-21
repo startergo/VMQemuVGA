@@ -249,6 +249,25 @@ instrument is unchanged from the Aug-14 runs):**
 either boot — the commit timestamp is the pre-registration evidence;
 the commit-before-booting rule, learned at the 2a trio's expense.)
 
+**IMPLEMENTATION ADDENDUM (same day, committed before any boot):**
+gate implemented as `VMVirtIOGPU::cap3dPublishGate()` — boot-arg
+`vm-cap3d`, read once, cached (FB/VMVirtIOGPU.h, FB/VMVirtIOGPU.cpp).
+One DEVIATION from the registration's site list, required for the
+experiment to be performable: a full re-inventory of live publication
+sites (the original grep pattern missed `IOGraphicsAccelerator` — it
+matched only "Accelerated") found two OVERWRITE sites that run AFTER
+start() and would clobber the flip back to false:
+`VMVirtIOFramebuffer::open()` (IODisplayAccelerated) and
+`::isConsoleDevice()` (IODisplayAccelerated, IOGraphicsAccelerator,
+IOAcceleratorFamily). Both now carry the same gate; ordinary boots
+(no arg) publish exactly what they published before. Untouched: the
+no-transport else-branch, the QXL-path sites (not this guest), the
+dead commented block, and every non-boolean property. Loud logs at
+the start-blocks (`functional_3d=%d vm-cap3d gate=%d -> publishing
+%s`). Build: `4da4fec9592a97ef68a7101d5fae4a59`; "vm-cap3d" present
+in the binary (3 string hits). NOT deployed, NOT booted — the
+control-then-flip procedure (task #17) is next.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

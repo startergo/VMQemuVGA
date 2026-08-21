@@ -360,10 +360,15 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
     // When functional_3d flips true, all four properties flip with it via this
     // single block — no per-site edit needed.
     if (has_3d_support) {
-        setProperty("IOAcceleratorFamily",   functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
-        setProperty("IOGraphicsAccelerator", functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
-        setProperty("IODisplayAccelerated",  functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
-        setProperty("IOAccelerator3D",       functional_3d ? kOSBooleanTrue : kOSBooleanFalse);
+        // vm-cap3d flip experiment (pre-registered LEDGER 2026-08-21): the four
+        // capability booleans publish (functional_3d || gate). The model string
+        // above and the GL-config properties below stay keyed to functional_3d
+        // and are NOT touched by the gate.
+        const bool cap3d_publish = functional_3d || VMVirtIOGPU::cap3dPublishGate();
+        setProperty("IOAcceleratorFamily",   cap3d_publish ? kOSBooleanTrue : kOSBooleanFalse);
+        setProperty("IOGraphicsAccelerator", cap3d_publish ? kOSBooleanTrue : kOSBooleanFalse);
+        setProperty("IODisplayAccelerated",  cap3d_publish ? kOSBooleanTrue : kOSBooleanFalse);
+        setProperty("IOAccelerator3D",       cap3d_publish ? kOSBooleanTrue : kOSBooleanFalse);
 
         // OpenGL configuration for CGL discovery. IOGLBundleName is inconsistent
         // across nodes today (framebuffer publishes "GLEngine", accelerator child
@@ -372,8 +377,9 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
         setProperty("IOGLBundleName", "GLEngine");
         setProperty("IOAccelIndex", (uint64_t)0, 32);
 
-        IOLog("VMVirtIOFramebuffer::start() - 3D transport offered; functional_3d=%d (properties reflect rendering state, not transport)\n",
-              functional_3d ? 1 : 0);
+        IOLog("VMVirtIOFramebuffer::start() - 3D transport offered; functional_3d=%d vm-cap3d gate=%d -> publishing %s\n",
+              functional_3d ? 1 : 0, VMVirtIOGPU::cap3dPublishGate() ? 1 : 0,
+              cap3d_publish ? "YES" : "no");
     } else {
         // No transport — no 3D claims at all.
         setProperty("IOAcceleratorFamily", kOSBooleanFalse);
@@ -1170,7 +1176,11 @@ IOReturn VMVirtIOFramebuffer::open(void)
     
     // CRITICAL: Force GUI mode properties when opened by WindowServer
     // NOTE: Keep IOConsoleDevice=true (set by isConsoleDevice()) for QXL-style dual capability
-    setProperty("IODisplayAccelerated", kOSBooleanFalse);  // DISABLE acceleration - no Metal support yet
+    // vm-cap3d flip experiment: this is an OVERWRITE site (runs after start());
+    // ungated it would clobber the flip's IODisplayAccelerated back to false.
+    // Ordinary boots publish exactly what they published before (false).
+    setProperty("IODisplayAccelerated",
+                VMVirtIOGPU::cap3dPublishGate() ? kOSBooleanTrue : kOSBooleanFalse);
     
     IOLog("VMVirtIOFramebuffer::open() - *** GUI MODE FORCED ON - CONSOLE MODE DISABLED ***\n");
     
@@ -1841,13 +1851,18 @@ bool VMVirtIOFramebuffer::isConsoleDevice(void)
     // This allows proper console boot and GUI transitions
     
     // DISABLED: Accelerator properties cause WindowServer crashes on Catalina
-    setProperty("IODisplayAccelerated", kOSBooleanFalse);
-    setProperty("IOGraphicsAccelerator", kOSBooleanFalse);
+    // vm-cap3d flip experiment: OVERWRITE site (runs after start()); carries
+    // the same publication gate so the flip survives. Ordinary boots unchanged.
+    setProperty("IODisplayAccelerated",
+                VMVirtIOGPU::cap3dPublishGate() ? kOSBooleanTrue : kOSBooleanFalse);
+    setProperty("IOGraphicsAccelerator",
+                VMVirtIOGPU::cap3dPublishGate() ? kOSBooleanTrue : kOSBooleanFalse);
     setProperty("IOConsoleDevice", kOSBooleanTrue);        // Always console capable
     setProperty("IOPrimaryDisplay", kOSBooleanTrue);       // Primary display
     setProperty("IOMatchCategory", "IOFramebuffer");
     // REMOVED: IOGLBundleName triggers WindowServer to try using OpenGL/Metal
-    setProperty("IOAcceleratorFamily", kOSBooleanFalse);   // DISABLED: Causes WindowServer crashes
+    setProperty("IOAcceleratorFamily",
+                VMVirtIOGPU::cap3dPublishGate() ? kOSBooleanTrue : kOSBooleanFalse);   // DISABLED: Causes WindowServer crashes
     
     // DISABLE AGDC properties - tell WindowServer we DON'T support AGDC (d57 fix)
     setProperty("AGDC", kOSBooleanFalse);
