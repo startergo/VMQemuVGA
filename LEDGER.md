@@ -857,6 +857,23 @@ kext change — same gated kext, one variable: the stub's exports):**
   would become the variable that muddies the run).
 - Phase 2 also samples *psvc across ≥3 probe processes for the
   launch-order test.
+- **PHASE-1 SECOND PAYLOAD (pre-registered):** the same trace resolves
+  the *psvc handle question free — observe what the loader does with
+  the slot on a GLD that SUCCEEDS: read *psvc at init entry and again
+  at each later gld* entry (slot address is the stable shared-cache
+  global 0x7fff70b72004, no ASLR on 10.6); changed ⇒ written during
+  the handshake; constant-but-read ⇒ input only; never re-read ⇒
+  stored once. Acceptance-path observation, not the refusal path — a
+  driver that refuses teaches the give-up, and it is acceptance we
+  must imitate.
+- **SLOT-DIVERGENCE CAUTION (pre-registered):** GLRendererFloat
+  occupies a DIFFERENT slot than a registry-named GLD — it is the
+  software renderer at the END of the fallback chain; a registry-named
+  GLD loads between the engine core and it. The loader may interrogate
+  the two differently. A divergence between phase 1's chain and
+  phase 2's chain is a FINDING about slot-dependent behaviour, NOT a
+  sign phase 2 went wrong — registered here so the natural
+  "something broke" misreading has a written counter.
 
 ---
 
