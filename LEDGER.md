@@ -268,6 +268,58 @@ the start-blocks (`functional_3d=%d vm-cap3d gate=%d -> publishing
 in the binary (3 string hits). NOT deployed, NOT booted — the
 control-then-flip procedure (task #17) is next.
 
+**RUN 1 — CONTROL BOOT (15:14, kext 4da4fec9, no arg):** gate=0 logged
+("functional_3d=0 vm-cap3d gate=0 -> publishing no", two FB starts at
+15:14:11/15:18:04); ioreg three = No; desktop normal; probe_cgs_requester
+(15:22:48–15:23:10): window 19, cid=35375, nrend=1 accelerated=0,
+accelerated-pf npix=0 (the wall), CGSAddSurface OK sid=0xffe9743,
+CGLSetSurface(ctx,cid,wid,sid) OK, remove OK, exit 0; kernel window:
+ZERO surface-client/newUserClient lines while the boot as a whole logged
+658 surface-client lines. **AUG-14 SILENT BASELINE REPRODUCED on the
+current kext — control prediction met.** Observation: the
+parent-device VMVirtIOGPU::start() property block never logs on this
+boot path (no "VRAM properties"/"IOAccelerator ID"/"capability
+booleans" lines post-15:10) — the gated edit there is inert; the FB
+node is the sole boolean publisher and the verification target. Also:
+live boot-args carried THREE args beyond the documented reference —
+`vm-accel-surface=1 tlbto_us=0 vti=9` — read before writing, as the
+rule requires.
+
+**RUN 2 — FLIP BOOT (boot 15:28:47, boot-args += vm-cap3d=1 via
+config.plist full-string edit, verified read-back):** gate=1 logged
+("-> publishing YES"); ioreg FOUR booleans = Yes (IOAccelerator3D,
+IOGraphicsAccelerator, IODisplayAccelerated, IOAcceleratorFamily);
+boot survived, WindowServer running, desktop VISUALLY NORMAL (the
+outcome-3 hazard window passed). probe_cgs_requester
+(15:32:06–15:32:28): output IDENTICAL to control (window 22, sid=
+0xe3d5083, nrend=1 accelerated=0, npix=0 wall, all CGS OK); kernel
+window: ZERO surface-client lines; the only window-creation reaction
+was VMVirtIOFramebuffer::getVRAMRange at 15:32:07 — WindowServer
+serving the new window through the FRAMEBUFFER (software) path.
+**SCORED: OUTCOME 2 — STILL SILENT.** Readings (i) deeper gate and
+(ii) window qualification both live, per the registration.
+
+**DISCRIMINATOR — run-specific prediction recorded BEFORE the run
+(2026-08-21, committed before execution):** variant probe
+`probe/probe_cgs_glwindow.m` — the AppKit GL idiom the plain probe
+lacks: real NSWindow + NSOpenGLContext + `setView:` + `update` +
+makeCurrentContext + glClear + `flushBuffer` (the chain Gecko's swizzle
+suppresses; standalone app, no substitute, no IOKit calls). Bonus
+datum: CGLGetSurface on the REAL context (legal — real ctx, not a shim
+token) returns the drawable's {sid, type, w, h}. DEVIATION from the
+registration's "separate boot": runs on THIS flip boot — the
+plain-probe measurement is complete and timestamped, the boot variable
+is unchanged, and a separate boot would only re-establish identical
+state. Predictions:
+- ADOPTS — surface-client/newUserClient lines inside the
+  setView/flushBuffer window → reading (ii): window qualification was
+  the axis; the plain probe's window was not a candidate.
+- SILENT AGAIN — zero lines → reading (i) strengthens: capability
+  insufficient, deeper gate; the GLD question inherits this evidence.
+- REAL-GL DESTABILIZATION — WindowServer crash/blue/garbage during the
+  real windowed-GL attach → outcome-3-flavored evidence surfacing via
+  the GL path; record and stop.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
