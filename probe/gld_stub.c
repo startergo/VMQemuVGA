@@ -1,25 +1,20 @@
 /*
- * gld_stub.c — Phase B1 of the pre-registered stub-GLD first rung
- * (LEDGER 2026-08-21 evening). Logging stub, no rendering, no
- * capability claims. Placed at the loader path OBSERVED in Phase A:
- *   /System/Library/Frameworks/OpenGL.framework/Versions/A/Resources/
- *   VMVirtIOGLEngine.bundle/VMVirtIOGLEngine
- * (flat layout — the trace showed dlopen of GLEngine.bundle/GLEngine
- * directly, no Contents/MacOS; name source = the accelerator node's
- * IOGLBundleName="VMVirtIOGLEngine", still live per the FB comment).
- *
- * Every export appends "CALL <name>" to /tmp/vm_gld_stub.log and
- * returns 0 — the REQUIRED instrumentation separating outcome 2
- * (NEVER LOADED) from outcome 3 (LOADED, NOT ENUMERATED) by evidence.
- * x86-64 SysV: caller-managed args make void-bodied, long-returning
- * stubs safe for unknown signatures (args untouched, RAX=0).
- *
- * Entry-point names generated verbatim from
+ * gld_stub.c — rung-3 stub GLD (LEDGER 2026-08-21 night, pre-registered).
+ * Per-entry HONEST REFUSALS per trampoline conventions
+ * (../../VMsvga2-modern/GLD/VMsvga2GLDriver.h + .c fallbacks):
+ *   GLDReturn entries (24 explicit + 47 generic) -> return -1
+ *     (gldGetRendererInfo fallback returns -1; 0 is SUCCESS-with-filled-struct)
+ *   _Bool entry (gldGetVersion)                  -> return false
+ *   void entries (5, below)                      -> log only
+ * No pointer-returning entries exist in the header — all non-void/bool
+ * returns are int-shaped. UNDER-CLAIM BY CONSTRUCTION: a loaded stub
+ * refuses every capability query; the first-caller log is a primary
+ * observable. Entry names generated verbatim from
  * ../../VMsvga2-modern/GLD/EntryPointNames.c (Zenith432, MIT).
+ * Loaded via /S/L/E/VMVirtIOGLEngine.bundle (Contents/MacOS layout,
+ * stock-GLD shape; additive — no Apple bundle touched).
  */
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -37,101 +32,103 @@ static void ep_log(const char *tag)
 __attribute__((constructor))
 static void gld_stub_loaded(void)
 {
-    ep_log("STUB LOADED (constructor)");
+    ep_log("STUB LOADED (constructor, rung 3)");
 }
 
-#define EP(n) long n(void) { ep_log("CALL " #n); return 0; }
+#define EPR(n) long n(void) { ep_log("CALL " #n " -> -1 (GLDReturn refusal)"); return -1; }
+#define EPB(n) long n(void) { ep_log("CALL " #n " -> false"); return 0; }
+#define EPV(n) void n(void) { ep_log("CALL " #n " (void)"); }
 
-/* ==== generated from VMsvga2 EntryPointNames.c ==== */
-EP(gldGetVersion)
-EP(gldGetRendererInfo)
-EP(gldChoosePixelFormat)
-EP(gldDestroyPixelFormat)
-EP(gldCreateShared)
-EP(gldDestroyShared)
-EP(gldCreateContext)
-EP(gldReclaimContext)
-EP(gldDestroyContext)
-EP(gldAttachDrawable)
-EP(gldInitDispatch)
-EP(gldUpdateDispatch)
-EP(gldGetString)
-EP(gldGetError)
-EP(gldSetInteger)
-EP(gldGetInteger)
-EP(gldFlush)
-EP(gldFinish)
-EP(gldTestObject)
-EP(gldFlushObject)
-EP(gldFinishObject)
-EP(gldWaitObject)
-EP(gldCreateTexture)
-EP(gldIsTextureResident)
-EP(gldModifyTexture)
-EP(gldLoadTexture)
-EP(gldUnbindTexture)
-EP(gldReclaimTexture)
-EP(gldDestroyTexture)
-EP(gldCreateTextureLevel)
-EP(gldGetTextureLevelInfo)
-EP(gldGetTextureLevelImage)
-EP(gldModifyTextureLevel)
-EP(gldDestroyTextureLevel)
-EP(gldCreateBuffer)
-EP(gldLoadBuffer)
-EP(gldFlushBuffer)
-EP(gldPageoffBuffer)
-EP(gldUnbindBuffer)
-EP(gldReclaimBuffer)
-EP(gldDestroyBuffer)
-EP(gldGetMemoryPlugin)
-EP(gldSetMemoryPlugin)
-EP(gldTestMemoryPlugin)
-EP(gldFlushMemoryPlugin)
-EP(gldDestroyMemoryPlugin)
-EP(gldCreateFramebuffer)
-EP(gldUnbindFramebuffer)
-EP(gldReclaimFramebuffer)
-EP(gldDestroyFramebuffer)
-EP(gldCreatePipelineProgram)
-EP(gldGetPipelineProgramInfo)
-EP(gldModifyPipelineProgram)
-EP(gldUnbindPipelineProgram)
-EP(gldDestroyPipelineProgram)
-EP(gldCreateProgram)
-EP(gldDestroyProgram)
-EP(gldCreateVertexArray)
-EP(gldModifyVertexArray)
-EP(gldFlushVertexArray)
-EP(gldUnbindVertexArray)
-EP(gldReclaimVertexArray)
-EP(gldDestroyVertexArray)
-EP(gldCreateFence)
-EP(gldDestroyFence)
-EP(gldCreateQuery)
-EP(gldGetQueryInfo)
-EP(gldDestroyQuery)
-EP(gldObjectPurgeable)
-EP(gldObjectUnpurgeable)
-EP(gldCreateComputeContext)
-EP(gldDestroyComputeContext)
-EP(gldLoadHostBuffer)
-EP(gldSyncBufferObject)
-EP(gldSyncTexture)
-EP(gldGenerateTexMipmaps)
-EP(gldCopyTexSubImage)
-EP(gldModifyTexSubImage)
-EP(gldBufferSubData)
-EP(gldModifyQuery)
-EP(gldDiscardFramebuffer)
-EP(gldGetTextureLevel)
-EP(gldDeleteTextureLevel)
-EP(gldDeleteTexture)
-EP(gldAllocVertexBuffer)
-EP(gldCompleteVertexBuffer)
-EP(gldFreeVertexBuffer)
-EP(gldGetMemoryPluginData)
-EP(gldSetMemoryPluginData)
-EP(gldFinishMemoryPluginData)
-EP(gldTestMemoryPluginData)
-EP(gldDestroyMemoryPluginData)
+/* ==== generated from VMsvga2 EntryPointNames.c + header return types ==== */
+EPB(gldGetVersion)
+EPR(gldGetRendererInfo)
+EPR(gldChoosePixelFormat)
+EPR(gldDestroyPixelFormat)
+EPR(gldCreateShared)
+EPR(gldDestroyShared)
+EPR(gldCreateContext)
+EPR(gldReclaimContext)
+EPR(gldDestroyContext)
+EPR(gldAttachDrawable)
+EPR(gldInitDispatch)
+EPR(gldUpdateDispatch)
+EPR(gldGetString)
+EPV(gldGetError)
+EPR(gldSetInteger)
+EPR(gldGetInteger)
+EPR(gldFlush)
+EPR(gldFinish)
+EPR(gldTestObject)
+EPR(gldFlushObject)
+EPR(gldFinishObject)
+EPR(gldWaitObject)
+EPR(gldCreateTexture)
+EPR(gldIsTextureResident)
+EPR(gldModifyTexture)
+EPR(gldLoadTexture)
+EPV(gldUnbindTexture)
+EPR(gldReclaimTexture)
+EPV(gldDestroyTexture)
+EPR(gldCreateTextureLevel)
+EPR(gldGetTextureLevelInfo)
+EPR(gldGetTextureLevelImage)
+EPR(gldModifyTextureLevel)
+EPR(gldDestroyTextureLevel)
+EPR(gldCreateBuffer)
+EPR(gldLoadBuffer)
+EPR(gldFlushBuffer)
+EPR(gldPageoffBuffer)
+EPR(gldUnbindBuffer)
+EPR(gldReclaimBuffer)
+EPR(gldDestroyBuffer)
+EPR(gldGetMemoryPlugin)
+EPR(gldSetMemoryPlugin)
+EPR(gldTestMemoryPlugin)
+EPR(gldFlushMemoryPlugin)
+EPR(gldDestroyMemoryPlugin)
+EPR(gldCreateFramebuffer)
+EPR(gldUnbindFramebuffer)
+EPR(gldReclaimFramebuffer)
+EPR(gldDestroyFramebuffer)
+EPR(gldCreatePipelineProgram)
+EPR(gldGetPipelineProgramInfo)
+EPR(gldModifyPipelineProgram)
+EPR(gldUnbindPipelineProgram)
+EPR(gldDestroyPipelineProgram)
+EPR(gldCreateProgram)
+EPR(gldDestroyProgram)
+EPR(gldCreateVertexArray)
+EPR(gldModifyVertexArray)
+EPR(gldFlushVertexArray)
+EPR(gldUnbindVertexArray)
+EPR(gldReclaimVertexArray)
+EPR(gldDestroyVertexArray)
+EPR(gldCreateFence)
+EPR(gldDestroyFence)
+EPR(gldCreateQuery)
+EPR(gldGetQueryInfo)
+EPR(gldDestroyQuery)
+EPR(gldObjectPurgeable)
+EPR(gldObjectUnpurgeable)
+EPR(gldCreateComputeContext)
+EPR(gldDestroyComputeContext)
+EPR(gldLoadHostBuffer)
+EPR(gldSyncBufferObject)
+EPR(gldSyncTexture)
+EPR(gldGenerateTexMipmaps)
+EPR(gldCopyTexSubImage)
+EPR(gldModifyTexSubImage)
+EPR(gldBufferSubData)
+EPR(gldModifyQuery)
+EPR(gldDiscardFramebuffer)
+EPR(gldGetTextureLevel)
+EPR(gldDeleteTextureLevel)
+EPR(gldDeleteTexture)
+EPR(gldAllocVertexBuffer)
+EPR(gldCompleteVertexBuffer)
+EPR(gldFreeVertexBuffer)
+EPR(gldGetMemoryPluginData)
+EPR(gldSetMemoryPluginData)
+EPR(gldFinishMemoryPluginData)
+EPR(gldTestMemoryPluginData)
+EPR(gldDestroyMemoryPluginData)

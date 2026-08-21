@@ -236,7 +236,8 @@ bool CLASS::start(IOService* provider)
     /* GA discovery property set (2026-08-20, ioreg-audited — docs/
      * ga-cfplugin.md). The previously published invented set (measured
      * live in ioreg, none with artifact provenance) is REMOVED:
-     * IOGLBundleName="VMVirtIOGLEngine" (a dead bundle), IOGLContext,
+     * IOGLBundleName="VMVirtIOGLEngine" (removed; returns GATED below
+     * per rung 3 — see the vm-cap3d block), IOGLContext,
      * IOOpenGLRenderer, RendererID=0x24600, numeric
      * IOAccelTypes/IOGLAccelTypes/IOSurfaceAccelTypes/IOVideoAccelTypes
      * =7 (the numeric IOAccelTypes on the accelerator competed with the
@@ -270,6 +271,19 @@ bool CLASS::start(IOService* provider)
     }
     setProperty("IOAccelIndex", (uint32_t)0, 32);
     setProperty("IOAccelRevision", (uint32_t)2, 32);
+    /* RUNG 3 (LEDGER 2026-08-21 night, pre-registered): the renderer
+     * claim per the worked example — IOGLBundleName on the ACCELERATOR,
+     * option-gated (the VMsvga2Accel.cpp:616-636 pattern), naming a
+     * bundle that exists at /S/L/E/<name>.bundle with the directory
+     * name EXACTLY equal to this value (the era's
+     * VMVirtIOGLDriver/VMVirtIOGLEngine mismatch avoided by
+     * construction). Gated by vm-cap3d; ordinary boots publish nothing
+     * — byte-identical to the pre-rung state. */
+    if (VMVirtIOGPU::cap3dPublishGate()) {
+        setProperty("IOGLBundleName", "VMVirtIOGLEngine");
+        IOLog("VMQemuVGAAccelerator: vm-cap3d gate=1 -> "
+              "IOGLBundleName=VMVirtIOGLEngine published (rung 3)\n");
+    }
     /* AccelCaps (QE claim) DEFERRED to milestone 2: published with only
      * stub surface slots, it invited WindowServer into the accelerated
      * path that then aborted — the open/close loop that broke the
