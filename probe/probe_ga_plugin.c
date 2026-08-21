@@ -36,7 +36,7 @@ int main(void)
     kern_return_t kr;
     io_service_t fb;
     IOCFPlugInInterface** plug = NULL;
-    IOGraphicsAcceleratorInterface* ga = NULL;
+    void* ga = NULL;   /* the OBJECT (COM-style; deref for the vtable) */
     SInt32 score = 0;
     HRESULT qrc;
 
@@ -77,24 +77,39 @@ int main(void)
         return 4;
     }
 
-    IOReturn prc = ga->Probe(ga, NULL, fb, &score);
-    printf("Probe -> 0x%x\n", prc);
-    if (prc != kIOReturnSuccess) { printf("*** FAIL: Probe ***\n"); return 5; }
+    /* COM shape (observed in the raw dump 2026-08-21): QueryInterface
+     * returns the OBJECT — first field points at the vtable struct
+     * (GAType._interface -> the plugin's static `ga`). Dereference once;
+     * pass the OBJECT as thisPointer. Calling slots directly off the
+     * object was the teardown segfault: misaligned reads, RIP=0. */
+    IOGraphicsAcceleratorInterface* vt =
+        *(IOGraphicsAcceleratorInterface***)ga;
+    printf("vtable deref: object=%p vtable=%p\n", (void*)ga, (void*)vt);
+    if (!vt) { printf("*** FAIL: object has no vtable pointer ***\n"); return 5; }
 
-    prc = ga->Start(ga, NULL, fb);
+    IOReturn prc = vt->Probe(ga, NULL, fb, &score);
+    printf("Probe -> 0x%x\n", prc);
+    if (prc != kIOReturnSuccess) { printf("*** FAIL: Probe ***\n"); return 6; }
+
+    prc = vt->Start(ga, NULL, fb);
     printf("Start -> 0x%x\n", prc);
     if (prc != kIOReturnSuccess) {
         printf("*** FAIL: Start (see mode above: FindAccelerator vs "
                "IOServiceOpen) ***\n");
-        return 6;
+        return 7;
     }
 
     printf("*** PASS — plugin instantiated, started, type-2 context open "
            "(verify kernel log: '2D context started') ***\n");
+    fflush(stdout);
 
-    ga->Stop(ga);
-    ga->Release(ga);
+    fprintf(stderr, "probe: teardown: Stop\n");
+    vt->Stop(ga);
+    fprintf(stderr, "probe: teardown: Release(x2 — object + plugin handle)\n");
+    vt->Release(ga);
     (*plug)->Release(plug);
+    fprintf(stderr, "probe: teardown: IOObjectRelease(fb)\n");
     IOObjectRelease(fb);
+    fprintf(stderr, "probe: teardown complete\n");
     return 0;
 }

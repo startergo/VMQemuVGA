@@ -93,10 +93,17 @@ static ULONG vmRelease(void* myInstance)
     GAType* me = (GAType*)myInstance;
     if (!me)
         return 0;
+    GALog("Release: refcount %lu -> %lu\n",
+          (unsigned long)me->_refCount, (unsigned long)(me->_refCount - 1));
     if (--me->_refCount == 0) {
         CFUUIDRef factoryID = me->_factoryID;
         free(me);
         if (factoryID) {
+            /* NOTE: RemoveInstanceForFactory from inside the plugin's own
+             * Release can drop the last bundle reference and unload the
+             * plugin WHILE this frame is executing. Suspect #1 for the
+             * probe's teardown segfault — the marks name it if so. */
+            GALog("Release: final — RemoveInstanceForFactory\n");
             CFPlugInRemoveInstanceForFactory(factoryID);
             CFRelease(factoryID);
         }
@@ -204,7 +211,7 @@ cleanup:
 static IOReturn vmStop(void* myInstance)
 {
     GAType* me = (GAType*)myInstance;
-    GALog("Stop\n");
+    GALog("Stop: enter\n");
     if (!me)
         return kIOReturnBadArgument;
     if (me->_context) {
@@ -214,11 +221,14 @@ static IOReturn vmStop(void* myInstance)
                             NULL, 0, NULL, 0, NULL, NULL);
         IOServiceClose(me->_context);
         me->_context = 0;
+        GALog("Stop: context closed\n");
     }
     if (me->_accelerator) {
         IOObjectRelease(me->_accelerator);
         me->_accelerator = 0;
+        GALog("Stop: accelerator released\n");
     }
+    GALog("Stop: exit\n");
     return kIOReturnSuccess;
 }
 
