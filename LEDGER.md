@@ -818,6 +818,46 @@ kext change — same gated kext, one variable: the stub's exports):**
   handshake named directly, not by hypothesis. No second symbol guess;
   an enumeration with no end is the failure mode this rule prevents.
 
+**RUNG 4 RESULT — HANDSHAKE FIRES; gldGetVersion IS THE GATE
+(18:17–18:24; baseline restored 18:24:51 gate=0):**
+- The chain, mapped in both runs: constructor →
+  **gldInitializeLibrary(psvc=0x7fff70b72004, arg1=0x7fff70b72084,
+  GLDisplayMask=0x1, arg3/arg4 stack ptrs)** → gldGetVersion (4×int*
+  outs) → **false** → gldTerminateLibrary. Clean teardown; desktop
+  stable; census unchanged; the refusal convention's second
+  vindication — the false answer was consumed as a clean give-up, no
+  garbage, no crash.
+- *psvc varies per process (0x3a03 pid=203, 0x3903 pid=211): the
+  POINTER is a shared-cache global slot (stable); the stored HANDLE
+  varies; two values a hex digit apart read as mach-port-name /
+  sequential-service-handle class — plausibly the driver connection
+  the header name implies. INTERPRETATION OPEN; the settle-it test is
+  pre-registered below (launch-order correlation across ≥3 processes).
+- The budget rule never triggered — the hypothesis landed first time.
+
+**RUNG 5 PRE-REGISTERED (two phases; committed before any run):**
+- **Phase 1 — PURE OBSERVATION, baseline boot, ZERO changes** (no
+  gate, no bundle): dtrace pid probes around the probe process on the
+  STOCK flow — gldGetVersion entry/return with the four int* contents
+  read after return, gldInitializeLibrary args, and every subsequent
+  gld* call in order. This yields (a) the TRUE version values the
+  loader accepts (from the working software GLD — GLRendererFloat
+  answers this interrogation successfully in every process), (b) the
+  real chain beyond version — what a true answer will face, and (c)
+  the same datum set for comparison against our stub's handshake.
+- **Phase 2 — THE VERSION FLIP, one variable:** gldGetVersion returns
+  TRUE and writes the OBSERVED phase-1 values into its four int* outs;
+  gldInitializeLibrary logs as now; **ALL 92 other entries keep the
+  refusal conventions** — the stub stays honest everywhere else so the
+  next sequence reads as a clean chain (refusal's third vindication
+  pending), never a crash. Prediction: the loader proceeds to the next
+  entry (presumably gldGetRendererInfo) and the log maps one more
+  step; our -1 refusal there should again produce a clean give-up.
+  NO guessed version numbers — observed values only (a guessed value
+  would become the variable that muddies the run).
+- Phase 2 also samples *psvc across ≥3 probe processes for the
+  launch-order test.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

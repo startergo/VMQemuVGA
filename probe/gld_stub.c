@@ -39,6 +39,37 @@ static void gld_stub_loaded(void)
 #define EPB(n) long n(void) { ep_log("CALL " #n " -> false"); return 0; }
 #define EPV(n) void n(void) { ep_log("CALL " #n " (void)"); }
 
+/* RUNG 4 (pre-registered): the handshake entries — declared in the
+ * trampoline header with real signatures but ABSENT from the 92-name
+ * table; hypothesized separately-dlsym'd by the loader as the GLD
+ * init/teardown connection. gldInitializeLibrary LOGS ITS ARGUMENTS
+ * (psvc dereferenced when non-NULL — the first kernel-side datum) and
+ * returns nothing (void: no success claim possible). */
+void gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
+                          void* arg3, void* arg4)
+{
+    FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
+    if (f) {
+        time_t t = time(NULL);
+        char ts[32];
+        strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
+        fprintf(f, "[%s pid=%d] CALL gldInitializeLibrary "
+                 "psvc=%p%s arg1=%p GLDisplayMask=0x%x arg3=%p arg4=%p\n",
+                 ts, (int)getpid(), (void*)psvc,
+                 psvc ? " (*psvc below)" : " (NULL)",
+                 arg1, GLDisplayMask, arg3, arg4);
+        if (psvc)
+            fprintf(f, "[%s pid=%d]   *psvc = %d (0x%x)\n",
+                    ts, (int)getpid(), *psvc, *psvc);
+        fclose(f);
+    }
+}
+
+void gldTerminateLibrary(void)
+{
+    ep_log("CALL gldTerminateLibrary (void)");
+}
+
 /* ==== generated from VMsvga2 EntryPointNames.c + header return types ==== */
 EPB(gldGetVersion)
 EPR(gldGetRendererInfo)
