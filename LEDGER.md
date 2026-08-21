@@ -583,7 +583,30 @@ Procedure: pre-flight both files in place before reboot; on the flip
 boot verify gate=1 + booleans Yes BEFORE the probe; probe + trace +
 stub-log check in one session; score; then restore boot-args, move
 Info.plist aside, remove bundle, return to baseline.
-  vm-cap3d flip boot.
+
+**RUNG 2 RESULT — STILL STAT-ONLY (17:10–17:16, flip boot, scored and
+baselined):** boot survived with the bundle present (desktop visually
+normal; nothing loaded the stub at boot — no log before the probe);
+gate=1 + booleans Yes verified pre-probe. The loader stat'd
+Resources/VMVirtIOGLEngine.bundle at 17:14:22 and did NOT open it;
+census unchanged (nrend=1 accelerated=0 npix=0); stub never loaded;
+the ×9 pref reads reproduced (generic main-bundle lookups). Baseline
+restored: boot-args clean (17:16:20 gate=0), Info.plist moved aside,
+bundle removed. **Selection ignores the capability booleans.** The two
+rungs CONVERGE with the flip experiment: the booleans move neither
+enumeration (flip rung) nor selection (this rung). Candidacy via the
+main-bundle name is real and capability-independent; what
+distinguishes GLEngine/GLRendererFloat as CHOSEN is the next locus.
+Structural reading of the observed sequence: GLEngine is the ENGINE
+(always opened); GLRendererFloat is the software RENDERER enumerated
+into nrend — renderer enumeration must learn about renderer bundles
+from a source that is neither the Resources directory listing nor the
+main-bundle candidate name nor the booleans. Leading candidate: an
+IOKit-side renderer claim on the accelerator (renderer-id-class
+properties) — exactly what the Nov-2025 Info.plist's GLRendererProperty
+block (VendorID/DeviceID/RendererID 0x00024600) was guessing at. That
+is a NEW pre-registration (kext-side renderer-id publication), not
+today's work.
 
 ---
 
