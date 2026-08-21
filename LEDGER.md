@@ -786,6 +786,26 @@ the load level; loaded, not yet interrogated):**
   baseline byte-identical, verified 18:01:08 gate=0 boot); bundle
   removed; boot-args restored; guest at baseline.
 
+**RUNG 4 PRE-REGISTRATION (same night, committed before the run; NO
+kext change — same gated kext, one variable: the stub's exports):**
+- gldInitializeLibrary exported with its REAL header signature
+  `void gldInitializeLibrary(int* psvc, void*, int GLDisplayMask,
+  void*, void*)` — the body LOGS THE ARGUMENT VALUES (psvc pointer,
+  GLDisplayMask) as observation, returns nothing (void = honest — no
+  success claim possible on a void entry). gldTerminateLibrary(void)
+  exports log-only. All 92 existing entries unchanged.
+- Outcomes:
+  1. **HANDSHAKE FIRES** — first CALL line is gldInitializeLibrary;
+     the arg values are the datum (psvc ≠ NULL would be the driver
+     connection the real GLD receives). Sub-case 1a: the loader then
+     calls gldGetRendererInfo → the interrogation chain is MAPPED;
+     our -1 refusal shows; entry-point semantics become the work.
+  2. **SILENT STILL** — no call to any entry: the handshake theory
+     dies; the interrogation gate is elsewhere again.
+  3. **DESTABILIZED** — same recovery (arg + bundle; slclean).
+- Procedure as rung 3: bundle to /S/L/E, vm-cap3d=1, verify
+  publication + desktop before probe, probe ×2, score, restore.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
