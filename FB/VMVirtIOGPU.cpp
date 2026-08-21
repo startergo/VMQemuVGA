@@ -9294,10 +9294,17 @@ IOReturn VMVirtIOGPUUserClient::attachBackingUser(uint32_t resource_id,
         desc->release();
         return kIOReturnNoMemory;
     }
-    if (nr_entries == 1) {
-        IOLog("VMVirtIOGPUUserClient::attachBackingUser: WARN nr_entries=1 — "
-              "allocator handed contiguous memory by luck, or walk is broken. "
-              "Per-segment addr below should disambiguate.\n");
+    if (nr_entries == 1 && total_length > 4096) {
+        /* Only warn when a single segment is SUSPICIOUS: sub-page
+         * allocations (4 B, 2.2 KB) land in one segment by design —
+         * warning on them buried the real signal (the uniq -c filter
+         * failure class). A >page-length walk returning one entry is
+         * either lucky contiguous memory or a broken walk; the
+         * per-segment addr below disambiguates. */
+        IOLog("VMVirtIOGPUUserClient::attachBackingUser: WARN nr_entries=1 "
+              "with %llu bytes — allocator handed contiguous memory by "
+              "luck, or walk is broken. Per-segment addr below should "
+              "disambiguate.\n", (uint64_t)total_length);
     }
 
     // Build ATTACH_BACKING command.
