@@ -488,6 +488,55 @@ unbootable. Not entered until B1's outcome is scored.
 
 (Committed before any Phase A run — commit-before-experiment rule.)
 
+**RUNG RESULT (same evening) — OUTCOME 2, NEVER LOADED — and the
+name-plumbing was a PROJECT-ERA ARTIFACT, not kext plumbing:**
+
+- Phase A trace (fs_usage, system-wide, filtered by process): the
+  loader's clean sequence is `stat GLEngine.bundle → stat
+  GLEngine.bundle.backup → stat GLRendererFloat.bundle → open
+  GLEngine.bundle/GLEngine → stat+open
+  GLRendererFloat.bundle/GLRendererFloat` — renderer bundles load from
+  `OpenGL.framework/Versions/A/Resources/`, dlopen shape
+  `<name>.bundle/<name>` FLAT (no Contents/MacOS). Search path and
+  name-shape: OBSERVED.
+- The first traces ALSO showed `stat Resources/VMVirtIOGLEngine.bundle`
+  + `stat com.vmware.opengl.VMVirtIOGLEngine.plist` ×9 — name-source
+  hunt across ioreg (all planes; only FB "IOGLBundleName=GLEngine"
+  exists, accelerator's VMVirtIOGLEngine long gone), prefs/caches,
+  cvmsConfig.plist (VM-bytecode config, no renderer list), dyld caches
+  (/private/var/db/dyld — clean) — all negative. Carrier found:
+  **/Users/sl/Info.plist (Nov 14 2025, GLPlugin era)** — the
+  never-built renderer's manifest (CFBundleIdentifier
+  com.vmware.opengl.VMVirtIOGLEngine, CFBundleExecutable
+  VMVirtIOGLEngine). OUR PROBES run with CWD=~; main-bundle machinery
+  picks it up and names the renderer probes. MOVED ASIDE →
+  VMVirtIOGLEngine stats VANISH (0), sequence pure Apple default.
+  Confound PROVEN by the registered prediction test.
+- **B1**: stub built (probe/gld_stub.c — 92 exports generated verbatim
+  from VMsvga2 EntryPointNames.c; constructor + per-entry logging to
+  /tmp/vm_gld_stub.log; x86-64 arg-untouched long-return stubs),
+  placed at the observed path, probe run, REMOVED same session —
+  NEVER LOADED ×2. Attempt 2 (bundle PRESENT, traced): the loader
+  STAT'd VMVirtIOGLEngine.bundle and still did NOT open it — stat is
+  existence-checking; the OPEN is gated by something else. Census
+  unchanged both times (nrend=1 accelerated=0 npix=0).
+- **Two standing facts for the next rung:** (1) the main-bundle
+  Info.plist mechanism is a PROVEN process-side naming lever —
+  CFBundleExecutable/CFBundleIdentifier com.vmware.opengl.<name> drove
+  both the prefs reads and the Resources/<name>.bundle stat; (2) the
+  guest's GLEngine.bundle carries project-era contamination —
+  `GLEngine.original` (43KB, contains VMVirtIOGLEngine, never loaded)
+  parked inside, `GLEngine.bundle.backup` dated May 2024; the LIVE
+  GLEngine is md5-identical to the 2011 original (clean). Any GL-side
+  experiment on this guest must account for these artifacts.
+- Next-rung candidates (not chosen): (i) ~/Info.plist naming + stub +
+  an enabling `com.vmware.opengl.<name>.plist` (content/keys unknown —
+  the ×9 ENOENT reads suggest the loader consults it before opening);
+  (ii) a UNIQUE IOGLBundleName from the kext to disambiguate whether
+  the registry names renderer bundles at all (FB's "GLEngine" is
+  confounded with Apple's default); (iii) either combined with the
+  vm-cap3d flip boot.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
