@@ -55,6 +55,30 @@ SDK, per the adoption doc).
 `IOAccelFindAccelerator` semantics (from `GA/VMsvga2GA.cpp:216`): takes
 the FB service, returns the accelerator service + framebuffer index.
 
+**The publication pattern, verbatim** (`AC/VMsvga2Accel.cpp:585-604` —
+the ACCELERATOR's start reaches its framebuffer and sets properties ON
+THE FRAMEBUFFER):
+
+```c
+plug = getProperty(kIOCFPlugInTypesKey);        // from the accelerator's PERSONALITY
+if (plug)
+    m_framebuffer->setProperty(kIOCFPlugInTypesKey, plug);
+if (getPath(&pathbuf[0], &len, gIOServicePlane)) {
+    m_framebuffer->setProperty(kIOAccelTypesKey, pathbuf);          // path STRING
+    m_framebuffer->setProperty(kIOAccelIndexKey, 0ULL, 32U);
+    m_framebuffer->setProperty(kIOAccelRevisionKey,
+        (uint64_t)kCurrentGraphicsInterfaceRevision, 32U);          // 2
+}
+setProperty(kIOAccelRevisionKey, (uint64_t)kCurrentGraphicsInterfaceRevision, 32U);
+setProperty("AccelCaps", 3ULL, 32U);            // QE claim, on the accelerator
+```
+
+**Personality value** (`Info-AC.plist`): `IOCFPlugInTypes = {
+ACCF0000-0000-0000-0000-000a2789904e : "VMsvga2GA.plugin" }` — the
+value is the plugin BUNDLE NAME, resolved from the kext bundle's
+`Contents/PlugIns/` (the pbxproj copies the built plugin there). Ours:
+`VMQemuVGAGA.plugin`, with its own factory UUID.
+
 ### The plugin bundle — userspace
 
 `Info-GA.plist` shape: `CFPlugInTypes` maps the type UUID
