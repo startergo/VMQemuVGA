@@ -103,6 +103,19 @@ int main(void)
            "(verify kernel log: '2D context started') ***\n");
     fflush(stdout);
 
+    /* USABILITY RUNG (milestone 2, the SetIDMode lesson): prove the
+     * context USABLE, not merely open — a real destination binding
+     * through the interface. SetDestination(fb, NULL) takes the safe
+     * framebuffer path (no surface deref). */
+    prc = vt->SetDestination(ga, kIOBlitFramebufferDestination, NULL);
+    printf("SetDestination(fb) -> 0x%x\n", prc);
+    fflush(stdout);
+    if (prc != kIOReturnSuccess) {
+        printf("*** context OPEN but NOT USABLE — first real 2D call "
+               "refused ***\n");
+        fflush(stdout);
+    }
+
     fprintf(stderr, "probe: teardown: Stop\n");
     vt->Stop(ga);
     fprintf(stderr, "probe: teardown: Release(x2 — object + plugin handle)\n");

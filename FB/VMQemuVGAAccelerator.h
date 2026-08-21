@@ -338,6 +338,8 @@ class VMQemuVGA3DUserClient : public IOUserClient
 private:
     VMQemuVGAAccelerator* m_accelerator;
     task_t m_task;
+    uint64_t m_bound_id;        // SetSurface binding: cgsSurfaceID or fbIndex
+    uint32_t m_bound_options;
 
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
@@ -356,6 +358,8 @@ public:
 
 public:
     // Static method handlers — GA 2D context
+    static IOReturn sSetSurface(OSObject* target, void* reference,
+                                IOExternalMethodArguments* args);
     static IOReturn sGetConfig(OSObject* target, void* reference,
                                IOExternalMethodArguments* args);
     static IOReturn sReadConfigs(OSObject* target, void* reference,

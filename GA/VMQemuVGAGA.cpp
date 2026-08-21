@@ -262,16 +262,67 @@ VM_UNSUPPORTED(vmFreeSurface)
 VM_UNSUPPORTED(vmLockSurface)
 VM_UNSUPPORTED(vmUnlockSurface)
 VM_UNSUPPORTED(vmSwapSurface)
-VM_UNSUPPORTED(vmSetDestination)
 VM_UNSUPPORTED(vmGetBlitter)
 VM_UNSUPPORTED(vmWaitComplete)
 VM_UNSUPPORTED(vmWaitSurface)
-VM_UNSUPPORTED(vmSetSurface)
 
 // The VM_UNSUPPORTED thunk signature is (void*) — the interface's real
 // signatures differ per slot; cast at table build (the COM table is
 // void*-typed anyway, same technique as the worked example's
 // reinterpret_cast on the reserved slots).
+
+// ---- SetSurface / SetDestination (milestone 2 rung 1) -------------------
+
+static IOReturn vmSetSurface(void* myInstance, IOOptionBits options,
+                             IOBlitSurface* surface)
+{
+    GAType* me = (GAType*)myInstance;
+    IOReturn rc;
+    uint64_t input[2];
+    uint32_t out_buf[11];
+    size_t out_cnt = sizeof(out_buf);
+
+    if (!me)
+        return kIOReturnBadArgument;
+    if (!me->_context)
+        return kIOReturnNotReady;
+
+    if (options & 0x800U) {
+        /* CGS-surface destination: input[0] = cgsSurfaceID from the
+         * surface's interfaceRef. The kernel refuses this path until
+         * the surface store is wired (loudly) — propagate its verdict. */
+        if (!surface)
+            return kIOReturnBadArgument;
+        GALog("SetSurface: CGS id path (surface=%p) — kernel verdict\n",
+              surface);
+        input[0] = (uint64_t)(uintptr_t)surface;   /* placeholder id:
+                                                      milestone 2 store */
+        input[1] = options;
+    } else {
+        input[0] = me->_framebufferIndex;
+        input[1] = 0;
+    }
+    rc = IOConnectCallMethod(me->_context, kVM2DSetSurface,
+                             &input[0], 2,
+                             NULL, 0,
+                             NULL, 0,
+                             &out_buf[0], &out_cnt);
+    GALog("SetSurface: {fbIdx|id}=%llu opts=%#x -> 0x%x\n",
+          (unsigned long long)input[0], (unsigned)input[1], rc);
+    return rc;
+}
+
+static IOReturn vmSetDestination(void* myInstance, IOOptionBits options,
+                                 IOBlitSurface* surface)
+{
+    GALog("SetDestination(opts=%#x surface=%p)\n",
+          (unsigned)options, surface);
+    if (options & kIOBlitSurfaceDestination)
+        options = 0x800U;
+    else
+        options = kIOBlitFramebufferDestination;
+    return vmSetSurface(myInstance, options, surface);
+}
 
 // ---- Factory ------------------------------------------------------------
 
@@ -298,7 +349,8 @@ static void _buildGAFTbl()
     ga.LockSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*, vm_address_t*))vmLockSurface;
     ga.UnlockSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*, IOOptionBits*))vmUnlockSurface;
     ga.SwapSurface = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*, IOOptionBits*))vmSwapSurface;
-    ga.SetDestination = (IOReturn (*)(void*, IOOptionBits, IOBlitSurface*))vmSetDestination;
+    ga.SetDestination = vmSetDestination;
+    ga.__gaInterfaceReserved[1] = (void*)vmSetSurface;
     ga.GetBlitter = (IOReturn (*)(void*, IOOptionBits, IOBlitType, IOBlitSourceType, IOBlitterPtr*))vmGetBlitter;
     ga.WaitComplete = (IOReturn (*)(void*, IOOptionBits))vmWaitComplete;
     ga.__gaInterfaceReserved[0] = (void*)vmWaitSurface;

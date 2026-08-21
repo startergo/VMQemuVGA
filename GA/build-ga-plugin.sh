@@ -19,6 +19,7 @@ KEXT="build/Release/VMQemuVGA.kext"
 [ -d "$KEXT" ] || { echo "ERROR: kext not built — run build-enhanced_private.sh first"; exit 1; }
 
 echo "==> compiling VMQemuVGAGA"
+rm -f GA/VMQemuVGAGA
 clang -target x86_64-apple-macos10.6 \
     -isysroot "$SDK" \
     -fallow-unsupported -Wno-deprecated \
@@ -26,9 +27,14 @@ clang -target x86_64-apple-macos10.6 \
     -o GA/VMQemuVGAGA \
     GA/VMQemuVGAGA.cpp \
     -framework IOKit -framework CoreFoundation \
-    -bundle 2>&1 | grep -v "deprecated" || true
-
-[ -f GA/VMQemuVGAGA ] || { echo "ERROR: compile failed"; exit 1; }
+    -bundle
+if [ $? -ne 0 ] || [ ! -f GA/VMQemuVGAGA ]; then
+    echo "ERROR: compile failed"; exit 1
+fi
+# A stale binary from a previous successful build must never pass for a
+# fresh one — the 2026-08-21 silent-stale incident: compile failed, the
+# old binary was assembled and "Built + installed" printed.
+[ -f GA/VMQemuVGAGA ] || { echo "ERROR: compile produced no binary"; exit 1; }
 
 echo "==> assembling bundle"
 rm -rf "$OUT"

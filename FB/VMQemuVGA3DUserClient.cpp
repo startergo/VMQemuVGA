@@ -25,8 +25,8 @@ OSDefineMetaClassAndStructors(VMQemuVGA3DUserClient, IOUserClient);
  * check field means "do not check" (variable-length region/rect
  * payloads). */
 static const IOExternalMethodDispatch sMethods[kVM2DNumMethods] = {
-    [kVM2DSetSurface] = {          // milestone 2: the CGS-surface binding
-        .function = (IOExternalMethodAction) &CLASS::sStub,
+    [kVM2DSetSurface] = {          // milestone 2: the destination binding
+        .function = (IOExternalMethodAction) &CLASS::sSetSurface,
         .checkScalarInputCount = 2,
         .checkStructureInputSize = 0,
         .checkScalarOutputCount = 0,
@@ -222,6 +222,8 @@ bool CLASS::initWithTask(task_t owningTask, void* securityToken, UInt32 type,
 
     m_accelerator = nullptr;
     m_task = owningTask;
+    m_bound_id = 0xFFFFFFFFFFFFFFFFull;
+    m_bound_options = 0;
 
     return true;
 }
@@ -330,6 +332,37 @@ IOReturn CLASS::sUseAccelUpdates(OSObject* target, void* reference,
 {
     // The plugin enables "accel updates" at vmStart. Nothing to push
     // yet; acknowledge.
+    return kIOReturnSuccess;
+}
+
+/* SetSurface — the destination binding (milestone 2 rung 1).
+ * scalar[0] = cgsSurfaceID (options & 0x800) or framebufferIndex;
+ * scalar[1] = options. Out: 11-word struct (the worked example's
+ * plugin stores but never parses it — zeros returned, documented).
+ * FRAMEBUFFER path (options == 0): REAL — records the context
+ * destination. CGS-surface path (0x800): the surface store is not yet
+ * wired cross-client; refusing LOUDLY rather than succeeding unbacked
+ * (the SetIDMode lesson). */
+IOReturn CLASS::sSetSurface(OSObject* target, void* reference,
+                            IOExternalMethodArguments* args)
+{
+    CLASS* me = (CLASS*)target;
+    uint64_t id_or_index = args->scalarInput[0];
+    uint32_t options = (uint32_t)args->scalarInput[1];
+
+    memset(args->structureOutput, 0, 11 * sizeof(uint32_t));
+    args->structureOutputSize = 11 * sizeof(uint32_t);
+
+    if (options & 0x800u) {
+        IOLog("VMQemuVGA3DUserClient: SetSurface id=%llu opts=0x%x — "
+              "CGS path NOT BACKED yet (milestone 2 store) — refusing\n",
+              id_or_index, options);
+        return kIOReturnNoResources;
+    }
+    IOLog("VMQemuVGA3DUserClient: SetSurface fbIndex=%llu opts=0x%x — "
+          "framebuffer destination bound\n", id_or_index, options);
+    me->m_bound_id = id_or_index;
+    me->m_bound_options = options;
     return kIOReturnSuccess;
 }
 
