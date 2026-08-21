@@ -85,7 +85,7 @@ bool CLASS::init(OSDictionary* properties)
     m_is_mock_device = false;      // Default to real VirtIO GPU hardware
     
     m_resource_count = 0;
-    for (int i = 0; i < 64; i++) {
+    for (int i = 0; i < VM_DEVICE_RESOURCE_POOL_MAX; i++) {
         m_resource_pool[i].resource_id = 0;  // tombstone — see .h
         m_resource_pool[i].in_use = false;
     }
@@ -1391,10 +1391,17 @@ IOReturn CLASS::createResource2D(uint32_t resource_id, uint32_t format,
     // Pool-full is an error, not a silent drop — UNREF the just-created host
     // resource and bail so the leak is visible.
     gpu_resource* slot = nullptr;
-    for (unsigned int i = 0; i < 64; i++) {
+    for (unsigned int i = 0; i < VM_DEVICE_RESOURCE_POOL_MAX; i++) {
         if (m_resource_pool[i].resource_id == 0) {
             slot = &m_resource_pool[i];
-            if (i >= m_resource_count) m_resource_count = i + 1;  // high-water mark
+            if (i >= m_resource_count) {
+                m_resource_count = i + 1;  // high-water mark
+                if (i > 0 && (i % 64) == 0) {
+                    IOLog("VMVirtIOGPU: resource pool high-water %u "
+                          "(cap %u)\n", i + 1,
+                          (unsigned)VM_DEVICE_RESOURCE_POOL_MAX);
+                }
+            }
             break;
         }
     }
@@ -1487,7 +1494,7 @@ IOReturn CLASS::createResource3D(uint32_t resource_id, uint32_t target,
             // Tombstone allocation: first slot with resource_id == 0.
             // Dead code path (3D not exercised) — pool-full silently drops here,
             // surfaced as proper error only when/if 3D goes live.
-            for (unsigned int i = 0; i < 64; i++) {
+            for (unsigned int i = 0; i < VM_DEVICE_RESOURCE_POOL_MAX; i++) {
                 if (m_resource_pool[i].resource_id == 0) {
                     m_resource_pool[i] = *resource;
                     m_resource_pool[i].in_use = true;
@@ -2844,7 +2851,7 @@ VMVirtIOGPU::gpu_resource* CLASS::findResource(uint32_t resource_id)
     // Tombstone scan: slot.resource_id == 0 marks a free slot. 0 is never a
     // valid virtio-gpu resource id, so the sentinel is safe. Live slots are
     // scanned in [0, 64) for a matching resource_id.
-    for (unsigned int i = 0; i < 64; i++) {
+    for (unsigned int i = 0; i < VM_DEVICE_RESOURCE_POOL_MAX; i++) {
         if (m_resource_pool[i].resource_id == 0) continue;
         if (m_resource_pool[i].resource_id == resource_id) {
             return &m_resource_pool[i];
@@ -4053,7 +4060,7 @@ IOReturn CLASS::deallocateResource(uint32_t resource_id)
         // resource (UNREF sent above); this just clears local tracking.
         // Driver-owned backing_memory is released; caller-owned references
         // (backing_owned == false) stay with the caller.
-        for (unsigned int i = 0; i < 64; i++) {
+        for (unsigned int i = 0; i < VM_DEVICE_RESOURCE_POOL_MAX; i++) {
             if (m_resource_pool[i].resource_id == resource_id) {
                 if (m_resource_pool[i].backing_memory &&
                     m_resource_pool[i].backing_owned) {

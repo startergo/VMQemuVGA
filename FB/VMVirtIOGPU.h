@@ -208,7 +208,15 @@ private:
     // m_resource_count is a high-water mark (diagnostic only), not a live count.
     // Lock discipline: callers of findResource / slot-mutating ops hold
     // m_resource_lock — the pool is touched from the workloop and from teardown.
-    gpu_resource m_resource_pool[64];
+    /* Pool cap raised 64→512 (2026-08-21): 64 saturated on a 1680x1050
+     * boot with display-mode churn + browser resource churn — resource-1
+     * recreation hit POOL FULL (NoSpace), the desktop lost its scanout
+     * resource, and the whole screen went black then white with no
+     * browser running. Same saturation class the user-backing store
+     * already got the dynamic fix for; this table gets the cap raise +
+     * high-water logging first (the filler becomes visible). */
+    #define VM_DEVICE_RESOURCE_POOL_MAX 512
+    gpu_resource m_resource_pool[VM_DEVICE_RESOURCE_POOL_MAX];
     uint32_t m_resource_count;
     uint32_t m_next_resource_id;
     // ------------------------------------------------------------------
