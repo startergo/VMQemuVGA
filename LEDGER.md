@@ -970,6 +970,45 @@ desktop before probe, restore baseline after):**
 
 (Committed before implementation — commit-before-build rule.)
 
+**RUNG 6 RESULT (19:56) — outcome 3-variant + a structural discovery:**
+```
+STUB LOADED
+CALL gldInitializeLibrary(6-arg) psvc=0x7fff70b72004 mask=0x1 arg5=0x0  *psvc=0x3903
+  glvmPreInit(0x0) -> 3   (g_vm_ok=0 — my rc==0 assumption)
+CALL gldGetVersion -> FALSE (guarded)
+CALL gldTerminateLibrary -> glvmPostTerm forwarded
+```
+- glvmPreInit RESOLVED via RTLD_DEFAULT (GLEngine-exports hypothesis
+  confirmed at runtime) and was CALLED — the first ACTING forward of
+  the arc. glvmPostTerm forwarded cleanly. Census unchanged; the
+  loader terminated — chain as rung 4. Desktop/WindowServer stable.
+- **STRUCTURAL DISCOVERY (inference, marked):** the working GLD
+  receives the SAME loader args (arg5=0 → glvmPreInit(0) → 3) and
+  STILL answers version-true — it enumerates. Therefore the real
+  version guard is the MASK STORE in gld_io_data (unconditional in
+  Initialize per the disasm), NOT the VM return; my rc==0 guard
+  threshold was the wrong structure — honest in direction, wrong in
+  shape. The settle-it test is rung 6b below.
+- Residual recorded: post-boot ssh/mDNS loss ~19:41-19:53 with the
+  desktop VISIBLE AND NORMAL (user-observed) — network-stack flake,
+  NOT outcome 4; recovered unattended. Unexplained; third such
+  episode after reboots this session.
+
+**RUNG 6b PRE-REGISTERED (one line; NO REBOOT — the probe dlopens the
+/S/L/E bundle per-process, so the binary swaps on the live gated
+boot):** the version guard becomes `mask != 0` (mirroring the working
+GLD's actual structure — the mask store), replacing the rc==0
+threshold; glvmPreInit is still called and its return still PROPAGATED
+to the loader as Initialize's return (honest pass-through — the loader
+sees exactly what it would see from the real GLD). Prediction:
+version answers TRUE despite rc=3, and the datum becomes what the
+loader does with Initialize's return 3 + version-true. Outcomes:
+(1) chain moves — first post-version caller; (2) chain identical —
+the loader ignores Initialize's return AND version-true still does
+not advance: the per-candidate-probe-cycle reading becomes the
+standing model, selection locus next; (3) destabilized — recovery
+unchanged.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
