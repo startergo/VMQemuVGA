@@ -71,7 +71,22 @@ void gldTerminateLibrary(void)
 }
 
 /* ==== generated from VMsvga2 EntryPointNames.c + header return types ==== */
-EPB(gldGetVersion)
+/* RUNG 5 PHASE 2 (pre-registered): gldGetVersion answers TRUE with the
+ * values OBSERVED by disassembling the working GLD (GLRendererFloat,
+ * gldGetVersion @0x18d05): (3, 1, &_mh_bundle_header, 0x400). The only
+ * entry that stops refusing — every other entry keeps its refusal. */
+#include <mach-o/loader.h>
+extern struct mach_header_64 _mh_bundle_header;
+long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
+{
+    ep_log("CALL gldGetVersion -> TRUE (observed values 3,1,&hdr,0x400)");
+    if (a0) *a0 = 3;
+    if (a1) *a1 = 1;
+    if (a2) *a2 = (int)(unsigned long)&_mh_bundle_header;
+    if (a3) *a3 = 0x400;
+    return 1;
+}
+
 EPR(gldGetRendererInfo)
 EPR(gldChoosePixelFormat)
 EPR(gldDestroyPixelFormat)

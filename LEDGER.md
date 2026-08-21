@@ -875,6 +875,48 @@ kext change — same gated kext, one variable: the stub's exports):**
   sign phase 2 went wrong — registered here so the natural
   "something broke" misreading has a written counter.
 
+**RUNG 5 RESULT (19:13–19:24; baseline restored 19:24:09 gate=0):**
+
+*Phase 1 — instruments:* the pid provider did NOT instrument the
+lazily-dlopen'd GLD modules on 10.6 (both probe sets empty; the
+attach-time dlsym probe matched nothing) — the live-trace route is
+dead on this OS without more plumbing. PIVOT (still pure
+observation): DISASSEMBLY of the working GLD, pulled to host —
+`otool -tV GLRendererFloat`:
+- `gldGetVersion` @0x18d05: writes **(3, 1, &_mh_bundle_header,
+  0x400)** into the four outs, returns true — but ONLY IF a
+  `gld_io_data` field is nonzero (guard); otherwise returns false.
+- `gldInitializeLibrary` @0x18d50: stores the GLDisplayMask into
+  gld_io_data, then **tail-calls glvmPreInit(arg4 & 1)** — the GL VM
+  pre-init (libGLVMPlugin, the cvmsConfig plugin). `gldTerminateLibrary`
+  tail-calls glvmPostTerm.
+
+*Phase 2 — the flip (19:13, ×3 runs):* stub's gldGetVersion typed,
+writes the OBSERVED values, returns 1; all 92 others keep refusals;
+boot normal, desktop normal. **The chain is IDENTICAL: Initialize →
+GetVersion(TRUE) → TerminateLibrary. Version-true alone does NOT
+advance the chain; census unchanged (nrend=1).** The refusal
+convention's third vindication: true-or-false, the loader's teardown
+is clean either way — no destabilization anywhere in the arc.
+*psvc launch-order test NEGATIVE: 0x3903 across all three processes
+this boot (pids 349/358/363), vs 0x3a03→0x3903 across two processes
+on the rung-4 boot — not a process ordinal; mach-port-name class with
+boot/session scoping; interpretation remains open.
+
+*Reading (marked):* Initialize→Version→Terminate looks like the
+loader's PER-CANDIDATE PROBE CYCLE, not a rejection path — version
+data recorded, candidate unloaded, selection elsewhere. And the
+disassembly names the dependency we skipped: the real
+gldInitializeLibrary calls glvmPreInit, and gldGetVersion's guard
+field is exactly the state that VM init sets — our no-op Initialize
+answered version without the VM ever being pre-initialized. NEXT LEAD
+(named, not run): mimic the real Initialize — store the mask, forward
+to glvmPreInit (dlsym from the plugin) — the first entry with real
+semantics; the rung after that is gldGetRendererInfo's real contract,
+informed by the same disassembly method (GLRendererFloat's
+gldGetRendererInfo is the acceptance-path reference for the struct it
+must fill).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
