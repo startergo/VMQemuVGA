@@ -1,3 +1,4 @@
+#include "VMAccelSurfaceClient.h"
 #include "VMVirtIOGPU.h"
 #include "VMVirtIOFramebuffer.h"
 #include "VMMetalPlugin.h"
@@ -3768,6 +3769,101 @@ IOReturn CLASS::hostRelayBlit(uint32_t res3d, uint32_t ctx_id,
                               IOMemoryDescriptor* src_backing,
                               uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
+    /* MILESTONE 3 — the GA-bound surface path: the app bound the
+     * window's CGS surface via the GA interface; the relay writes THE
+     * SURFACE (single source of truth; WindowServer composites from
+     * it), then runs the shared shape-rect flush so the desktop
+     * backing follows the surface's LIVE position (moves included).
+     * Fallback: the desktop-scanout path (flicker-era) when no
+     * surface is bound. */
+    {
+        uint32_t ga_id = vmSurfaceRegistryGetGABound();
+        VMAccelSurface* surf = ga_id ? vmSurfaceRegistryFind(ga_id) : NULL;
+        if (surf && surf->backing_memory && surf->bytes_per_row) {
+            uint32_t dst_res = m_hblit_dst_res;
+            if (!dst_res) dst_res = m_display_resource_id;
+            gpu_resource* dst = dst_res ? findResource(dst_res) : NULL;
+            IOMemoryDescriptor* dst_mem = dst ? dst->backing_memory : NULL;
+            if (!dst_mem) {
+                IOLog("hostRelayBlit: GA path — desktop backing missing\n");
+                return kIOReturnNotReady;
+            }
+            uint32_t dw = dst->width, dh = dst->height;
+
+            /* 1. Device readback of the source (unchanged). */
+            uint32_t stride = src_w * 4;
+            IOReturn ret = transferFromHost3D(res3d, 0, 0, 0, 0,
+                                              src_w, src_h, 1, ctx_id,
+                                              stride, stride * src_h, 0);
+            if (ret != kIOReturnSuccess) {
+                IOLog("hostRelayBlit: GA transferFromHost3D FAIL 0x%x\n", ret);
+                return ret;
+            }
+
+            /* 2. Row copy into the SURFACE backing at (0,j) —
+             * surface-space (the surface IS the window's). Identity
+             * rows, R<->B swizzle for wire-67 sources. Stride is the
+             * surface's allocation stride. */
+            const bool swizzle = (src_fmt == 67);
+            const uint32_t row_bytes = w * 4;
+            const uint32_t surf_stride = surf->bytes_per_row;
+            if ((uint64_t)(h - 1) * surf_stride + row_bytes >
+                surf->backing_memory->getLength()) {
+                IOLog("hostRelayBlit: GA write exceeds surface — "
+                      "SKIPPING (no corruption)\n");
+                return kIOReturnSuccess;
+            }
+            IOLockLock(m_relay_lock);
+            if (m_relay_row_cap < row_bytes) {
+                if (m_relay_row) IOFree(m_relay_row, m_relay_row_cap);
+                m_relay_row_cap = 0;
+                m_relay_row = (uint8_t*)IOMalloc(row_bytes);
+                if (!m_relay_row) {
+                    IOLockUnlock(m_relay_lock);
+                    return kIOReturnNoMemory;
+                }
+                m_relay_row_cap = row_bytes;
+            }
+            for (uint32_t j = 0; j < h; j++) {
+                IOByteCount got = src_backing->readBytes(
+                    (IOByteCount)j * stride, m_relay_row, row_bytes);
+                if (got != row_bytes) break;
+                if (swizzle) {
+                    uint8_t* p = m_relay_row;
+                    for (uint32_t px = 0; px < w; px++) {
+                        uint8_t t = p[px*4];
+                        p[px*4] = p[px*4 + 2];
+                        p[px*4 + 2] = t;
+                    }
+                }
+                IOByteCount put = surf->backing_memory->writeBytes(
+                    (IOByteCount)j * surf_stride, m_relay_row, row_bytes);
+                if (put != row_bytes) break;
+            }
+            IOLockUnlock(m_relay_lock);
+
+            /* 3. Surface -> desktop backing at the surface's LIVE
+             * shape rect; 4. push that rect to the host. */
+            vmSurfaceFlushToFramebuffer(surf, dst_mem, dw, dh);
+            uint32_t fx = surf->shape_x, fy = surf->shape_y;
+            uint32_t fw = surf->width, fh = surf->height;
+            if (fx + fw > dw) fw = dw - fx;
+            if (fy + fh > dh) fh = dh - fy;
+            if (fw && fh) {
+                transferToHost2D(dst_res, 0, fx, fy, fw, fh);
+                flushResource(dst_res, fx, fy, fw, fh);
+            }
+            static uint32_t s_ga_log = 0;
+            if (s_ga_log < 8) {
+                s_ga_log++;
+                IOLog("hostRelayBlit: GA path — surface %u (%ux%u row %u), "
+                      "flush rect %ux%u@%u,%u\n", ga_id, surf->width,
+                      surf->height, surf->bytes_per_row, fw, fh, fx, fy);
+            }
+            return kIOReturnSuccess;
+        }
+    }
+
     uint32_t dst_res = m_hblit_dst_res;
     if (!dst_res) dst_res = m_display_resource_id;
     if (!dst_res) return kIOReturnNotReady;

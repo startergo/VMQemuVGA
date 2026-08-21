@@ -381,12 +381,16 @@ IOReturn CLASS::sSetSurface(OSObject* target, void* reference,
               s->bytes_per_pixel, s->bytes_per_row);
         me->m_bound_id = id_or_index;
         me->m_bound_options = options;
+        /* Milestone 3: the relay resolves its write destination from
+         * this binding — the app bound the window's CGS surface. */
+        vmSurfaceRegistrySetGABound((uint32_t)id_or_index);
         return kIOReturnSuccess;
     }
     IOLog("VMQemuVGA3DUserClient: SetSurface fbIndex=%llu opts=0x%x — "
           "framebuffer destination bound\n", id_or_index, options);
     me->m_bound_id = id_or_index;
     me->m_bound_options = options;
+    vmSurfaceRegistrySetGABound(0);   // fb destination: GA path off
     return kIOReturnSuccess;
 }
 

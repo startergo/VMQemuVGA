@@ -52,6 +52,14 @@ struct VMAccelSurface {
 bool vmSurfaceRegistryAdd(uint32_t id, VMAccelSurface* s);
 void vmSurfaceRegistryRemove(VMAccelSurface* s);
 VMAccelSurface* vmSurfaceRegistryFind(uint32_t id);
+void vmSurfaceRegistrySetGABound(uint32_t id);
+uint32_t vmSurfaceRegistryGetGABound(void);
+class IOMemoryDescriptor;
+/* The relay's shared present step (milestone 3): blit the surface's
+ * shape rect into the desktop backing. See VMAccelSurfaceClient.cpp. */
+IOReturn vmSurfaceFlushToFramebuffer(VMAccelSurface* s,
+                                     IOMemoryDescriptor* dst_backing,
+                                     uint32_t dw, uint32_t dh);
 
 class VMAccelSurfaceClient : public IOUserClient
 {

@@ -546,6 +546,89 @@ VMAccelSurface* vmSurfaceRegistryFind(uint32_t id)
     return found;
 }
 
+/* GA-bound destination (milestone 3): the id the type-2 context last
+ * bound via SetSurface(0x800). The relay (hostRelayBlit) resolves its
+ * write destination through this — the app bound the window's CGS
+ * surface; the relay writes THERE; WindowServer composites. Cleared
+ * when the context rebinds to the framebuffer destination. */
+static uint32_t s_ga_bound_id = 0;
+
+void vmSurfaceRegistrySetGABound(uint32_t id)
+{
+    vmreg_lock_init();
+    IOLockLock(s_vmreg_lock);
+    s_ga_bound_id = id;
+    IOLockUnlock(s_vmreg_lock);
+}
+
+uint32_t vmSurfaceRegistryGetGABound(void)
+{
+    if (!s_vmreg_lock) return 0;
+    IOLockLock(s_vmreg_lock);
+    uint32_t id = s_ga_bound_id;
+    IOLockUnlock(s_vmreg_lock);
+    return id;
+}
+
+/* Shared surface->framebuffer flush (milestone 3): the type-0 client's
+ * proven flush logic, extracted so the relay can run it for the
+ * GA-bound surface. Blits the surface's SHAPE rect (the window's live
+ * desktop position — WindowServer re-shapes on moves) into the desktop
+ * backing, row-by-row, independent strides, clipped, self-checked.
+ * dst_backing = the desktop resource's backing (the relay's resolved
+ * dst_mem); dw/dh = desktop dims. */
+IOReturn vmSurfaceFlushToFramebuffer(VMAccelSurface* s,
+                                     IOMemoryDescriptor* dst_backing,
+                                     uint32_t dw, uint32_t dh)
+{
+    if (!s || !dst_backing || !s->backing_memory || !s->kernel_map ||
+        !s->bytes_per_row || !s->bytes_per_pixel) {
+        IOLog("vmSurfaceFlushToFramebuffer: NotReady (surface incomplete)\n");
+        return kIOReturnNotReady;
+    }
+    IOBufferMemoryDescriptor* dst_bmd =
+        OSDynamicCast(IOBufferMemoryDescriptor, dst_backing);
+    uint8_t* dst = dst_bmd ? (uint8_t*)dst_bmd->getBytesNoCopy() : NULL;
+    uint8_t* src = (uint8_t*)s->kernel_map->getAddress();
+    if (!dst || !src) {
+        IOLog("vmSurfaceFlushToFramebuffer: NotReady (maps)\n");
+        return kIOReturnNotReady;
+    }
+    uint64_t fbStride = (uint64_t)dw * 4;
+    uint64_t surfStride = s->bytes_per_row;
+    uint32_t bpp = s->bytes_per_pixel;
+
+    uint32_t x = s->shape_x, y = s->shape_y;
+    uint32_t w = s->width, h = s->height;
+    if (x >= dw || y >= dh || w == 0 || h == 0) {
+        IOLog("vmSurfaceFlushToFramebuffer: shape (%u,%u %ux%u) off-FB "
+              "(%ux%u) -> Success\n", x, y, w, h, dw, dh);
+        return kIOReturnSuccess;
+    }
+    if (x + w > dw) w = dw - x;
+    if (y + h > dh) h = dh - y;
+    if (w == 0 || h == 0) return kIOReturnSuccess;
+
+    uint64_t lastS = (uint64_t)(y + h - 1) * surfStride + (uint64_t)(x + w) * bpp;
+    uint64_t lastD = (uint64_t)(y + h - 1) * fbStride  + (uint64_t)(x + w) * bpp;
+    if (lastS > s->backing_memory->getLength() ||
+        lastD > dst_backing->getLength()) {
+        IOLog("vmSurfaceFlushToFramebuffer: MISMATCH src last=%llu len=%llu "
+              "dst last=%llu len=%llu — SKIPPING\n",
+              (unsigned long long)lastS,
+              (unsigned long long)s->backing_memory->getLength(),
+              (unsigned long long)lastD,
+              (unsigned long long)dst_backing->getLength());
+        return kIOReturnSuccess;
+    }
+    for (uint32_t r = 0; r < h; r++) {
+        uint8_t* sp = src + (uint64_t)(y + r) * surfStride + (uint64_t)x * bpp;
+        uint8_t* dp = dst + (uint64_t)(y + r) * fbStride  + (uint64_t)x * bpp;
+        memcpy(dp, sp, (size_t)w * bpp);
+    }
+    return kIOReturnSuccess;
+}
+
 IOReturn CLASS::setIDMode(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6)
 {
     /* First REAL selector (2026-08-15). Argument semantics verified
