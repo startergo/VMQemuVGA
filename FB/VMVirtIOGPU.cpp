@@ -118,14 +118,11 @@ bool CLASS::init(OSDictionary* properties)
     m_v3d_head = m_v3d_tail = m_v3d_count = m_v3d_inflight = 0;
     m_v3d_stop = false;
     m_v3d_thread_up = false;
-    /* host-side blit state */
-    m_hblit_ctx = 0;
-    m_hblit_attached_res = 0;
-    m_hblit_res = 0;
+    /* host relay present state (2026-08-20; replaces the GL-blit) */
     m_hblit_dst_res = 1;   // VGA-convention 2D framebuffer; setscanout() updates
-    m_hblit_attached_dst = 0;
-    m_hblit_rect.valid = false;
-    m_hblit_rect.x = m_hblit_rect.y = m_hblit_rect.w = m_hblit_rect.h = 0;
+    m_relay_row = nullptr;
+    m_relay_row_cap = 0;
+    m_relay_lock = IOLockAlloc();
     for (int i = 0; i < V3D_QUEUE_DEPTH; i++) {
         m_v3d_queue[i].buf = nullptr;
         m_v3d_queue[i].size = 0;
@@ -133,7 +130,7 @@ bool CLASS::init(OSDictionary* properties)
     }
 
     return (m_contexts && m_resource_lock && m_context_lock && m_cursor_vq_lock
-            && m_v3d_lock && m_fence_lock);
+            && m_v3d_lock && m_fence_lock && m_relay_lock);
 }
 
 void CLASS::free()
@@ -153,7 +150,15 @@ void CLASS::free()
         IOLockFree(m_context_lock);
         m_context_lock = nullptr;
     }
-    
+
+    /* Relay present teardown (2026-08-20). */
+    if (m_relay_row) {
+        IOFree(m_relay_row, m_relay_row_cap);
+        m_relay_row = nullptr;
+        m_relay_row_cap = 0;
+    }
+    if (m_relay_lock) { IOLockFree(m_relay_lock); m_relay_lock = nullptr; }
+
     OSSafeReleaseNULL(m_contexts);
 
     // Cursor queue teardown — set initialized=false first (prevents submissions),
@@ -1410,7 +1415,12 @@ IOReturn CLASS::createResource2D(uint32_t resource_id, uint32_t format,
     slot->width = width;
     slot->height = height;
     slot->format = format;
-    slot->backing_memory = driver_owns_backing ? backing_to_attach : nullptr;
+    /* Store BOTH ownership classes (2026-08-20): the caller-owned
+     * backing is a non-owning reference — the relay present needs the
+     * desktop resource's live backing (m_fb_backing), and the unref
+     * path releases only when backing_owned. */
+    slot->backing_memory = backing_to_attach;
+    slot->backing_owned = driver_owns_backing;
     slot->is_3d = false;
     slot->in_use = true;
 
@@ -1470,6 +1480,7 @@ IOReturn CLASS::createResource3D(uint32_t resource_id, uint32_t target,
             resource->height = height;
             resource->format = format;
             resource->backing_memory = nullptr;
+            resource->backing_owned = false;
             resource->is_3d = true;
             
             // Tombstone allocation: first slot with resource_id == 0.
@@ -3741,122 +3752,151 @@ void CLASS::fenceDrop(uint32_t res_id)
     IOLockUnlock(m_fence_lock);
 }
 
-// ---- Host-side blit (see header block) ---------------------------------------
+// ---- Host relay present (see header block) ------------------------------------
+//
+// Replaces the falsified GL-blit (2026-08-20: VIRGL_CCMD_BLIT into the 2D
+// desktop resource emitted SPICE display events with ZERO pixels on screen
+// — host-side writes never reach the guest-backed desktop surface). Every
+// step below is a proven path:
+//   transferFromHost3D — synchronous (submitCommand polls the device
+//   response), window-size readback byte-exact per probe_fmt_renderable;
+//   the guest backing write — the host's own iov path;
+//   transferToHost2D + flush — the desktop refresh's native path.
 
-IOReturn CLASS::ctxAttachResourceCmd(uint32_t ctx_id, uint32_t resource_id)
-{
-    struct virtio_gpu_ctx_resource cmd = {};
-    initializeCommandHeader(&cmd.hdr, VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
-                            ctx_id, false);
-    cmd.resource_id = resource_id;
-    cmd.padding = 0;
-    struct virtio_gpu_ctrl_hdr resp = {};
-    return submitCommand(&cmd.hdr, sizeof(cmd), &resp, sizeof(resp), 6000);
-}
-
-IOReturn CLASS::hostBlit3D(uint32_t res3d, uint32_t src_fmt,
-                           uint32_t src_w, uint32_t src_h,
-                           uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+IOReturn CLASS::hostRelayBlit(uint32_t res3d, uint32_t ctx_id,
+                              uint32_t src_fmt, uint32_t src_w, uint32_t src_h,
+                              IOMemoryDescriptor* src_backing,
+                              uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
     uint32_t dst_res = m_hblit_dst_res;
     if (!dst_res) dst_res = m_display_resource_id;
     if (!dst_res) return kIOReturnNotReady;
-    if (!res3d || !w || !h || !src_w || !src_h) return kIOReturnBadArgument;
+    if (!res3d || !w || !h || !src_w || !src_h || !src_backing)
+        return kIOReturnBadArgument;
 
-    /* Lazy blit context + attach both resources (virgl cross-context
-     * requirement). The desktop surface can CHANGE (mode switches,
-     * WindowServer rebinding) — attach-cache by id and re-attach on
-     * change. */
-    if (!m_hblit_ctx) {
-        IOReturn r = createRenderContext(&m_hblit_ctx);
-        if (r != kIOReturnSuccess) return r;
-        IOLog("VMVirtIOGPU: hostBlit ctx=%u created (dst res %u)\n",
-              m_hblit_ctx, dst_res);
-        m_hblit_attached_dst = 0;
+    gpu_resource* dst = findResource(dst_res);
+    if (!dst) {
+        IOLog("VMVirtIOGPU: hostRelayBlit dst res %u not in resource pool\n",
+              dst_res);
+        return kIOReturnNotReady;
     }
-    if (m_hblit_attached_dst != dst_res) {
-        IOReturn r = ctxAttachResourceCmd(m_hblit_ctx, dst_res);
-        if (r != kIOReturnSuccess) {
-            IOLog("VMVirtIOGPU: hostBlit attach DST res %u FAIL 0x%x\n", dst_res, r);
-            return r;
-        }
-        m_hblit_attached_dst = dst_res;
+    uint32_t dw = dst->width, dh = dst->height;
+
+    /* The pool now carries BOTH backing ownership classes: for the
+     * desktop resource this is the framebuffer's m_fb_backing (a
+     * non-owning reference — the framebuffer owns and preserves it
+     * across mode-change recreates; the pool entry is refreshed on
+     * every createResource2D). The first BAR-fallback design wrote the
+     * PCI BAR while the display reads m_fb_backing — pixels vanished;
+     * removed. */
+    IOMemoryDescriptor* dst_mem = dst->backing_memory;
+    if (!dst_mem) {
+        IOLog("VMVirtIOGPU: hostRelayBlit dst res %u has no backing in pool\n",
+              dst_res);
+        return kIOReturnNotReady;
     }
-    if (m_hblit_attached_res != res3d) {
-        IOReturn r = ctxAttachResourceCmd(m_hblit_ctx, res3d);
-        if (r != kIOReturnSuccess) {
-            IOLog("VMVirtIOGPU: hostBlit attach 3D res 0x%x FAIL 0x%x\n", res3d, r);
-            return r;
-        }
-        m_hblit_attached_res = res3d;
+    if (w > src_w || h > src_h || x + w > dw || y + h > dh || x >= dw || y >= dh) {
+        IOLog("VMVirtIOGPU: hostRelayBlit extent out of bounds — src %ux%u "
+              "dst res %u %ux%u rect %ux%u@%u,%u\n",
+              src_w, src_h, dst_res, dw, dh, w, h, x, y);
+        return kIOReturnBadArgument;
     }
 
-    /* VIRGL_CCMD_BLIT (16), len 21: header + S0 + scissor2 + dst(9) +
-     * src(9). Src Y inverted: bottom-left (GL) → top-left (scanout). */
-    uint32_t dw[1 + 21];
-    dw[0] = 16u | (0u << 8) | (21u << 16);          // VIRGL_CMD0(BLIT, 0, 21)
-    dw[1] = 0xfu;                                    // mask=RGBA, filter=nearest, no scissor/blend
-    dw[2] = 0; dw[3] = 0;
-    dw[4] = dst_res;                                 // dst res
-    dw[5] = 0;                                       // dst level
-    dw[6] = 1;                                       // dst format: VIRGL_FORMAT_B8G8R8A8_UNORM
-    dw[7] = x; dw[8] = y; dw[9] = 0;
-    dw[10] = w; dw[11] = h; dw[12] = 1;
-    dw[13] = res3d;                                  // src res
-    dw[14] = 0;                                      // src level
-    dw[15] = src_fmt;
-    dw[16] = 0; dw[17] = src_h - h;                  // src y INVERTED (flip)
-    dw[18] = 0; dw[19] = w; dw[20] = h; dw[21] = 1;
+    /* First-blit format log: a screen capture must be interpretable
+     * either way — colour-swapped output is a swizzle bug, NOT a
+     * delivery success with a cosmetic flaw. */
+    static bool s_fmt_logged = false;
+    if (!s_fmt_logged) {
+        s_fmt_logged = true;
+        IOLog("VMVirtIOGPU: hostRelayBlit first blit — dst res %u fmt 0x%x "
+              "(1=B8G8R8A8) %ux%u, src res %u fmt %u (67=R8G8B8A8, swap on) "
+              "%ux%u\n", dst_res, dst->format, dw, dh, res3d, src_fmt,
+              src_w, src_h);
+    }
 
-    IOBufferMemoryDescriptor* desc = IOBufferMemoryDescriptor::withBytes(
-        dw, sizeof(dw), kIODirectionOut);
-    if (!desc) return kIOReturnNoMemory;
-    IOReturn ret = executeCommands(m_hblit_ctx, desc);
-    desc->release();
+    /* 1. Device readback of the full source surface into its guest
+     * backing. Contiguous layout: stride = src_w*4, offset 0 — exactly
+     * the census/probe readback shape. Synchronous: on return the
+     * backing holds the pixels. */
+    uint32_t stride = src_w * 4;
+    IOReturn ret = transferFromHost3D(res3d, 0, 0, 0, 0, src_w, src_h, 1,
+                                      ctx_id, stride, stride * src_h, 0);
     if (ret != kIOReturnSuccess) {
-        IOLog("VMVirtIOGPU: hostBlit submit FAIL 0x%x\n", ret);
+        IOLog("VMVirtIOGPU: hostRelayBlit transferFromHost3D res %u FAIL 0x%x\n",
+              res3d, ret);
         return ret;
     }
 
-    /* Flush the desktop region so the host displays it now. */
-    struct virtio_gpu_resource_flush flush_cmd = {};
-    flush_cmd.hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
-    flush_cmd.hdr.flags = 0;
-    flush_cmd.hdr.fence_id = 0;
-    flush_cmd.hdr.ctx_id = 0;
-    flush_cmd.resource_id = dst_res;
-    flush_cmd.r.x = x; flush_cmd.r.y = y;
-    flush_cmd.r.width = w; flush_cmd.r.height = h;
-    struct virtio_gpu_ctrl_hdr flush_resp = {};
-    submitCommand(&flush_cmd.hdr, sizeof(flush_cmd),
-                  &flush_resp, sizeof(flush_resp), 6000);
+    /* 2. Row copy into the desktop backing: IDENTITY row order + per-
+     * pixel R↔B swap for R8G8B8A8 sources (desktop is B8G8R8A8,
+     * confirmed at both creation sites). The first relay build flipped
+     * (bottom-up GL reasoning inherited from the dead GL-blit) and the
+     * browser window rendered upside down — the readback bytes are
+     * ALREADY top-down (browser observation 2026-08-20 21:05: footer
+     * row at top, tab bar at bottom, pure y→H−y). The flip was also
+     * invisible to every probe config: a uniform clear colour is
+     * flip-invariant. */
+    const bool swizzle = (src_fmt == 67);   // wire 67 = R8G8B8A8_UNORM
+    const uint32_t row_bytes = w * 4;
 
-    m_hblit_rect.x = x; m_hblit_rect.y = y;
-    m_hblit_rect.w = w; m_hblit_rect.h = h;
-    m_hblit_rect.valid = true;
-    m_hblit_res = res3d;
-    m_hblit_src_fmt = src_fmt;
-    m_hblit_src_w = src_w;
-    m_hblit_src_h = src_h;
+    IOLockLock(m_relay_lock);
+    if (m_relay_row_cap < row_bytes) {
+        if (m_relay_row) IOFree(m_relay_row, m_relay_row_cap);
+        m_relay_row_cap = 0;
+        m_relay_row = (uint8_t*)IOMalloc(row_bytes);
+        if (!m_relay_row) {
+            IOLockUnlock(m_relay_lock);
+            IOLog("VMVirtIOGPU: hostRelayBlit scratch alloc %u FAIL\n", row_bytes);
+            return kIOReturnNoMemory;
+        }
+        m_relay_row_cap = row_bytes;
+    }
+
+    IOReturn copy_ret = kIOReturnSuccess;
+    for (uint32_t j = 0; j < h; j++) {
+        uint32_t src_row = j;   // identity: readback bytes are top-down
+        IOByteCount got = src_backing->readBytes(
+            (IOByteCount)src_row * stride, m_relay_row, row_bytes);
+        if (got != row_bytes) {
+            IOLog("VMVirtIOGPU: hostRelayBlit src read row %u got %llu/%u\n",
+                  src_row, (uint64_t)got, row_bytes);
+            copy_ret = kIOReturnNoMemory;
+            break;
+        }
+        if (swizzle) {
+            uint8_t* p = m_relay_row;
+            for (uint32_t px = 0; px < w; px++) {
+                uint8_t t = p[px*4];
+                p[px*4] = p[px*4 + 2];
+                p[px*4 + 2] = t;
+            }
+        }
+        IOByteCount put = dst_mem->writeBytes(
+            ((IOByteCount)(y + j) * dw + x) * 4, m_relay_row, row_bytes);
+        if (put != row_bytes) {
+            IOLog("VMVirtIOGPU: hostRelayBlit dst write row %u put %llu/%u\n",
+                  j, (uint64_t)put, row_bytes);
+            copy_ret = kIOReturnNoMemory;
+            break;
+        }
+    }
+    IOLockUnlock(m_relay_lock);
+    if (copy_ret != kIOReturnSuccess) return copy_ret;
+
+    /* 3. Push the rect through the desktop's native display path. The
+     * pixels now LIVE in guest memory — the refresh cycle preserves
+     * them (no re-blit rule). */
+    ret = transferToHost2D(dst_res, 0, x, y, w, h);
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU: hostRelayBlit transferToHost2D FAIL 0x%x\n", ret);
+        return ret;
+    }
+    ret = flushResource(dst_res, x, y, w, h);
+    if (ret != kIOReturnSuccess) {
+        IOLog("VMVirtIOGPU: hostRelayBlit flushResource FAIL 0x%x\n", ret);
+        return ret;
+    }
     return kIOReturnSuccess;
-}
-
-void CLASS::hostBlitReissueIfIntersecting(uint32_t x, uint32_t y,
-                                          uint32_t w, uint32_t h)
-{
-    if (!m_hblit_rect.valid || !m_hblit_res) return;
-    uint32_t ax2 = m_hblit_rect.x + m_hblit_rect.w;
-    uint32_t ay2 = m_hblit_rect.y + m_hblit_rect.h;
-    uint32_t bx2 = x + w, by2 = y + h;
-    if (x >= ax2 || m_hblit_rect.x >= bx2 ||
-        y >= ay2 || m_hblit_rect.y >= by2)
-        return;
-    /* Intersecting: the transfer overwrote the window's region of the
-     * desktop resource with stale guest content. Re-issue the GPU blit
-     * (idempotent, host-side, sub-ms). Recursion-safe: the blit path
-     * never calls transferToHost2D. */
-    hostBlit3D(m_hblit_res, m_hblit_src_fmt, m_hblit_src_w, m_hblit_src_h,
-               m_hblit_rect.x, m_hblit_rect.y, m_hblit_rect.w, m_hblit_rect.h);
 }
 
 IOReturn CLASS::setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height)
@@ -3915,15 +3955,18 @@ IOReturn CLASS::deallocateResource(uint32_t resource_id)
     if (ret == kIOReturnSuccess) {
         // Tombstone the slot in m_resource_pool. The device already freed the
         // resource (UNREF sent above); this just clears local tracking.
-        // Driver-owned backing_memory is released; caller-owned stays with caller.
+        // Driver-owned backing_memory is released; caller-owned references
+        // (backing_owned == false) stay with the caller.
         for (unsigned int i = 0; i < 64; i++) {
             if (m_resource_pool[i].resource_id == resource_id) {
-                if (m_resource_pool[i].backing_memory) {
+                if (m_resource_pool[i].backing_memory &&
+                    m_resource_pool[i].backing_owned) {
                     m_resource_pool[i].backing_memory->release();
                 }
                 m_resource_pool[i].resource_id = 0;  // tombstone
                 m_resource_pool[i].in_use = false;
                 m_resource_pool[i].backing_memory = nullptr;
+                m_resource_pool[i].backing_owned = false;
                 break;
             }
         }
@@ -5264,6 +5307,7 @@ IOReturn CLASS::mapGuestMemory(IOMemoryDescriptor* guest_memory, uint64_t* gpu_a
         mapped_resource->format = 0;
         mapped_resource->backing_memory = guest_memory;
         mapped_resource->backing_memory->retain();  // Keep reference
+        mapped_resource->backing_owned = true;      // retained above: pool releases at unref
         
         if (m_resource_count < 64) { m_resource_pool[m_resource_count] = *mapped_resource; m_resource_pool[m_resource_count].in_use = true; m_resource_count++; }
         
@@ -7866,27 +7910,41 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             return kIOReturnBadArgument;
         }
 
-        case 0x600C: { // hostBlit3D — the host-side present (no guest readback)
+        case 0x600C: { // hostRelayBlit — the host-present (kernel relay)
             /* scalarInput: [0]=3D resource, [1..4]=window rect x,y,w,h
              * (desktop coords). CONTRACT: the caller (winsys
              * flush_frontbuffer) has already fence-waited the resource,
-             * so prior 3D work is complete host-side when the blit
-             * reads. Geometry (fmt + full src dims) from the table. */
+             * so prior 3D work is complete host-side when the relay
+             * reads it back. Geometry (fmt, dims) and the creating ctx
+             * from the table; the backing descriptor from this
+             * client's backing store. */
             if (args->scalarInputCount >= 5 && args->scalarInput) {
                 uint32_t res = (uint32_t)args->scalarInput[0];
                 uint32_t x = (uint32_t)args->scalarInput[1];
                 uint32_t y = (uint32_t)args->scalarInput[2];
                 uint32_t w = (uint32_t)args->scalarInput[3];
                 uint32_t h = (uint32_t)args->scalarInput[4];
-                uint32_t fmt = 0, sw = 0, sh = 0;
+                uint32_t fmt = 0, sw = 0, sh = 0, ctx = 0;
                 if (!userResourceFmt(res, &fmt) ||
                     !userResourceDims(res, &sw, &sh)) {
                     IOLog("VMVirtIOGPUUserClient: 0x600C res=0x%x NOT in "
-                          "geometry table — cannot blit\n", res);
+                          "geometry table — cannot relay\n", res);
                     return kIOReturnUnsupported;
                 }
+                if (!userResourceCtx(res, &ctx) || ctx == 0) {
+                    IOLog("VMVirtIOGPUUserClient: 0x600C res=0x%x has no "
+                          "recorded ctx — cannot relay\n", res);
+                    return kIOReturnUnsupported;
+                }
+                IOMemoryDescriptor* backing = findUserBacking(res);
+                if (!backing) {
+                    IOLog("VMVirtIOGPUUserClient: 0x600C res=0x%x has no "
+                          "attached backing — cannot relay\n", res);
+                    return kIOReturnNotReady;
+                }
                 if (!m_gpu_device) return kIOReturnNotReady;
-                return m_gpu_device->hostBlit3D(res, fmt, sw, sh, x, y, w, h);
+                return m_gpu_device->hostRelayBlit(res, ctx, fmt, sw, sh,
+                                                   backing, x, y, w, h);
             }
             return kIOReturnBadArgument;
         }
@@ -8998,7 +9056,7 @@ IOReturn VMVirtIOGPUUserClient::createResource3DEx(
           resource_id, format, bind, width, height, depth, array_size,
           resp.type);
     recordUserResourceGeom(resource_id, format, width, height, depth,
-                           array_size, last_level, nr_samples);
+                           array_size, last_level, nr_samples, ctx_id);
     *out_resource_id = resource_id;
     return kIOReturnSuccess;
 }
@@ -9022,7 +9080,8 @@ static uint32_t virgl_fmt_bpp_clamptab(uint32_t fmt)
 
 void VMVirtIOGPUUserClient::recordUserResourceGeom(uint32_t id,
     uint32_t fmt, uint32_t w, uint32_t h, uint32_t depth,
-    uint32_t array_size, uint32_t last_level, uint32_t nr_samples)
+    uint32_t array_size, uint32_t last_level, uint32_t nr_samples,
+    uint32_t ctx)
 {
     if (id == 0) return;
     for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
@@ -9034,6 +9093,7 @@ void VMVirtIOGPUUserClient::recordUserResourceGeom(uint32_t id,
             m_user_geom[i].array_size = array_size;
             m_user_geom[i].last_level = last_level;
             m_user_geom[i].nr_samples = nr_samples;
+            m_user_geom[i].ctx = ctx;
             return;
         }
     }
@@ -9047,6 +9107,7 @@ void VMVirtIOGPUUserClient::recordUserResourceGeom(uint32_t id,
             m_user_geom[i].array_size = array_size;
             m_user_geom[i].last_level = last_level;
             m_user_geom[i].nr_samples = nr_samples;
+            m_user_geom[i].ctx = ctx;
             return;
         }
     }
@@ -9080,12 +9141,26 @@ bool VMVirtIOGPUUserClient::userResourceDims(uint32_t id,
 }
 
 /* Host-side blit support: the VIRGL format recorded at create time —
- * the BLIT command's src-format field needs it. */
+ * the relay present's swizzle decision needs it. */
 bool VMVirtIOGPUUserClient::userResourceFmt(uint32_t id, uint32_t* fmt)
 {
     for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
         if (m_user_geom[i].id == id) {
             if (fmt) *fmt = m_user_geom[i].fmt;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Creating virgl context, recorded at 0x6002 time — transferFromHost3D
+ * must carry the resource's own ctx (ctx=0 silently does the wrong
+ * thing, recorded law). */
+bool VMVirtIOGPUUserClient::userResourceCtx(uint32_t id, uint32_t* ctx)
+{
+    for (int i = 0; i < MAX_USER_RESOURCE_GEOM; i++) {
+        if (m_user_geom[i].id == id) {
+            if (ctx) *ctx = m_user_geom[i].ctx;
             return true;
         }
     }
@@ -9727,11 +9802,9 @@ IOReturn CLASS::transferToHost2D(uint32_t resource_id, uint64_t offset,
         return ret;
     }
 
-    /* Host-side blit overwrite rule: guest memory never holds the 3D
-     * window's pixels — a transfer intersecting the presented window
-     * rect just clobbered them with stale content. Re-issue the GPU
-     * blit (host-side, idempotent; see the header block). */
-    hostBlitReissueIfIntersecting(x, y, width, height);
+    /* No re-blit rule (removed 2026-08-20): the relay present writes
+     * the window's pixels INTO the guest desktop backing, so transfers
+     * carry them onward unchanged — there is nothing to re-issue. */
 
     // Suppress noisy logging - transfer succeeded silently
     return kIOReturnSuccess;

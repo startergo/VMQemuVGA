@@ -190,6 +190,12 @@ private:
         uint32_t height;
         uint32_t format;
         IOMemoryDescriptor* backing_memory;
+        /* Ownership of backing_memory (2026-08-20): true = pool releases
+         * it at unref (driver-allocated); false = non-owning reference to
+         * a CALLER-owned descriptor (the framebuffer's m_fb_backing — the
+         * desktop resource's live backing; the relay present writes it,
+         * so the pool MUST carry it; unref must NOT release it). */
+        bool backing_owned;
         bool is_3d;
         bool in_use;
     };
@@ -492,49 +498,43 @@ public:
     void fenceDrop(uint32_t res_id);
 
     /* ------------------------------------------------------------------
-     * HOST-SIDE BLIT (2026-08-19, the recorded design): a GPU-side
-     * VIRGL_CCMD_BLIT from the 3D front resource into the DESKTOP
-     * SCANOUT RESOURCE at the window's rect — the composited frame
-     * goes to the display without the 5.5 MB guest readback (measured
-     * 130 ms mean per-flush wall: submit 44-68 + transfer 61-76; the
-     * transfer half IS the readback). BLIT (not RESOURCE_COPY_REGION)
-     * because the src box's inverted Y does the bottom-left→top-left
-     * flip for free and it tolerates the format difference.
-     *
-     * Issuing context: a kext-owned display-blit context; BOTH
-     * resources CTX_ATTACHed to it (cross-context virgl requires it).
-     * Ordering: the winsys waits the resource (fences) before 0x600C,
-     * so prior 3D work is complete host-side when the blit reads.
-     *
-     * OVERWRITE RULE (the 2D-refresh fight): guest memory never holds
-     * the window's pixels, so any TRANSFER_TO_HOST_2D intersecting the
-     * window rect would erase the blit (~17 ms cadence). Rule: re-issue
-     * the blit after EVERY intersecting transferToHost2D — idempotent,
-     * last-writer-wins, all under the kext's own serialization; a
-     * sub-ms host-side copy at tick rate is free.
+     * HOST RELAY PRESENT (2026-08-20, replaces the falsified GL-blit):
+     * the GPU-side VIRGL_CCMD_BLIT into the 2D desktop resource emitted
+     * SPICE display events but delivered ZERO pixels (probe-proven —
+     * host-side writes never reach the guest-backed desktop surface).
+     * The relay walks only proven paths:
+     *   1. transferFromHost3D(src) — synchronous; on return the pixels
+     *      are in the 3D resource's GUEST backing (probe-proven
+     *      byte-exact at window size).
+     *   2. kernel row memcpy from that backing into the desktop
+     *      resource's backing (BAR-0 VGA framebuffer RAM) at the
+     *      window rect — Y-flip (this is the ONLY flip: the shim's
+     *      downstream CTM flip is bypassed in host-present mode,
+     *      cgl_shim.mm:1288) + per-pixel R↔B swap when the source is
+     *      wire 67 R8G8B8A8 (desktop is wire 1 B8G8R8A8 — confirmed at
+     *      both creation sites).
+     *   3. transferToHost2D(dst, rect) + flush — the desktop's native
+     *      display path. Pixels LIVE in guest memory, so the refresh
+     *      cycle preserves them — no re-blit rule.
+     * LIMITATION (recorded): a readback RELOCATED off the main thread,
+     * not eliminated — still two guest↔host crossings and ~5.5 MB per
+     * present. Not the promised zero-readback present.
      * ------------------------------------------------------------------ */
-    uint32_t m_hblit_ctx;              // lazy; 0 = not created
-    uint32_t m_hblit_attached_res;     // 3D res currently attached to the ctx
-    struct {
-        uint32_t x, y, w, h;
-        bool valid;
-    } m_hblit_rect;
-    uint32_t m_hblit_res;              // last presented 3D resource
-    uint32_t m_hblit_src_fmt, m_hblit_src_w, m_hblit_src_h;  // for re-issue
     uint32_t m_hblit_dst_res;           // desktop surface: setscanout record,
                                         // else resource 1 (VGA-convention 2D fb)
-    uint32_t m_hblit_attached_dst;      // dst res currently attached to the ctx
-    // Encode+submit the BLIT and RESOURCE_FLUSH; attaches resources to
-    // the blit ctx as needed. src_w/src_h/src_fmt from the geometry
-    // table (caller-side lookup).
-    IOReturn hostBlit3D(uint32_t res3d, uint32_t src_fmt,
-                        uint32_t src_w, uint32_t src_h,
-                        uint32_t x, uint32_t y, uint32_t w, uint32_t h);
-    // The re-blit rule's hook: called at the end of transferToHost2D.
-    void hostBlitReissueIfIntersecting(uint32_t x, uint32_t y,
-                                       uint32_t w, uint32_t h);
-    // Send CTX_ATTACH_RESOURCE on the given context.
-    IOReturn ctxAttachResourceCmd(uint32_t ctx_id, uint32_t resource_id);
+    // Row scratch for the relay's per-row read/transform/write. Grows
+    // on demand; guarded by m_relay_lock (multiple clients can present).
+    uint8_t* m_relay_row;
+    uint32_t m_relay_row_cap;           // bytes
+    IOLock* m_relay_lock;
+    // The relay present. src_backing = the 3D resource's wired guest
+    // backing descriptor (client-side findUserBacking); ctx_id = the
+    // resource's creating virgl context (transferFromHost3D needs it —
+    // ctx=0 silently does the wrong thing, recorded law).
+    IOReturn hostRelayBlit(uint32_t res3d, uint32_t ctx_id, uint32_t src_fmt,
+                           uint32_t src_w, uint32_t src_h,
+                           IOMemoryDescriptor* src_backing,
+                           uint32_t x, uint32_t y, uint32_t w, uint32_t h);
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
@@ -786,12 +786,16 @@ private:
          * 174,764 B vs naive 131,072 B), amputating the mip tail and
          * fatal-erroring every mip transfer. 24 bytes x 1024. */
         uint32_t depth, array_size, last_level, nr_samples;
+        /* Creating virgl context (2026-08-20): transferFromHost3D must
+         * carry the resource's own ctx — the relay present reads the
+         * resource from the kext where no caller supplies one. */
+        uint32_t ctx;
     };
     user_resource_geom m_user_geom[MAX_USER_RESOURCE_GEOM];
     void recordUserResourceGeom(uint32_t id, uint32_t fmt, uint32_t w,
                                 uint32_t h, uint32_t depth,
                                 uint32_t array_size, uint32_t last_level,
-                                uint32_t nr_samples);
+                                uint32_t nr_samples, uint32_t ctx);
     void dropUserResourceGeom(uint32_t id);
     // Returns the host-side capacity in bytes, or 0 if unknown (in
     // which case attachBackingUser must NOT clamp — a wrong-bpp
@@ -811,6 +815,7 @@ private:
     // NOT clamp when unknown.
     bool userResourceDims(uint32_t id, uint32_t* w, uint32_t* h);
     bool userResourceFmt(uint32_t id, uint32_t* fmt);  // host-side blit src format
+    bool userResourceCtx(uint32_t id, uint32_t* ctx);  // creating virgl context
 
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
