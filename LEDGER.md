@@ -610,6 +610,94 @@ today's work.
 
 ---
 
+## 2026-08-21 (night) — source reads before rung 3: the worked example's mechanism, and the Nov-2025 scripts read end to end
+
+**Worked-example correction (VMsvga2, the only third-party GLD that
+ever loaded on this OS):** it publishes NO renderer-id properties at
+all. Its renderer claim is `IOGLBundleName` on the ACCELERATOR node
+(../../VMsvga2-modern/AC/VMsvga2Accel.cpp:616-636), OPTION-GATED by
+VMW_OPTION_AC_GL_CONTEXT (the same option-gating pattern as vm-cap3d),
+value = own GLD name under USE_OWN_GLD, else the GMA950 forwarding
+name. IODVDBundleName is a NULL-release bug workaround (10.9
+libGFXShared / AppleVA), not enumeration. The Nov-2025
+GLRendererProperty/VendorID/RendererID scheme has NO counterpart in
+the worked example — dead as a bundle-plist claim approach. VMsvga2's
+build rules: all four products (incl. VMsvga2GLDriver.bundle) install
+top-level /S/L/E; Apple's stock GLDs (AppleIntelGMA950GLDriver,
+GeForce*GLDriver) are /S/L/E bundles — corroborating /S/L/E as the GLD
+canonical directory, distinct from the Resources/ engine+float paths
+our traces saw.
+
+**The Nov-2025 GLPlugin scripts (all seven, read 2026-08-21 night) —
+three placement theories and two ABI theories, never reconciled:**
+- build_for_snowleopard.sh / compile_on_snowleopard.sh: `-bundle`
+  link, two-level namespace, FLAT executable, deployed to
+  OpenGL.framework/Resources/ (the placement rungs 1-2 used).
+- quick_test.sh / test_install.sh: install by REPLACING Apple's
+  GLEngine.bundle/GLEngine in place — accounts for the guest's
+  GLEngine.original (43KB project binary parked beside the restored
+  Apple 5.3MB original; md5-verified restored).
+- install_standalone_bundle.sh: /S/L/E standalone, Contents/MacOS,
+  "GeForceGLDriver pattern" — but installs as VMVirtIOGLDriver.bundle
+  while the kext published IOGLBundleName="VMVirtIOGLEngine":
+  **bundle-dir name ≠ published name — a concrete mechanical candidate
+  for the era's silent non-load ("CGL never discovered this renderer"),
+  never diagnosed because success criteria were never validated.**
+- test_v2_guide.sh: the era's ABI was a GUESS — gli*/glo* exports
+  (gliQueryRendererInfo, gliChoosePixelFormat...), NOT the gld* names
+  VMsvga2 recovered from actual loader behavior. The gld* table
+  (92 entries) stands as the ABI.
+
+## 2026-08-21 (night) — RUNG 3 PRE-REGISTERED: accelerator-side IOGLBundleName, name-matched bundle, trace answers the search-dir question
+
+The change (ONE published delta, gated by the EXISTING vm-cap3d
+boot-arg; FB untouched; ordinary boots byte-identical):
+- The ACCELERATOR (VMQemuVGAAccelerator) publishes
+  `IOGLBundleName="VMVirtIOGLEngine"` under the gate — mirroring the
+  worked example's mechanism (accelerator node, option-gated,
+  name-of-own-GLD). Loud gate log alongside.
+- Stub bundle at **/S/L/E/VMVirtIOGLEngine.bundle** — dir name
+  EXACTLY matching the published name (the era's mismatch avoided by
+  construction), Contents/MacOS layout mirroring a stock Apple GLD
+  bundle (pre-build step: read the guest's
+  AppleIntelGMA950GLDriver.bundle layout and Info.plist keys and copy
+  the shape), executable = the existing 92-export gld* stub,
+  minimal Info.plist with the stock bundle's essential keys.
+- Field clean: NO ~/Info.plist (rung 2's candidate source removed) —
+  the ONLY candidate source this rung is the registry.
+
+The trace question this rung answers that no prior run could: with a
+registry-sourced name in play, WHICH directory does the loader stat —
+/S/L/E/<name>.bundle, Resources/<name>.bundle, both, or neither?
+(Neither prior rung had a registry name; the Resources/-only stats of
+rungs 1-2 came from the main-bundle mechanism.)
+
+Pre-registered outcomes (instrument unchanged: census + fs_usage trace
++ /tmp/vm_gld_stub.log; flip-boot procedure and recovery as rung 2 —
+gate on, verify booleans before probe, remove arg to revert, slclean
+if unbootable):
+1. **OPENED (LOADED)** — trace shows open of the bundle (whichever
+   dir) → stub log appears → census then decides: nrend gains an
+   accelerated entry (SEAM REAL, outcome 1 of the whole arc) vs
+   loaded-not-enumerated (entry-point semantics begin — the 92 names
+   get their first real callers).
+2. **NEW STAT, NO OPEN** — the registry name adds a candidate in some
+   directory but selection still refuses; the open-gate is deeper
+   (next locus: the GL-context client path — VMsvga2's client type 1
+   "GL Context" — CGL may interrogate the driver before opening a
+   GLD).
+3. **NO NEW STAT** — the accelerator-side name is not read either;
+   the enumeration source is deeper IOKit (display/accelerator
+   matching), and the GLD route joins the flip rung's convergence on
+   "a renderer must be claimed somewhere CGL consults FIRST".
+4. **BOOT DESTABILIZED** — recovery per runbook (arg removal; bundle
+   is one /S/L/E dir; slclean otherwise).
+
+(Committed before implementation — commit-before-build rule; the
+pre-build stock-layout read is part of the rung, recorded above.)
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
