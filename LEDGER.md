@@ -73,6 +73,37 @@ day of a claim inherited from a non-authoritative place driving work.
   line; (c) the Aug-14 pre-registered capability flip
   (IOAccelerator3D=Yes, boot-arg-gated, re-run the requester).
 
+**BROWSER-WINDOW BACKING CHECK (same day — the inference above
+CORRECTED):** "the browser window's backing appears among the registry
+surfaces" is FALSE in its per-window form. Evidence — kernel.log.2
+(three boots 20:45 / 21:01 / 21:14, the relay-era boots where the
+browser rendered): exactly ONE SetIDMode per boot, always wID=0x1
+modebits=0x24 "[WindowServer surface]"; 32 SetShape calls per boot, all
+within the first minute, bounds are desktop-scale clip/damage regions
+(full 1680x1050, menu bar (0,0 1680x22), below-menu (0,22 1680x1028),
+dock-area (263,946 1155x104), busy cursor (1256,967 64x64)); NO
+window-interior-sized shape, NO second surface, ZERO surface-client
+lines during the browser render sessions (relay blits began 20:45:59,
+after that boot's 32 shapes were already logged). Same structure on the
+m3 boot (10:24:23 SetIDMode wID=0x1; compositing burst ended 10:24:27;
+the browser GL window 10:26-10:27:53 produced ONLY "hostRelayBlit dst
+res 1 not in resource pool" ×hundreds; the FB refresh timer kept
+scanning out at 44-56 Hz on the frozen screen until rotation).
+STRUCTURE: WindowServer owns ONE full-desktop IOAccelSurface and
+composites ALL windows INTO it — per-window backings are
+WindowServer-internal and never reach the registry. Consequences for
+the route list: (a) as framed (per-window rect match) has nothing to
+match; (a) reframed (relay into surface 1 at the window's rect)
+collides with WindowServer compositing the same rect — the flicker one
+level up, unless Gecko's CG path leaves the GL area unpainted
+(unobserved); the native shape is a GL-surface LAYER for the window
+(AppKit's setView path, or an app-created CGS surface) — which needs
+the capability question settled first ((c), the Aug-14 pre-registered
+IOAccelerator3D flip), because the Aug-14 SILENT result says
+app-created CGS surfaces get no IOAccelSurface backing today. Side
+datum: the kext logs "initializeWebGLAcceleration: Creating real
+VirtIO GPU 3D context … ID: 2" at boot (20:45:22 in k2).
+
 **IOGLBundleName CONSUMER CHECK (same day, resolved):** GfxInfo.mm
 reads IOGLBundleName from IOAccelerator entries (`:120-145`) and blocks
 FEATURE_OPENGL_LAYERS on PPC driver names OR empty — "block too if no
