@@ -537,6 +537,54 @@ name-plumbing was a PROJECT-ERA ARTIFACT, not kext plumbing:**
   confounded with Apple's default); (iii) either combined with the
   vm-cap3d flip boot.
 
+**INSTRUMENT RULE (2026-08-21, from the ~/Info.plist catch):** when a
+trace shows a name you did not configure, ask WHAT THE PROCESS OPENED,
+not where the name could have come from — the opened-files enumeration
+caught what a directed source-hunt over registry/prefs/caches missed.
+Also standing: the GLEngine fallback list has TWO of its three entries
+pointing at project artifacts (GLEngine.original inside the live
+bundle, the 2024-era .backup) — any future "the loader fell back to X"
+reading must check WHICH X.
+
+**SCHEMA HUNT (same evening) — the pref leg of candidate (i) is
+DEPRECATED BY EVIDENCE:** no binary in OpenGL.framework contains
+"com.vmware.opengl" (recursive binary grep). The ×9 pref reads are
+CFPreferences' GENERIC main-bundle lookups — the domain equals the
+main bundle's CFBundleIdentifier from ~/Info.plist; no GL code composes
+it. There is no loader-side pref schema to populate; a populated
+com.vmware.opengl.<name>.plist would test CFPreferences, not the GL
+loader. Additionally, with the bundle present the loader stat'd ONLY
+the bundle DIRECTORY (no Contents/Info.plist probe, no inner-executable
+probe) — selection does not read bundle contents at stat time.
+
+**RUNG 2 — PRE-REGISTERED (flip-only variable, exact b1 configuration
+otherwise; committed before the run):** restore ~/Info.plist (the full
+original artifact — its GLRendererProperty block was present during
+b1's stat-only result, so holding it constant keeps one variable) +
+stub at Resources/VMVirtIOGLEngine.bundle/ + vm-cap3d=1 flip boot.
+b1 ran with booleans=No and got stat-without-open; the flip is the one
+state never tested between candidacy and selection.
+Predictions:
+- **OPEN UNDER FLIP** — trace shows open of
+  Resources/VMVirtIOGLEngine.bundle/VMVirtIOGLEngine (flat shape) →
+  stub log appears → LOADED; census then decides outcome 1 (nrend
+  gains accelerated) vs outcome 3 (loaded, not enumerated).
+- **STILL STAT-ONLY** — selection ignores the capability booleans;
+  candidacy is real, criteria live elsewhere — the next locus becomes
+  what distinguishes GLEngine/GLRendererFloat as CHOSEN entries
+  (leading candidate: the chosen names come from the IOKit renderer
+  path, looping back to npix=0 — no accelerated renderer claimed
+  anywhere).
+- **BOOT DESTABILIZED** (bundle present + flip at boot — every CGL
+  client can now see a loadable candidate): recovery = remove
+  vm-cap3d from boot-args (slclean if unbootable; bundle + Info.plist
+  are user-space removable from slclean as well).
+Procedure: pre-flight both files in place before reboot; on the flip
+boot verify gate=1 + booleans Yes BEFORE the probe; probe + trace +
+stub-log check in one session; score; then restore boot-args, move
+Info.plist aside, remove bundle, return to baseline.
+  vm-cap3d flip boot.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
