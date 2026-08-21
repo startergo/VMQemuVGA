@@ -320,6 +320,43 @@ state. Predictions:
   real windowed-GL attach → outcome-3-flavored evidence surfacing via
   the GL path; record and stop.
 
+**DISCRIMINATOR RESULT — SILENT AGAIN (15:36:47–15:37:07, same flip
+boot):** probe_cgs_glwindow ran the full AppKit chain clean — window 24,
+NSOpenGLContext, setView:/update/makeCurrentContext/glClear/flushBuffer
+all returned, exit 0 — and the kernel window contains ONLY the same
+software-path reaction as the plain probe
+(VMVirtIOFramebuffer::getVRAMRange at 15:36:47); ZERO surface-client
+lines; no destabilization. **Reading (i) strengthens: the capability
+booleans alone do NOT make CGS/WindowServer consult the driver for
+surface backing — neither for plain app-created surfaces nor for the
+AppKit windowed-GL attach chain. The deeper gate is the live reading: a
+renderer/QE path the SYSTEM's own CGL can see must exist first (the
+GLD/GLEngine question inherits this evidence). Note the wall was
+visible in both probe runs: CGLQueryRendererInfo → nrend=1,
+accelerated=0, CGLChoosePixelFormat(accelerated) → npix=0 — the guest's
+REAL CGL has no accelerated renderer; the substitute OpenGL.framework
+only applies to processes launched with DYLD_FRAMEWORK_PATH (the
+probes, and never WindowServer).**
+
+**EXPERIMENT CLOSED (2026-08-21 15:4x):** boot-args restored (vm-cap3d
+removed, full string verified), reboot 15:40:52 logs gate=0 →
+publishing no, guest at baseline on kext 4da4fec9 (the gated kext is
+safe to leave deployed — ordinary boots byte-identical by construction
+and now by observation). Scorecard: control SILENT reproduced (met);
+flip stable, STILL SILENT (outcome 2); discriminator SILENT AGAIN
+(reading i). The capability-advertisement route to CGS↔driver coupling
+is dead at this level. Residuals: (a) the deeper gate — making an
+accelerated renderer visible to the SYSTEM CGL (the npix=0 wall) is
+the next prerequisite for any WindowServer-side adoption; the
+GLEngine/GLD-plugin direction is the recorded dead end there, so this
+is a hard problem, not a next step; (b) the browser silent-death and
+grey-canvas residuals are untouched; (c) instrument notes:
+probe_cgs_glwindow needed `-x objective-c++` (10.6 Security headers
+use static_cast in paths Cocoa pulls in); CGLGetSurface dropped from
+the probe — SPI with unverified ABI on this system (the CGLSetSurface
+6-vs-4-arg lesson), and redundant with kernel SetIDMode lines if
+adoption ever fires; `scp -O` required for the 10.6 sshd.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
