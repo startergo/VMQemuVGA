@@ -805,6 +805,18 @@ kext change — same gated kext, one variable: the stub's exports):**
   3. **DESTABILIZED** — same recovery (arg + bundle; slclean).
 - Procedure as rung 3: bundle to /S/L/E, vm-cap3d=1, verify
   publication + desktop before probe, probe ×2, score, restore.
+- ARG OBSERVATION DEEPENED (before the run): psvc is DEREFERENCED
+  when non-NULL and the pointed-to int logged — that int is the first
+  real information about how Apple's GLD reaches the kernel side;
+  capture it even if the headline is only "handshake fired."
+- **NULL-RESULT BUDGET (fixed before the run): rung 4 is the LAST
+  hypothesis-rung.** If exporting the handshake changes nothing (still
+  zero calls), the approach SWITCHES from symbol-guessing to
+  OBSERVATION of the loader itself: dtrace dlsym-entry probes
+  (pid$target::dlsym:entry, print arg0) around the probe process name
+  EVERY symbol the GLD loader resolves and in what order — the
+  handshake named directly, not by hypothesis. No second symbol guess;
+  an enumeration with no end is the failure mode this rule prevents.
 
 ---
 
