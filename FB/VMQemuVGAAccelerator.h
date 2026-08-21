@@ -323,7 +323,14 @@ public:
     IOReturn synchronizeAccelerator(IOOptionBits options);
 };
 
-// User client for 3D acceleration
+// User client for TYPE 2 — the GA CFPlugIn's "2D Context"
+// (docs/ga-cfplugin.md). The class name says 3D from an earlier era;
+// the Apple accelerator contract opens type 2 for the 2D context the
+// GA plugin drives (IOServiceOpen(accelerator, self, 2)). Selector
+// set replaced 2026-08-20 with the kIOVM2D* family (worked example:
+// AC/UC/UCMethods.h eIOVM2DMethods). Runtime census before the
+// replacement: ZERO type-2 opens in any recorded boot — the previous
+// 3D-context selectors had no live callers (the virgl path is type 4).
 class VMQemuVGA3DUserClient : public IOUserClient
 {
     OSDeclareDefaultStructors(VMQemuVGA3DUserClient);
@@ -331,16 +338,14 @@ class VMQemuVGA3DUserClient : public IOUserClient
 private:
     VMQemuVGAAccelerator* m_accelerator;
     task_t m_task;
-    uint32_t m_context_id;
-    bool m_has_context;
-    
+
 public:
     virtual bool initWithTask(task_t owningTask, void* securityToken, UInt32 type,
                              OSDictionary* properties) override;
     virtual bool start(IOService* provider) override;
     virtual IOReturn clientClose() override;
     virtual IOReturn clientDied() override;
-    
+
     // Method dispatch table
     virtual IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments* args,
                                    IOExternalMethodDispatch* dispatch, OSObject* target,
@@ -350,42 +355,50 @@ public:
     static VMQemuVGA3DUserClient* withTask(task_t owningTask);
 
 public:
-    // Static method handlers
-    static IOReturn sCreate3DContext(OSObject* target, void* reference,
-                                   IOExternalMethodArguments* args);
-    static IOReturn sDestroy3DContext(OSObject* target, void* reference,
-                                    IOExternalMethodArguments* args);
-    static IOReturn sCreate3DSurface(OSObject* target, void* reference,
-                                   IOExternalMethodArguments* args);
-    static IOReturn sDestroy3DSurface(OSObject* target, void* reference,
-                                    IOExternalMethodArguments* args);
-    static IOReturn sSubmit3DCommands(OSObject* target, void* reference,
-                                    IOExternalMethodArguments* args);
-    static IOReturn sPresent3DSurface(OSObject* target, void* reference,
-                                    IOExternalMethodArguments* args);
-    static IOReturn sGetCapabilities(OSObject* target, void* reference,
-                                   IOExternalMethodArguments* args);
+    // Static method handlers — GA 2D context
+    static IOReturn sGetConfig(OSObject* target, void* reference,
+                               IOExternalMethodArguments* args);
+    static IOReturn sReadConfigs(OSObject* target, void* reference,
+                                 IOExternalMethodArguments* args);
+    static IOReturn sReadConfigEx(OSObject* target, void* reference,
+                                  IOExternalMethodArguments* args);
+    static IOReturn sFinish(OSObject* target, void* reference,
+                            IOExternalMethodArguments* args);
+    static IOReturn sUseAccelUpdates(OSObject* target, void* reference,
+                                     IOExternalMethodArguments* args);
+    static IOReturn sStub(OSObject* target, void* reference,
+                          IOExternalMethodArguments* args);
 };
 
-// Method selectors for user client
+// GA 2D-context selectors — the eIOVM2DMethods numbering verbatim
+// (worked example AC/UC/UCMethods.h; consumed by GA/VMsvga2GA.cpp).
 enum {
-    kVM3DUserClientCreate3DContext = 0,
-    kVM3DUserClientDestroy3DContext,
-    kVM3DUserClientCreate3DSurface,
-    kVM3DUserClientDestroy3DSurface,
-    kVM3DUserClientSubmit3DCommands,
-    kVM3DUserClientPresent3DSurface,
-    kVM3DUserClientGetCapabilities,
-    // OpenGL command interception methods
-    kVM3DUserClientGLClear,
-    kVM3DUserClientGLClearColor,
-    kVM3DUserClientGLBegin,
-    kVM3DUserClientGLEnd,
-    kVM3DUserClientGLVertex3f,
-    kVM3DUserClientGLColor4f,
-    kVM3DUserClientGLViewport,
-    kVM3DUserClientGLFlush,
-    kVM3DUserClientMethodCount
+    kVM2DSetSurface = 0,            // 2 scalars in, 44 B struct out — milestone 2
+    kVM2DGetConfig = 1,             // 2 scalars out
+    kVM2DGetSurfaceInfo1 = 2,
+    kVM2DSwapSurface = 3,           // 1 in, 1 out
+    kVM2DScaleSurface = 4,          // 3 in
+    kVM2DLockMemory = 5,            // 1 in, 16 B struct out — milestone 2
+    kVM2DUnlockMemory = 6,          // 1 in, 1 out
+    kVM2DFinish = 7,                // 1 in
+    kVM2DDeclareImage = 8,
+    kVM2DCreateImage = 9,
+    kVM2DCreateTransfer = 10,
+    kVM2DDeleteImage = 11,          // 1 in
+    kVM2DWaitImage = 12,            // 1 in
+    kVM2DSetSurfacePagingOptions = 13,
+    kVM2DSetSurfaceVsyncOptions = 14,
+    kVM2DSetMacrovision = 15,
+    kVM2DReadConfigs = 16,          // 4 B struct in, 4 B struct out
+    kVM2DReadConfigEx = 17,         // 4 B struct in, 12 B struct out
+    kVM2DGetSurfaceInfo2 = 18,
+    kVM2DKernelPrintf = 19,
+    kVM2DCopyRegion = 20,           // 1 in + region struct in
+    kVM2DUseAccelUpdates = 21,      // 1 in
+    kVM2DRectCopy = 22,             // 1 in + rects struct in
+    kVM2DRectFill = 23,             // 1 in + rects struct in
+    kVM2DUpdateFramebuffer = 24,
+    kVM2DNumMethods = 25
 };
 
 #endif /* __VMQemuVGAAccelerator_H__ */

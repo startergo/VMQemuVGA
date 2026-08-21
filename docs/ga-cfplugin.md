@@ -41,16 +41,29 @@ Interface constants: `kCurrentGraphicsInterfaceVersion = 1`,
 `kCurrentGraphicsInterfaceRevision = 2` (verified against the real 10.6
 SDK, per the adoption doc).
 
-**VMQemuVGA's current state is WRONG in three of five** (as of
-2026-08-20, `FB/VMVirtIOGPU.cpp`):
-- `IOAccelTypes` set as a NUMBER (7) on the accelerator service
-  (`:509`) — must be the path STRING on the framebuffer
-- `IOAccelIndex` on the framebuffer = `0x1AF41050` (the vendor ID,
-  `:478`) — must be `0` (the accelerator side already carries 0,
-  `:6665`)
-- `IOCFPlugInTypes` on the framebuffer: absent — this alone blocks
-  plugin instantiation
-- `AccelCaps` on the accelerator: absent
+**VMQemuVGA's registry-verified state (2026-08-20, ioreg-audited —
+corrects this charter's earlier source-only reading):**
+- The **FB-side trio already exists and is correct**: `IOAccelTypes` =
+  the accelerator's IOService-plane path STRING, `IOAccelIndex = 0`,
+  `IOAccelRevision = 2`, all on the framebuffer — landed with `f551fba`
+  (VMVirtIOFramebuffer, at accelerator creation). The "trio missing"
+  claim below the header was written before that landed and never
+  updated.
+- `IOCFPlugInTypes` on the framebuffer: **absent — the plugin-
+  instantiation blocker**. Added in milestone 1 (set on the accelerator
+  at `VMQemuVGAAccelerator::start`, copied to the FB — the verbatim
+  pattern).
+- `AccelCaps` on the accelerator: **absent**. Added as `3` (QE).
+- The accelerator additionally publishes an invented set (measured in
+  ioreg: `IOGLBundleName="VMVirtIOGLEngine"` — a dead bundle,
+  `IOGLContext`, `IOOpenGLRenderer`, `RendererID=0x24600`, NUMERIC
+  `IOAccelTypes=7` competing with the FB's path string,
+  `IOGLAccelTypes`/`IOSurfaceAccelTypes`/`IOVideoAccelTypes`=7,
+  `PerformanceStatistics`/`Accum`, the `IOAcceleratorTypes` array) —
+  live at `VMQemuVGAAccelerator.cpp` start, **removed in milestone 1**.
+  The numeric `IOAccelTypes` removal should be inert
+  (`IOAccelFindAccelerator` reads the FB's) — verified by a pre/post
+  ioreg diff, not assumed (before-dump: `probe/ioreg-before-m1.txt`).
 
 `IOAccelFindAccelerator` semantics (from `GA/VMsvga2GA.cpp:216`): takes
 the FB service, returns the accelerator service + framebuffer index.

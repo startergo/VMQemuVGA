@@ -233,19 +233,52 @@ bool CLASS::start(IOService* provider)
     // Set device properties
     setProperty("IOClass", "VMQemuVGAAccelerator");
     
-    // CRITICAL: CGL OpenGL Renderer Discovery Properties (Snow Leopard + Catalina)
-    // These properties tell CGL that we support hardware-accelerated OpenGL rendering
-    // Without these, CGL reports "accelerated=0" even though the accelerator is registered
-    
-    // OpenGL renderer identification - tells CGL this is a real OpenGL accelerator
-    // NOTE: Using our custom VMVirtIOGLEngine bundle for hardware-accelerated rendering
-    // via VirtIO GPU. This replaces the software "GLEngine" renderer.
-    setProperty("IOGLBundleName", "VMVirtIOGLEngine");   // Hardware renderer (VirtIO GPU)
-    setProperty("IOGLContext", "IOAcceleratorContext");  // Context type for OpenGL
-    setProperty("IOOpenGLRenderer", kOSBooleanTrue);     // Mark as OpenGL renderer
-    
-    // Hardware identification - CGL uses these to identify the GPU
-    // VendorID/DeviceID come from PCI provider (QXL=0x1b36:0x0100, VirtIO=0x1af4:0x1050)
+    /* GA discovery property set (2026-08-20, ioreg-audited — docs/
+     * ga-cfplugin.md). The previously published invented set (measured
+     * live in ioreg, none with artifact provenance) is REMOVED:
+     * IOGLBundleName="VMVirtIOGLEngine" (a dead bundle), IOGLContext,
+     * IOOpenGLRenderer, RendererID=0x24600, numeric
+     * IOAccelTypes/IOGLAccelTypes/IOSurfaceAccelTypes/IOVideoAccelTypes
+     * =7 (the numeric IOAccelTypes on the accelerator competed with the
+     * framebuffer's contract-correct path string), PerformanceStatistics
+     * /Accum, the IOAcceleratorTypes array. The GA contract ADDS
+     * IOCFPlugInTypes (here and copied to the framebuffer — the plugin
+     * instantiation blocker) and AccelCaps=3. The FB-side trio
+     * (IOAccelTypes path string / IOAccelIndex=0 / IOAccelRevision=2)
+     * already exists — set by VMVirtIOFramebuffer at accelerator
+     * creation; verified in ioreg, not inferred from source. */
+    /* VALUE SHAPE IS LOAD-BEARING (2026-08-20, the WindowServer crash
+     * loop): the SERVICE property's per-type value is the plugin bundle
+     * name STRING — not the array form used inside a bundle's own
+     * CFPlugInTypes. The array form made CoreGraphics call -length on
+     * an NSArray and WindowServer abort() at property parse, BEFORE any
+     * plugin load (four crash reports 23:51-52, NSInvalidArgumentException
+     * '-[NSCFArray length]'). Worked example Info-AC.plist: the value is
+     * <string>VMsvga2GA.plugin</string>. */
+    {
+        OSDictionary* plug_map = OSDictionary::withCapacity(1);
+        OSString* plug_name = OSString::withCString("VMQemuVGAGA.plugin");
+        if (plug_map && plug_name) {
+            plug_map->setObject("ACCF0000-0000-0000-0000-000a2789904e",
+                                plug_name);
+            setProperty("IOCFPlugInTypes", plug_map);
+            if (m_framebuffer)
+                m_framebuffer->setProperty("IOCFPlugInTypes", plug_map);
+        }
+        if (plug_map) plug_map->release();
+        if (plug_name) plug_name->release();
+    }
+    setProperty("IOAccelIndex", (uint32_t)0, 32);
+    setProperty("IOAccelRevision", (uint32_t)2, 32);
+    /* AccelCaps (QE claim) DEFERRED to milestone 2: published with only
+     * stub surface slots, it invited WindowServer into the accelerated
+     * path that then aborted — the open/close loop that broke the
+     * display (2026-08-20). It returns when the surface path works. */
+    IOLog("VMQemuVGAAccelerator: GA property set published "
+          "(IOCFPlugInTypes -> VMQemuVGAGA.plugin; AccelCaps deferred); "
+          "invented set removed\n");
+
+    // VendorID/DeviceID: factual, copied from the PCI provider.
     if (m_framebuffer) {
         IOService* pciProvider = m_framebuffer->getProvider();
         if (pciProvider) {
@@ -259,35 +292,7 @@ bool CLASS::start(IOService* provider)
             }
         }
     }
-    setProperty("RendererID", (uint32_t)0x00024600, 32);  // Generic renderer ID for virtual GPUs
-    
-    // Acceleration capability flags - CGL queries these to determine supported features
-    setProperty("IOAccelTypes", (uint32_t)7, 32);         // All acceleration types (FB + 3D + Video)
-    setProperty("IOGLAccelTypes", (uint32_t)7, 32);       // OpenGL acceleration enabled
-    setProperty("IOSurfaceAccelTypes", (uint32_t)7, 32);  // Surface blitting acceleration
-    setProperty("IOVideoAccelTypes", (uint32_t)7, 32);    // Video decode/encode acceleration
-    
-    // GPU capability advertisement for OpenGL feature detection
-    
-    // Performance monitoring (required by some OpenGL apps)
-    setProperty("PerformanceStatistics", kOSBooleanTrue);
-    setProperty("PerformanceStatisticsAccum", kOSBooleanTrue);
-    
-    // Accelerator type array - describes what kind of accelerator we are
-    OSArray* accelTypes = OSArray::withCapacity(3);
-    if (accelTypes) {
-        accelTypes->setObject(OSString::withCString("Framebuffer"));
-        accelTypes->setObject(OSString::withCString("3D"));
-        accelTypes->setObject(OSString::withCString("Hardware"));
-        setProperty("IOAcceleratorTypes", accelTypes);
-        accelTypes->release();
-    }
-    
-    // CRITICAL: Set IOAccelIndex and IOAccelRevision for CGL discovery
-    // CGL queries IORegistry for IOAccelerator services and uses IOAccelIndex to identify them
-    setProperty("IOAccelIndex", (uint32_t)0, 32);      // Primary accelerator index
-    setProperty("IOAccelRevision", (uint32_t)2, 32);   // Accelerator API revision
-    
+
     IOLog("VMQemuVGAAccelerator: Started successfully with OpenGL renderer properties\n");
     IOLog("VMQemuVGAAccelerator: IOAccelIndex=0, IOAccelRevision=2, RendererID=0x00024600\n");
     

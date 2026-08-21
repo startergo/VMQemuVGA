@@ -1,0 +1,214 @@
++-o VMVirtIOFramebuffer  <class VMVirtIOFramebuffer, id 0x10000025b, registered, matched, active, busy 0 (2966 ms), retain 16>
+  | {
+  |   "IOGraphicsDevice" = Yes
+  |   "IOFBTransform" = 0
+  |   "IOMatchCategory" = "IOFramebuffer"
+  |   "IOMetalBundleName" = ""
+  |   "IOFramebufferIndex" = 0
+  |   "IOAcceleratorFamily" = No
+  |   "IOGLESBundleName" = ""
+  |   "IOFramebufferMemoryBandwidth" = Yes
+  |   "VRAM,totalMB" = 15
+  |   "IOGLBundleName" = "GLEngine"
+  |   "IOProbeScore" = 90001
+  |   "IOFBCursorInfo" = ()
+  |   "IOClass" = "VMVirtIOFramebuffer"
+  |   "IOGeneralInterest" = "IOCommand is not serializable"
+  |   "IOBootDisplay" = Yes
+  |   "IOUserClientClass" = "VMQemuVGAClient"
+  |   "IOAccelerator3D" = No
+  |   "IOPMStrictTreeOrder" = Yes
+  |   "IOPrimaryDisplay" = Yes
+  |   "IOAccelTypes" = "IOService:/AppleACPIPlatformExpert/PCI0/AppleACPIPCI/S10@2/VMVirtIOFramebuffer/VMQemuVGAAccelerator"
+  |   "IODisplayAccelerated" = No
+  |   "CFBundleIdentifier" = "com.vmware.kext.VMQemuVGA"
+  |   "IOFBWaitCursorPeriod" = 33333333
+  |   "IOGVAHEVCDecodeCapabilities" = 0
+  |   "IOAccelMemorySize" = 16384000
+  |   "IOHardwareVideoAcceleration" = Yes
+  |   "IOFBMemorySize" = 16384000
+  |   "IOFramebufferOpenForGUI" = Yes
+  |   "IOFBConfig" = {"IOFBModes"=({"ID"=1,"AID"=190,"DM"=<00040000000300000200000000000000030000000600000020ae335f80ffffff30ae335f>,"DF"=3,"TM"=<010000000000000000000000000000000000000000000000000000000000000001000000000000002f000000000000002f000000000000002f00000000000000000400000001000008000000200000000003000026000000010000000300000000000000000000000000000000000000010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000>},{"ID"=2,"AID"=260,"DM"=<00050000000400000200000000000000030000000600000020ae335f80ffffff30ae335f>,"DF"=3,"TM"=<020000000000000000000000000000000000000000000000000000000000000001000000000000004e000000000000004e000000000000004e00000000000000000500004001000008000000200000000004000033000000010000000300000000000000000000000000000000000000010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000>},{"ID"=3,"DM"=<a0050000840300000200000000000000030000000600000020ae335f80ffffff30ae335f>,"DF"=3,"TM"=<030000000000000000000000000000000000000000000000000000000000000001000000000000004d000000000000004d000000000000004d00000000000000a0050000680100000800000020000000840300002d000000010000000300000000000000000000000000000000000000010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000>},{"ID"=4,"DM"=<900600001a0400000200000000000000030000000600000020ae335f80ffffff30ae335f>,"DF"=3,"TM"=<0400000000000000000000000000000000000000000000000000000000000000010000000000000069000000000000006900000000000000690000000000000090060000a401000008000000200000001a04000034000000010000000300000000000000000000000000000000000000010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000>},{"ID"=5,"DM"=<80070000380400000200000000000000030000000600000020ae335f80ffffff30ae335f>,"DF"=3,"TM"=<050000000000000000000000000000000000000000000000000000000000000001000000000000007c000000000000007c000000000000007c0000000000000080070000e001000008000000200000003804000036000000010000000300000000000000000000000000000000000000010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000>},{"ID"=6,"DM"=<000a0000a00500000200000000000000030000000600000020ae335f80ffffff30ae335f>,"DF"=3,"TM"=<06000000000000000000000000000000000000000000000000000000000000000100000000000000dd00000000000000dd00000000000000dd00000000000000000a0000800200000800000020000000a005000048000000010000000300000000000000000000000000000000000000010000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000>}),"dims"=<ffffffffffffffff0000000000000000>}
+  |   "IOGVACodec" = Yes
+  |   "IOConsoleDevice" = Yes
+  |   "AGDC" = No
+  |   "IODisplayClass" = "IOFramebuffer"
+  |   "IOPCIMatch" = "0x10501af4 0x10511af4 0x10521af4"
+  |   "IOAccelIndex" = 0
+  |   "VRAM,totalsize" = 16384000
+  |   "IOPrimaryGraphicsDevice" = Yes
+  |   "IOFBWaitCursorFrames" = 15
+  |   "AGDCVersion" = 0
+  |   "IOGraphicsAccelerator" = No
+  |   "PerformanceStatistics" = ()
+  |   "IOProviderClass" = "IOPCIDevice"
+  |   "IOFBCurrentPixelCount" = 2314200
+  |   "IOFramebufferOpenGLIndex" = 0
+  |   "IOPCIDevice" = "IOPCIDevice is not serializable"
+  |   "AGDCCapabilities" = 0
+  |   "IOPowerManagement" = {"CurrentPowerState"=0}
+  |   "IOVideoAcceleration" = Yes
+  |   "IOAccelRevision" = 2
+  |   "IOHardwareModel" = "VirtIO GPU Primary Framebuffer"
+  |   "AGDCCapable" = No
+  |   "IODisplayIndex" = 0
+  |   "IOFBCurrentPixelClock" = 105
+  | }
+  | 
+  +-o AGPM  <class AGPM, id 0x1000002ad, registered, matched, active, busy 0 (454 ms), retain 8>
+  | | {
+  | |   "Heuristic-ID" = <ffffffff>
+  | |   "IOPowerManagement" = {"CurrentPowerState"=0}
+  | | }
+  | | 
+  | +-o gpu-control  <class IOService, id 0x1000002ae, registered, matched, active, busy 0 (451 ms), retain 6>
+  |   | {
+  |   |   "location" = "primary-gpu-control"
+  |   |   "zone" = 0
+  |   |   "compatible" = "gpu-control"
+  |   |   "reg" = 18
+  |   |   "max-value" = 3
+  |   |   "min-value" = 0
+  |   |   "version" = 2
+  |   |   "type" = "gpu-control"
+  |   |   "device_type" = "gpu-control"
+  |   |   "name" = <"gpu-control">
+  |   |   "control-id" = 18
+  |   | }
+  |   | 
+  |   +-o IOHWControl  <class IOHWControl, id 0x1000002ec, registered, matched, active, busy 0 (3 ms), retain 7>
+  |       {
+  |         "IOClass" = "IOHWControl"
+  |         "CFBundleIdentifier" = "com.apple.driver.AppleHWSensor"
+  |         "IOProviderClass" = "IOService"
+  |         "IOPropertyMatch" = {"device_type"="gpu-control"}
+  |         "zone" = 0
+  |         "version" = 2
+  |         "IOPowerManagement" = {"CurrentPowerState"=0}
+  |         "IOProbeScore" = 0
+  |         "max-value" = 3
+  |         "IOMatchCategory" = "IODefaultMatchCategory"
+  |         "type" = "gpu-control"
+  |         "current-value" = 0
+  |         "location" = "primary-gpu-control"
+  |         "target-value" = 3
+  |         "control-id" = 18
+  |         "min-value" = 0
+  |       }
+  |       
+  +-o AppleMCCSControlModule  <class AppleMCCSControlModule, id 0x1000002c9, registered, matched, active, busy 0 (6 ms), retain 5>
+  | | {
+  | |   "IOProbeScore" = 0
+  | |   "CFBundleIdentifier" = "com.apple.driver.AppleMCCSControl"
+  | |   "IOMatchCategory" = "AppleMCCSControlModule"
+  | |   "IOClass" = "AppleMCCSControlModule"
+  | |   "IOProviderClass" = "IOFramebuffer"
+  | |   "IOKitDebug" = 0
+  | |   "IOUserClientClass" = "AppleMCCSUserClient"
+  | |   "IOResourceMatch" = "IOKit"
+  | | }
+  | | 
+  | +-o AppleMCCSParameterHandler  <class AppleMCCSParameterHandler, id 0x1000002cb, registered, matched, active, busy 0 (2 ms), retain 4>
+  |     {
+  |       "IOProbeScore" = 0
+  |       "CFBundleIdentifier" = "com.apple.driver.AppleMCCSControl"
+  |       "IOProviderClass" = "AppleMCCSControlModule"
+  |       "IOClass" = "AppleMCCSParameterHandler"
+  |       "IOMatchCategory" = "IODisplayParameters"
+  |       "IOKitDebug" = 0
+  |       "IOResourceMatch" = "IOKit"
+  |     }
+  |     
+  +-o AppleUpstreamUserClientDriver  <class AppleUpstreamUserClientDriver, id 0x1000002ca, registered, matched, active, busy 0 (2 ms), retain 4>
+  |   {
+  |     "IOProbeScore" = 0
+  |     "CFBundleIdentifier" = "com.apple.driver.AppleUpstreamUserClient"
+  |     "IOProviderClass" = "IOFramebuffer"
+  |     "IOClass" = "AppleUpstreamUserClientDriver"
+  |     "IOMatchCategory" = "AppleUpstreamUserClientDriver"
+  |     "IOUserClientClass" = "AppleUpstreamUserClient"
+  |     "IOResourceMatch" = "IOKit"
+  |   }
+  |   
+  +-o VMQemuVGAAccelerator  <class VMQemuVGAAccelerator, id 0x1000002de, registered, matched, active, busy 0 (6 ms), retain 8>
+  | | {
+  | |   "IOClass" = "VMQemuVGAAccelerator"
+  | |   "PerformanceStatisticsAccum" = Yes
+  | |   "IOAccelIndex" = 0
+  | |   "IOAccelTypes" = 7
+  | |   "IOGLContext" = "IOAcceleratorContext"
+  | |   "PerformanceStatistics" = Yes
+  | |   "IOOpenGLRenderer" = Yes
+  | |   "IOVideoAccelTypes" = 7
+  | |   "IOGLAccelTypes" = 7
+  | |   "IOAcceleratorTypes" = ("Framebuffer","3D","Hardware")
+  | |   "IOSurfaceAccelTypes" = 7
+  | |   "IOAccelRevision" = 2
+  | |   "RendererID" = 148992
+  | |   "IOGLBundleName" = "VMVirtIOGLEngine"
+  | | }
+  | | 
+  | +-o VMAccelSurfaceClient  <class VMAccelSurfaceClient, id 0x100000308, !registered, !matched, active, busy 0, retain 5>
+  | |   {
+  | |     "IOUserClientMethodCount" = 18
+  | |     "IOUserClientCreator" = "pid 99, WindowServer"
+  | |   }
+  | |   
+  | +-o VMVirtIOGPUUserClient  <class VMVirtIOGPUUserClient, id 0x100000323, !registered, !matched, active, busy 0, retain 4>
+  | |   {
+  | |     "IOUserClientCreator" = "pid 150, powerfox"
+  | |   }
+  | |   
+  | +-o VMVirtIOGPUUserClient  <class VMVirtIOGPUUserClient, id 0x100000326, !registered, !matched, active, busy 0, retain 4>
+  |     {
+  |       "IOUserClientCreator" = "pid 230, powerfox"
+  |     }
+  |     
+  +-o display0  <class IODisplayConnect, id 0x1000002df, registered, matched, active, busy 0 (19 ms), retain 5>
+  | | {
+  | | }
+  | | 
+  | +-o AppleDisplay  <class AppleDisplay, id 0x1000002e1, registered, matched, active, busy 0 (2 ms), retain 6>
+  |     {
+  |       "IOProbeScore" = 2000
+  |       "CFBundleIdentifier" = "com.apple.iokit.IOGraphicsFamily"
+  |       "IOProviderClass" = "IODisplayConnect"
+  |       "IOClass" = "AppleDisplay"
+  |       "IOMatchCategory" = "IODefaultMatchCategory"
+  |       "DisplayVendorID" = 1970170734
+  |       "IOPowerManagement" = {"CurrentPowerState"=0}
+  |       "IODisplayConnectFlags" = <00490000>
+  |       "DisplayProductID" = 1815
+  |       "IODisplayPrefsKey" = "IOService:/AppleACPIPlatformExpert/PCI0/AppleACPIPCI/S10@2/VMVirtIOFramebuffer/display0/AppleDisplay-756e6b6e-717"
+  |     }
+  |     
+  +-o display0  <class IODisplayConnect, id 0x1000002e6, registered, matched, active, busy 0 (389 ms), retain 5>
+  | | {
+  | | }
+  | | 
+  | +-o AppleDisplay  <class AppleDisplay, id 0x1000002e8, registered, matched, active, busy 0 (3 ms), retain 7>
+  |     {
+  |       "IOProbeScore" = 2000
+  |       "CFBundleIdentifier" = "com.apple.iokit.IOGraphicsFamily"
+  |       "IOProviderClass" = "IODisplayConnect"
+  |       "IOClass" = "AppleDisplay"
+  |       "IOMatchCategory" = "IODefaultMatchCategory"
+  |       "DisplayVendorID" = 1970170734
+  |       "IOPowerManagement" = {"CurrentPowerState"=0}
+  |       "IODisplayConnectFlags" = <00490000>
+  |       "DisplayProductID" = 1815
+  |       "IODisplayPrefsKey" = "IOService:/AppleACPIPlatformExpert/PCI0/AppleACPIPCI/S10@2/VMVirtIOFramebuffer/display0/AppleDisplay-756e6b6e-717"
+  |     }
+  |     
+  +-o IOFramebufferUserClient  <class IOFramebufferUserClient, id 0x1000002eb, !registered, !matched, active, busy 0, retain 5>
+  |   {
+  |     "IOUserClientCreator" = "pid 99, WindowServer"
+  |   }
+  |   
+  +-o IOFramebufferSharedUserClient  <class IOFramebufferSharedUserClient, id 0x100000322, !registered, !matched, active, busy 0, retain 5>
+      {
+        "IOUserClientSharedInstance" = Yes
+        "IOUserClientCreator" = "pid 230, powerfox"
+      }
+      
+

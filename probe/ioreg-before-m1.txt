@@ -1,0 +1,35 @@
++-o VMQemuVGAAccelerator  <class VMQemuVGAAccelerator, id 0x1000002de, registered, matched, active, busy 0 (6 ms), retain 8>
+  | {
+  |   "IOClass" = "VMQemuVGAAccelerator"
+  |   "PerformanceStatisticsAccum" = Yes
+  |   "IOAccelIndex" = 0
+  |   "IOAccelTypes" = 7
+  |   "IOGLContext" = "IOAcceleratorContext"
+  |   "PerformanceStatistics" = Yes
+  |   "IOOpenGLRenderer" = Yes
+  |   "IOVideoAccelTypes" = 7
+  |   "IOGLAccelTypes" = 7
+  |   "IOAcceleratorTypes" = ("Framebuffer","3D","Hardware")
+  |   "IOSurfaceAccelTypes" = 7
+  |   "IOAccelRevision" = 2
+  |   "RendererID" = 148992
+  |   "IOGLBundleName" = "VMVirtIOGLEngine"
+  | }
+  | 
+  +-o VMAccelSurfaceClient  <class VMAccelSurfaceClient, id 0x100000308, !registered, !matched, active, busy 0, retain 5>
+  |   {
+  |     "IOUserClientMethodCount" = 18
+  |     "IOUserClientCreator" = "pid 99, WindowServer"
+  |   }
+  |   
+  +-o VMVirtIOGPUUserClient  <class VMVirtIOGPUUserClient, id 0x100000323, !registered, !matched, active, busy 0, retain 4>
+  |   {
+  |     "IOUserClientCreator" = "pid 150, powerfox"
+  |   }
+  |   
+  +-o VMVirtIOGPUUserClient  <class VMVirtIOGPUUserClient, id 0x100000326, !registered, !matched, active, busy 0, retain 4>
+      {
+        "IOUserClientCreator" = "pid 230, powerfox"
+      }
+      
+

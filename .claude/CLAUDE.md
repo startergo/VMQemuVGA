@@ -192,6 +192,16 @@ Three specific habits that prevent it:
   something in two files says nothing if a third file exists to hold it. This has
   already produced two wrong conclusions about the build. The rule that prevents
   it: build with the script and do not reason about build settings at all.
+- **Grep shows what the source contains; ioreg shows what actually publishes.**
+  For anything about published properties, service state, or wiring, the registry
+  is ground truth and source search is a hint. The 2026-08-20 GA milestone
+  charter claimed the discovery trio was missing — the FB trio had landed weeks
+  earlier (f551fba) at a site two competent grep passes never reached, and the
+  live publication site of the invented set was likewise not where reading
+  suggested. Related pattern, same cost: a fix landing while its document stays
+  stale is the recurring way settled questions re-open (the trio, the starvation
+  retraction). When observation and document disagree, update the document in
+  the same session.
 - **Attribute the evidence in the same sentence as the claim.** "Confirmed by
   `nm -m` on the built binary" and "inferred from the call sites" are different
   statements and must look different.
