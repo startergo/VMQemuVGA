@@ -16,7 +16,7 @@ Rules for maintaining this file:
   section with a date and a note on what replaced it — don't delete it, and
   don't leave it competing with the current truth.
 
-Last updated: 2026-08-21 afternoon (SURFACE-ATTACH CALL SITE FOUND — task #16 closed; CGLSetSurface route structurally dead, see the 2026-08-21 entry below. Previously: 2026-08-20 late night (KERNEL RELAY LANDED AND DELIVERS PIXELS — the browser window renders REAL, UPRIGHT, LEGIBLE content through 0x600C for the first time (user-observed; relay kexts 8f3f31ac→66cab1cc→1457c200). Arc: first relay wrote BAR-0 while the display reads the framebuffer's m_fb_backing → fixed by storing caller-owned backings in the resource pool (backing_owned flag, guarded release at unref); first working build flipped the window (readback bytes are ALREADY top-down — the flip was inherited GL-bottom-up reasoning, and EVERY probe config was flip-blind: a uniform clear colour is orientation-invariant — instrument lesson recorded); identity row order landed it upright. Remaining defect is ARCHITECTURAL, not relay: constant flicker = the relay writes the DESKTOP SCANOUT one layer below WindowServer, which recomposites the window region from its own view backing — two writers, one rect. The right target is the window's own CGS surface via the EXISTING, proven IOAccelSurface path (WriteLock→mapped surface, Flush→blit, WindowServer composites); the missing piece is the GA CFPlugIn (app-side accelerator attach — the same gap that stopped readfb at IOCreatePlugInInterfaceForService). First time the accelerator work and the GL work point at the same next step. Decision pending: build the GA CFPlugIn (largest remaining piece) vs not. Open residuals: the browser dies silently every few minutes — 3× today, mode-INDEPENDENT (relay, CG-blit, census runs all hit it), zero crash reports each time; the CG-blit control run died before rendering (no-regression unconfirmed visually); debug.log re-accumulates. CROSS-CONTEXT ATTACH MISMATCH FALSIFIED on the full boot log (an excerpt showed attaches only on ctx=0x100, batches only on 0x101): the totals are attaches 380×0x100 + 36×0x101, batches 826×0x100 + 6778×0x101 + 32524×0x10a + 1×ctx-0x1 — both contexts attach AND execute; the excerpt was interleaved legitimate streams (two virgl ctxs per browser generation, matching the two-OSMesa-context census). New unexplained datum from the same census: ONE batch executed on ctx=0x1. SECOND FORM ALSO FALSIFIED (the relocated 0x10a mismatch — "workhorse ctx with zero attaches"): kernel.log.1 holds ctx 0x10a's creation at 19:25:52 WITH 14 attaches in the same second; the census file began 19:29:59 — a log-window artifact. Every context in every generation attaches its own resources and runs its own batches; the system is structurally coherent. LESSON ×2: (a) ctx ids and resource ids SHARE ranges (ctx 0x10a and res 0x10a both exist) — instance-tagging applies to log ids; (b) a census over a rotated window must first establish the window's start against the objects' lifetimes. USEFUL SIGNATURE: `removeAllUserBackings … (client died)` is the silent death's kernel-side trace — death timestamps are extractable kext-side. Grey canvas: NO verified observation exists in-session (the term entered via an unattributed log excerpt) — off the books unless directly observed. attachBackingUser's nr_entries=1 warning now fires only for >4096-byte single-segment walks (93d32ce; sub-page allocations land single-segment by design and were burying the signal — the uniq -c failure class). GREY CANVAS NOW OBSERVED directly: live browser, aquarium page — a real rendering datum, distinct from the flicker, back on the books. GA CFPLUGIN BUILD CHARTERED (design banked in docs/ga-cfplugin.md — the full contract with worked-example file:line refs): kext trio currently WRONG 3-of-5 (IOAccelTypes as a number on the accelerator, not the path-string on the FB; FB IOAccelIndex=0x1AF41050 not 0; IOCFPlugInTypes on the FB absent — the plugin-instantiation blocker; AccelCaps absent). Milestones: (1) trio fix + plugin skeleton (factory/vtable/vmStart, other slots Unsupported) + minimal type-2 2D-context user client + readfb-style negative control (IOCreatePlugInInterfaceForService must return a live interface and vmStart must open the context — the exact call readfb died on); (2) surface binding via SetSurface/AllocateSurface/Lock; (3) the relay writes the bound window surface, flicker dies, screen-capture verdict; (4) the substitute drives the GA path in host-present mode. GLPlugin/ in this repo is a CGL renderer plugin (the superseded GLD direction) — NOT a GA plugin, no overlap. GA MILESTONE 2 RUNG 2 — CGS-SURFACE BINDING WORKS (Aug 21 10:0x, kext 56d3e5a7 + plugin ce7b7688, commit 836faf3): PROBE (exit 0, cgs id 1 = WindowServer's surface): AllocateSurface(0x1) bound via registry; LockSurface → app view 0x101000000 rowBytes=6720 (1680×4); FIRST PIXEL READ 0xffffffff — a plain process reading WindowServer's compositing memory through the GA interface; Unlock/Free clean; NEGATIVE (0xdead) refused 0xe00002be. THE TWO-TASK TWO-VIEW CONTRACT IS LIVE. Registry: locked 16-entry array in VMAccelSurfaceClient (add at SetIDMode, remove at stop); type-2 looks up FRESH every op. CACHE DISCOVERY: the startup mkext EXCLUDES VMQemuVGA.kext ENTIRELY (strings=0; digest invariant across kext changes) — kextcache's walker skips us (PlugIns/beside-plugin suspect); boots load individually from /S/L/E. NEXT: milestone 3 — the relay (0x600C) writes the BOUND window surface's backing; flicker dies; screen-capture verdict. GA MILESTONE 3 FIRST BOOT — FAILED, mechanism partially identified (Aug 21 10:2x, kext c2a59aa9 + substitute 898f653b): (1) THE SUBSTITUTE'S CGLSetSurface NEVER FIRED — no GA session lines in pf_m3.log; Gecko's window-surface attachment does NOT route through CGLSetSurface on this stack (design assumption falsified; the surface id must be captured elsewhere — NSOpenGLContext setView path, the interpose, or CGS surface creation APIs). (2) The relay's GA path never triggered (no bind existed) and the DESKTOP-SCANOUT FALLBACK BROKE on this boot: "hostRelayBlit dst res 1 not in resource pool" — resource 1 absent from the device pool on this boot's FB setup path; the fallback must resolve the desktop backing without the pool (the BAR-0-era lesson repeated at a new call site). (3) Screen went BLACK then WHITE with surface-client log volume ~96 WriteLocks (normal compositing volume — the flood impression was the steady-state rate at first-browser-launch); live mode=4 (1680x1050) vs m_width=1920 inconsistency observed in pixel-info lines — mode churn unexplained residual. Browser killed; desktop compositing continued normally (96 locks, flushes green). ROOT CAUSE FOUND (Aug 21 10:5x, rotated kernel.log.0): resource-1 recreation FAILED with 0xe00002d6 kIOReturnNoSpace — THE DEVICE RESOURCE POOL'S 64 SLOTS EXHAUSTED (createResource2D "POOL FULL (64 slots), unref+reject"). This boot ran 1680x1050 (mode churn recreated resource 1 repeatedly); the pool saturated; the desktop lost its virtio scanout resource → whole screen black then white with NO browser needed. The GEM-style dynamic-store fix was applied to the USER backing table (2026-08-18) but NOT to this device pool — the same saturation class at a second table. FIX: grow the device pool dynamically (mirror the backing-store pattern) or start it much larger. The relay's GA path and the substitute were inert bystanders. NEXT: find where Gecko actually binds the window surface on 10.6 (the substitute's interpose setView? CGLSetSurface on the REAL CGL before substitution?), and fix the relay fallback's dst resolution.POST-FIX STEADY STATE CONFIRMED (Aug 21 13:1x, kext 621b144a, user-supplied log): desktop healthy at 1680x1050 (this boot's mode — settled, no churn visible); WindowServer compositing normally through the surface client (SetShape→Lock→Flush cycles, menu bar 1680x22, window regions, a 64x64 busy region at (1256,967) — spinner/cursor class); refresh ~39 Hz; ZERO pool failures, zero POOL FULL, zero high-water fires (13 creates total). The black/white class is closed by observation, not just by code. Mode selection still varies between boots (1680x1050 vs 1920x1080) — the recorded FB-mode confound, unchanged. Full arc: Mesa ledger Aug 20 evening. Entries below)
+Last updated: 2026-08-21 later (IOAccelerator3D CAPABILITY-FLIP EXPERIMENT PRE-REGISTERED — the load-bearing question underneath every remaining delivery route; outcomes and procedure written before any boot, see the pre-registration entry. Earlier today: SURFACE-ATTACH CALL SITE FOUND — task #16 closed; CGLSetSurface route structurally dead, see the 2026-08-21 entry below. Previously: 2026-08-20 late night (KERNEL RELAY LANDED AND DELIVERS PIXELS — the browser window renders REAL, UPRIGHT, LEGIBLE content through 0x600C for the first time (user-observed; relay kexts 8f3f31ac→66cab1cc→1457c200). Arc: first relay wrote BAR-0 while the display reads the framebuffer's m_fb_backing → fixed by storing caller-owned backings in the resource pool (backing_owned flag, guarded release at unref); first working build flipped the window (readback bytes are ALREADY top-down — the flip was inherited GL-bottom-up reasoning, and EVERY probe config was flip-blind: a uniform clear colour is orientation-invariant — instrument lesson recorded); identity row order landed it upright. Remaining defect is ARCHITECTURAL, not relay: constant flicker = the relay writes the DESKTOP SCANOUT one layer below WindowServer, which recomposites the window region from its own view backing — two writers, one rect. The right target is the window's own CGS surface via the EXISTING, proven IOAccelSurface path (WriteLock→mapped surface, Flush→blit, WindowServer composites); the missing piece is the GA CFPlugIn (app-side accelerator attach — the same gap that stopped readfb at IOCreatePlugInInterfaceForService). First time the accelerator work and the GL work point at the same next step. Decision pending: build the GA CFPlugIn (largest remaining piece) vs not. Open residuals: the browser dies silently every few minutes — 3× today, mode-INDEPENDENT (relay, CG-blit, census runs all hit it), zero crash reports each time; the CG-blit control run died before rendering (no-regression unconfirmed visually); debug.log re-accumulates. CROSS-CONTEXT ATTACH MISMATCH FALSIFIED on the full boot log (an excerpt showed attaches only on ctx=0x100, batches only on 0x101): the totals are attaches 380×0x100 + 36×0x101, batches 826×0x100 + 6778×0x101 + 32524×0x10a + 1×ctx-0x1 — both contexts attach AND execute; the excerpt was interleaved legitimate streams (two virgl ctxs per browser generation, matching the two-OSMesa-context census). New unexplained datum from the same census: ONE batch executed on ctx=0x1. SECOND FORM ALSO FALSIFIED (the relocated 0x10a mismatch — "workhorse ctx with zero attaches"): kernel.log.1 holds ctx 0x10a's creation at 19:25:52 WITH 14 attaches in the same second; the census file began 19:29:59 — a log-window artifact. Every context in every generation attaches its own resources and runs its own batches; the system is structurally coherent. LESSON ×2: (a) ctx ids and resource ids SHARE ranges (ctx 0x10a and res 0x10a both exist) — instance-tagging applies to log ids; (b) a census over a rotated window must first establish the window's start against the objects' lifetimes. USEFUL SIGNATURE: `removeAllUserBackings … (client died)` is the silent death's kernel-side trace — death timestamps are extractable kext-side. Grey canvas: NO verified observation exists in-session (the term entered via an unattributed log excerpt) — off the books unless directly observed. attachBackingUser's nr_entries=1 warning now fires only for >4096-byte single-segment walks (93d32ce; sub-page allocations land single-segment by design and were burying the signal — the uniq -c failure class). GREY CANVAS NOW OBSERVED directly: live browser, aquarium page — a real rendering datum, distinct from the flicker, back on the books. GA CFPLUGIN BUILD CHARTERED (design banked in docs/ga-cfplugin.md — the full contract with worked-example file:line refs): kext trio currently WRONG 3-of-5 (IOAccelTypes as a number on the accelerator, not the path-string on the FB; FB IOAccelIndex=0x1AF41050 not 0; IOCFPlugInTypes on the FB absent — the plugin-instantiation blocker; AccelCaps absent). Milestones: (1) trio fix + plugin skeleton (factory/vtable/vmStart, other slots Unsupported) + minimal type-2 2D-context user client + readfb-style negative control (IOCreatePlugInInterfaceForService must return a live interface and vmStart must open the context — the exact call readfb died on); (2) surface binding via SetSurface/AllocateSurface/Lock; (3) the relay writes the bound window surface, flicker dies, screen-capture verdict; (4) the substitute drives the GA path in host-present mode. GLPlugin/ in this repo is a CGL renderer plugin (the superseded GLD direction) — NOT a GA plugin, no overlap. GA MILESTONE 2 RUNG 2 — CGS-SURFACE BINDING WORKS (Aug 21 10:0x, kext 56d3e5a7 + plugin ce7b7688, commit 836faf3): PROBE (exit 0, cgs id 1 = WindowServer's surface): AllocateSurface(0x1) bound via registry; LockSurface → app view 0x101000000 rowBytes=6720 (1680×4); FIRST PIXEL READ 0xffffffff — a plain process reading WindowServer's compositing memory through the GA interface; Unlock/Free clean; NEGATIVE (0xdead) refused 0xe00002be. THE TWO-TASK TWO-VIEW CONTRACT IS LIVE. Registry: locked 16-entry array in VMAccelSurfaceClient (add at SetIDMode, remove at stop); type-2 looks up FRESH every op. CACHE DISCOVERY: the startup mkext EXCLUDES VMQemuVGA.kext ENTIRELY (strings=0; digest invariant across kext changes) — kextcache's walker skips us (PlugIns/beside-plugin suspect); boots load individually from /S/L/E. NEXT: milestone 3 — the relay (0x600C) writes the BOUND window surface's backing; flicker dies; screen-capture verdict. GA MILESTONE 3 FIRST BOOT — FAILED, mechanism partially identified (Aug 21 10:2x, kext c2a59aa9 + substitute 898f653b): (1) THE SUBSTITUTE'S CGLSetSurface NEVER FIRED — no GA session lines in pf_m3.log; Gecko's window-surface attachment does NOT route through CGLSetSurface on this stack (design assumption falsified; the surface id must be captured elsewhere — NSOpenGLContext setView path, the interpose, or CGS surface creation APIs). (2) The relay's GA path never triggered (no bind existed) and the DESKTOP-SCANOUT FALLBACK BROKE on this boot: "hostRelayBlit dst res 1 not in resource pool" — resource 1 absent from the device pool on this boot's FB setup path; the fallback must resolve the desktop backing without the pool (the BAR-0-era lesson repeated at a new call site). (3) Screen went BLACK then WHITE with surface-client log volume ~96 WriteLocks (normal compositing volume — the flood impression was the steady-state rate at first-browser-launch); live mode=4 (1680x1050) vs m_width=1920 inconsistency observed in pixel-info lines — mode churn unexplained residual. Browser killed; desktop compositing continued normally (96 locks, flushes green). ROOT CAUSE FOUND (Aug 21 10:5x, rotated kernel.log.0): resource-1 recreation FAILED with 0xe00002d6 kIOReturnNoSpace — THE DEVICE RESOURCE POOL'S 64 SLOTS EXHAUSTED (createResource2D "POOL FULL (64 slots), unref+reject"). This boot ran 1680x1050 (mode churn recreated resource 1 repeatedly); the pool saturated; the desktop lost its virtio scanout resource → whole screen black then white with NO browser needed. The GEM-style dynamic-store fix was applied to the USER backing table (2026-08-18) but NOT to this device pool — the same saturation class at a second table. FIX: grow the device pool dynamically (mirror the backing-store pattern) or start it much larger. The relay's GA path and the substitute were inert bystanders. NEXT: find where Gecko actually binds the window surface on 10.6 (the substitute's interpose setView? CGLSetSurface on the REAL CGL before substitution?), and fix the relay fallback's dst resolution.POST-FIX STEADY STATE CONFIRMED (Aug 21 13:1x, kext 621b144a, user-supplied log): desktop healthy at 1680x1050 (this boot's mode — settled, no churn visible); WindowServer compositing normally through the surface client (SetShape→Lock→Flush cycles, menu bar 1680x22, window regions, a 64x64 busy region at (1256,967) — spinner/cursor class); refresh ~39 Hz; ZERO pool failures, zero POOL FULL, zero high-water fires (13 creates total). The black/white class is closed by observation, not just by code. Mode selection still varies between boots (1680x1050 vs 1920x1080) — the recorded FB-mode confound, unchanged. Full arc: Mesa ledger Aug 20 evening. Entries below)
 
 ---
 
@@ -131,6 +131,123 @@ on 10.6 and has no runtime pref (compile-time MOZ_APPLEMEDIA only;
 PDMFactory.cpp). When the release lands: test guest video before/after
 (video is the known-broken axis), and check for a gating pref on the new
 path.
+
+---
+
+## 2026-08-21 (later) — PRE-REGISTERED: the IOAccelerator3D capability-flip experiment
+
+**Why this is now the load-bearing experiment, not one option among
+several:** today's falsification established WindowServer owns ONE
+full-desktop surface (wID=0x1) and composites everything into it —
+per-window backings never reach the registry. Every remaining delivery
+route (a window GL-surface layer via AppKit's setView path, or an
+app-created CGS surface) requires app-side surfaces to receive DRIVER
+backing, and the Aug-14 SILENT result showed CGS servicing plain
+AddSurface entirely in software. The question underneath all routes:
+can the driver be made a participant in app surface creation at all?
+Nothing else moves until this is answered.
+
+**The change — one variable, boot-arg gated, same binary:**
+- Sibling boot-arg `vm-cap3d` via `PE_parse_boot_argn`, mirroring the
+  existing `vm-accel-surface` gate (FB/VMQemuVGAAccelerator.cpp:375).
+- Flip ONLY the capability booleans: FB block
+  FB/VMVirtIOFramebuffer.cpp:363-366 (`IOAcceleratorFamily`,
+  `IOGraphicsAccelerator`, `IODisplayAccelerated`, `IOAccelerator3D`)
+  and the parent block FB/VMVirtIOGPU.cpp:457-458
+  (`IOGraphicsAccelerator`, `IOAccelerator3D`) — published value
+  becomes `functional_3d || gate`, gate state logged loudly at both
+  sites.
+- UNCHANGED by the flip (recorded to keep it one variable): the model
+  string (FB/VMVirtIOGPU.cpp:5897), `IOGLBundleName` ("GLEngine" on the
+  FB), `IOAccelIndex`, the GA trio, `IOAcceleratorTypes`
+  (FB/VMVirtIOGPU.cpp:462-470).
+- `m_3d_functional` itself stays false — this is a publication
+  experiment, not a claim that rendering works (the distinction the
+  block comment at FB/VMVirtIOFramebuffer.cpp:352-358 already draws).
+
+**Negative control already in place, free of charge:** the
+`IOAcceleratorTypes` array has claimed the strings "3D" and "Hardware"
+UNCONDITIONALLY on every boot (FB/VMVirtIOGPU.cpp:464-467) and
+WindowServer has never reacted to it — direct evidence that the
+capability BOOLEANS, not the type-string array, are the operative gate.
+The flip varies exactly the booleans; this pre-existing unreacted
+string claim is the differential.
+
+**Procedure — two boots, one variable each, browser NOT run:**
+1. CONTROL boot (same binary, no arg): re-establish the SILENT baseline
+   on the CURRENT kext — the Aug-14 baseline predates pool-512, the
+   registry, and the GA-property kexts. Verify ioreg shows the three =
+   No; run `probe_cgs_requester` 20s as the console GUI user.
+   Prediction: identical to Aug-14 — AddSurface OK, sid != 0, ZERO
+   surface-client kernel lines, renderer census nrend=1 accelerated=0.
+2. FLIP boot (arg present): ioreg verify three = Yes BEFORE any probe —
+   boot itself is the first hazard window. If the desktop is healthy,
+   run the probe identically. Capture the kernel.log FILE (rotation
+   rule) and full probe stderr.
+
+**The probe's window — recorded before the boot, so a silent result can
+be scored against WHAT WAS TRIED (from probe/probe_cgs_requester.m, the
+instrument is unchanged from the Aug-14 runs):**
+- Construction: `[NSWindow initWithContentRect:(200,200,320,240)
+  styleMask:NSTitledWindowMask backing:NSBackingStoreBuffered
+  defer:NO]`, `orderFrontRegardless`, activation policy Regular.
+- NOT layer-backed (no CA layer requested); title-bar-only style mask
+  (no closable/resizable/miniaturizable bits); plain buffered backing;
+  default contentView, no NSOpenGLView anywhere.
+- GL attachment: NONE through AppKit. The probe creates a bare
+  `CGLContextObj` from a SOFTWARE pixel format (no accelerated format
+  exists) and binds it to its OWN app-created sid via the PRIVATE
+  4-arg `CGLSetSurface(ctx, cid, wid, sid)` — the direct call, NOT the
+  AppKit setView→__NS_CGL chain that real windowed GL uses.
+- Consequence for scoring: this window is a minimal candidate. A silent
+  flip-boot result is consistent BOTH with "capability insufficient
+  (deeper gate)" AND with "this window configuration is not one CGS
+  backs" — the run alone cannot separate them.
+
+**Pre-registered outcomes (flip boot):**
+1. **ADOPTED** — surface-client lines (newUserClient/SetIDMode) inside
+   the probe's CGSAddSurface/BindSurface window, with a wID or registry
+   id other than the boot's wID=0x1. Meaning: CGS consults the driver
+   for app-created surfaces when the capability is on; the registry
+   gains app surfaces; every remaining route unblocks. The probe makes
+   no IOKit calls, so any line in its window is WindowServer-originated
+   — that invariant IS the instrument. IMMEDIATE DESTINATION for a
+   positive: the milestone-1 GA plugin — AllocateSurface
+   (kIOBlitHasCGSSurface, sid) with the probe's sid (exactly the rung-2
+   shape), registry bind, and the relay's GA path becomes wireable
+   end-to-end.
+2. **STILL SILENT** — ioreg three = Yes VERIFIED, probe output
+   identical to control. TWO live readings, NOT separable by this run
+   alone: (i) capability necessary but insufficient — the real gate is
+   deeper (a renderer/QE path must exist first, the GLD/GLEngine
+   question); (ii) WINDOW QUALIFICATION — the probe's window (plain
+   titled buffered window, no AppKit GL attachment, sid bound via the
+   private direct CGLSetSurface) is simply not a configuration CGS
+   backs. The no-IOKit-calls invariant proves the silence is real and
+   WindowServer-attributed; it says nothing about which reading holds.
+   Pre-registered discriminator (separate boot, its own variable): a
+   probe VARIANT whose window goes through the AppKit GL idiom
+   (NSOpenGLContext + setView — the chain Gecko's swizzle suppresses)
+   under the same flip. Variant ADOPTS while the plain window stays
+   silent → reading (ii), the window was the axis. Both silent →
+   reading (i) strengthens; only then does the GLD question inherit
+   this evidence.
+   2b. **ADOPTION ATTEMPTED, REFUSED** — lines appear but surface
+   creation/SetIDMode FAILS. Record the raw return codes. Distinct from
+   2 (nobody tried vs. tried-and-refused); its own follow-up.
+3. **DESTABILIZED** — the outcome-#3/blue-screen class: boot hang,
+   blue/black/garbage desktop, WindowServer crash loop, unbootable.
+   Meaning: WindowServer is an eager consumer of the property with no
+   working backend behind it. Action: revert = remove the one arg from
+   OpenCore config.plist NVRAM (read-modify-write the FULL boot-args
+   string, never a remembered subset); slclean recovery if unbootable
+   (clear caches + touch Extensions, wait minutes). The flip is dead as
+   an approach; the residual question becomes whether a narrower
+   property gates ONLY surface backing without inviting compositing.
+
+(This entry is committed BEFORE the gate's implementation and before
+either boot — the commit timestamp is the pre-registration evidence;
+the commit-before-booting rule, learned at the 2a trio's expense.)
 
 ---
 
