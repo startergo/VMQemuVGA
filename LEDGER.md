@@ -696,6 +696,54 @@ if unbootable):
 (Committed before implementation — commit-before-build rule; the
 pre-build stock-layout read is part of the rung, recorded above.)
 
+**RUNG 3 AMENDMENTS (same night, before any implementation):**
+
+**A. The stub's answer policy — DECIDED: honest refusals, per entry.**
+The uniform-0 stub is wrong by the ABI's own conventions:
+`gldGetRendererInfo`'s forwarding path returns 0 ONLY on success with a
+filled struct_out, and its no-forward fallback returns -1
+(../../VMsvga2-modern/GLD/VMsvga2GLDriver.c:122-146). A stub answering
+0 everywhere would claim SUCCESS at the renderer-info query having
+written nothing — the over-claiming shape (outcome-3/blue-screen
+class), and a loaded stub is no longer inert. Regeneration rule,
+extracted from the trampoline's fallback returns + the header's
+per-entry signatures and annotations (VMsvga2GLDriver.h:36+):
+GLDReturn entries answer -1; _Bool entries answer false; pointer
+entries answer NULL; void entries log only. UNDER-CLAIM BY
+CONSTRUCTION — if the loader still enumerates a stub that refuses
+everything, nothing consumes garbage, and the result (loaded,
+refusing, enumerated-as-nothing or not-enumerated) is honest data. The
+OPENED→LOADED branch's next observable is the FIRST CALLER — the stub
+log names which entry points the loader actually calls, itself a
+primary datum. Mis-answer hazard remains outcome-4 class; recovery
+stands.
+
+**B. The name mismatch gets its own line, separate from the rung.**
+The recorded reason for superseding GLPlugin — "CGL never discovered
+the custom renderer" — may be an INSTALL ARTIFACT rather than a
+verdict: install_standalone_bundle.sh installed
+/S/L/E/VMVirtIOGLDriver.bundle while the kext published
+IOGLBundleName="VMVirtIOGLEngine"; if the loader resolves
+/S/L/E/<IOGLBundleName>.bundle, the era's install could never match
+and non-discovery was guaranteed by the name, not the mechanism. This
+does not argue for revival (the era's gli*/glo* ABI was also a
+guess — superseded on multiple grounds), but the recorded reason is
+WEAKER THAN IT READS, and rung 3 tests the corrected form of exactly
+this claim (name-matched by construction). SUPERSEDED.md's rationale
+should carry this caveat when next read.
+
+**C. Tooling-residue pattern — twice in one day, now a habit.**
+~/Info.plist and GLEngine.original are the same shape: a test script's
+in-place/replacement flow left residue that survived into a much later
+investigation and masqueraded as system behaviour. Habit recorded:
+ENUMERATE WHAT THE GUEST ACTUALLY CONTAINS before trusting what a
+trace implies — before GL-side experiments, inventory
+OpenGL.framework/Resources/, /S/L/E *GLDriver* bundles, and stray
+plists in $HOME and /Library/Preferences. Related standing verdict:
+the era's replace-Apple's-bundle flows (quick_test.sh / test_install.sh
+copying over GLEngine.bundle/GLEngine) are INAPPROPRIATE AS A CLASS —
+rung 3 is additive-only; no Apple bundle is touched.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
