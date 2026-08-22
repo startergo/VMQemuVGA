@@ -1896,16 +1896,16 @@ IOReturn VMVirtIOFramebuffer::getAttributeForConnection(IOIndex connectIndex, IO
     // Handle NULL value pointers - these are capability checks for specific attributes
     if (!value) {
         IOLog("VMVirtIOFramebuffer::getAttributeForConnection() - NULL value pointer\n");
-        
+
         // CRITICAL: Handle capability checks for display pipeline attributes
         switch (attribute) {
             case kConnectionSupportsHLDDCSense: // 'hddc' - High Definition Display Controller
-                IOLog("VMVirtIOFramebuffer::getAttributeForConnection() - HDDC capability check: SUPPORTED\n");
-                return kIOReturnSuccess; // We support HDDC for display pipeline
-                
+                IOLog("VMVirtIOFramebuffer::getAttributeForConnection() - HDDC capability check: SUPPORTED (getDDCBlock live)\n");
+                return kIOReturnSuccess; // BACKED: getDDCBlock() implemented below
+
             case 0x6c646463: // 'lddc' - Low Definition Display Controller
-                IOLog("VMVirtIOFramebuffer::getAttributeForConnection() - LDDC capability check: SUPPORTED\n");
-                return kIOReturnSuccess; // We support LDDC for display pipeline
+                IOLog("VMVirtIOFramebuffer::getAttributeForConnection() - LDDC capability check: NOT SUPPORTED (use HDDC)\n");
+                return kIOReturnUnsupported; // LOW-level DDC not implemented — HDDC path is
                 
             case kConnectionSupportsAppleSense: // 'asns' - Apple Sense
                 IOLog("VMVirtIOFramebuffer::getAttributeForConnection() - Apple Sense capability check: SUPPORTED\n");
@@ -2144,6 +2144,58 @@ IOReturn VMVirtIOFramebuffer::setAttributeForConnection(IOIndex connectIndex, IO
             IOLog("VMVirtIOFramebuffer::setAttributeForConnection() - Unknown attribute 0x%x\n", (unsigned int)attribute);
             return super::setAttributeForConnection(connectIndex, attribute, value);
     }
+}
+
+/* DDC/EDID — the hypothesis test (2026-08-22): the display had no
+ * EDID (the HDDC claim was unbacked); CGS produced "invalid display"
+ * for accelerated formats. This EDID is a minimal valid 128-byte 1.3
+ * base block: digital, 1680x1050@60Hz, checksum-verified (sum=0).
+ * HYPOTHESIS: CGS reads EDID for accelerated-display qualification.
+ * If correct, the "invalid display" errors vanish and accelerated pf
+ * requests reach the GLD. */
+static const UInt8 s_edid[128] = {
+    0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
+    0x44, 0x8A, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00,
+    0x00, 0x22, 0x01, 0x03, 0x83, 0x2C, 0x1B, 0x78,
+    0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01,
+    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x7C, 0x2E,
+    0x90, 0xB0, 0x60, 0x1A, 0x20, 0x40, 0x68, 0x08,
+    0x36, 0x00, 0xBB, 0x0F, 0x11, 0x00, 0x00, 0x1E,
+    0x00, 0x00, 0x00, 0xFC, 0x00, 0x56, 0x4D, 0x56,
+    0x69, 0x72, 0x74, 0x49, 0x4F, 0x20, 0x44, 0x69,
+    0x73, 0x0A, 0x00, 0x00, 0x00, 0xFD, 0x00, 0x32,
+    0x4B, 0x1E, 0xA0, 0xFF, 0x20, 0x20, 0x20, 0x20,
+    0x20, 0x20, 0x20, 0x20, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8,
+};
+
+IOReturn VMVirtIOFramebuffer::getDDCBlock(IOIndex connectIndex, UInt32 blockNumber,
+                                           IOSelect blockType, IOOptionBits options,
+                                           UInt8* data, IOByteCount* length)
+{
+    static bool s_logged = false;
+    if (!s_logged) {
+        s_logged = true;
+        IOLog("VMVirtIOFramebuffer::getDDCBlock — SERVING EDID (128 bytes, "
+              "digital 1680x1050, hypothesis test 2026-08-22)\n");
+    }
+    if (connectIndex == 0 &&
+        blockNumber == 1 &&
+        blockType == kIODDCBlockTypeEDID &&
+        data && length && *length >= 128) {
+        memcpy(data, s_edid, 128);
+        *length = 128;
+        return kIOReturnSuccess;
+    }
+    return super::getDDCBlock(connectIndex, blockNumber, blockType, options, data, length);
+}
+
+bool VMVirtIOFramebuffer::hasDDCConnect(IOIndex connectIndex)
+{
+    return (connectIndex == 0);
 }
 
 IOReturn VMVirtIOFramebuffer::connectFlags(IOIndex connectIndex, IODisplayModeID displayMode, IOOptionBits* flags)

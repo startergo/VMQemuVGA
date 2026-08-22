@@ -2066,6 +2066,30 @@ in CGS's accelerated-display qualification.
   (a) IODisplayEDID appears in ioreg; (b) the "invalid display"
   CGS errors vanish; (c) accelerated pf requests pass CGS and
   reach our GLD.
+
+**EDID HYPOTHESIS TEST RESULT — FALSIFIED (11:40–11:44; kext
+10bc1ae6 with getDDCBlock/hasDDCConnect, EDID live, gate+GLD on):**
+- EDID IS in the registry (IODisplayEDID count 2; getDDCBlock
+  logged at boot; hasDDCConnect returning true).
+- **Resolution changed to 1024x768** — the display subsystem
+  responded to EDID data it never had. A real side effect: EDID
+  presence changes mode selection (IODisplay may prefer its own
+  timing interpretation over our DTD, or the framebuffer's mode
+  table limits the choice — separate question).
+- **BUT: "invalid display" CGS errors PERSIST — identical to
+  rung 14 (no EDID):** pf(accelerated) → 10006 with the same
+  CGS error; all results and GLD call pattern unchanged.
+  **EDID is NOT the cause.**
+- **All three candidates exhausted:** booleans+GLD — negative;
+  display mask — clean; EDID — FALSIFIED. The cause is none of
+  the three. The remaining locus: CGSGetDisplayOpenGLDisplayMask
+  (called by the framework's 0x9660 helper) — the CGS-side
+  display-to-OpenGL mapping fails for our display, and none of
+  the tested properties control it. Deeper CGS internals.
+- The EDID implementation STAYS (correct behavior — the display
+  has real EDID for the first time; the HDDC claim is now
+  backed). The 1024x768 mode selection is a mode-table
+  interaction to investigate separately.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its

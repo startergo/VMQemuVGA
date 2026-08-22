@@ -213,6 +213,17 @@ public:
     virtual IOReturn getAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t* value) override;
     virtual IOReturn setAttributeForConnection(IOIndex connectIndex, IOSelect attribute, uintptr_t value) override;
     virtual IOReturn connectFlags(IOIndex connectIndex, IODisplayModeID displayMode, IOOptionBits* flags) override;
+
+    /* DDC/EDID — the hypothesis test (2026-08-22): the kext CLAIMED
+     * HDDC support without implementing either method; the display
+     * had no EDID; CGS produced "invalid display" for accelerated
+     * formats. The worked example implements both (VMsvga2.h:149-150,
+     * VMsvga2.cpp:722-744). The EDID is a minimal valid 128-byte 1.3
+     * base block describing a digital display at the running mode. */
+    virtual IOReturn getDDCBlock(IOIndex connectIndex, UInt32 blockNumber,
+                                 IOSelect blockType, IOOptionBits options,
+                                 UInt8* data, IOByteCount* length) override;
+    virtual bool hasDDCConnect(IOIndex connectIndex) override;
     
     // 3D scanout management - called by VMVirtIOGPU when 3D resources take over display
     void setScanoutTakenOverBy3D(bool taken_over);
