@@ -4020,6 +4020,46 @@ fires (the first time); whatever the engine does with an
 installed-but-refused dispatch table is the next datum.
 **Exposure:** live-swap, probe-only, no boot.
 
+**RUNG 33 RESULT (2026-08-22) — PREDICTION (i) CONFIRMED IN
+FULL: the attach answered, gldInitDispatch FIRED FOR THE FIRST
+TIME, and CGLSetSurface RETURNED OK — THE GA-ERA COUPLING STEP
+IS OPEN:**
+```
+CALL gldAttachDrawable type=0x50 -> 0   (0x50 = 80 = the WINDOW class)
+CALL gldInitDispatch    -> -1 (refusal)  ← first firing ever
+CGLSetSurface(ctx,cid,wid,sid) -> 0 (OK)  ← THE COUPLING STEP
+CGSFlushSurface -> 0 (OK); CGSOrderSurface -> 0 (OK)
+... clean teardown (context handshake, shared freed)
+```
+- **The float's gldAttachDrawable (grf.t 0x1745d):** esi is a
+  DRAWABLE-TYPE code — 0x36 (fullscreen-class) refused with
+  0x271c EVEN BY THE FLOAT; 0x35 (offscreen) and the common
+  path run glsAssignDrawable (the float's renderer-side surface
+  allocation), store the type at ctx+0x210, compute buffer
+  sizes from the drawable object at ctx+0x218. The mirror keeps
+  the type store + the float's 0x36 refusal, answers 0; the
+  surface machinery is bridge territory.
+- **The observed type: 0x50 (kCGLPFAWindow=80) — the window
+  class**, the float's common path.
+- **The trigger chain confirmed end-to-end:** attach success →
+  gldInitDispatch. The engine proceeded to the CGS surface ops
+  (flush/order — CGS-side, not GL) and tore down cleanly.
+- **THE FRONTIER IS NOW EXACTLY gldInitDispatch** — firing,
+  refused, waiting for a real answer: the dispatch table
+  (ctx, dispatch_block, limits_out) the float's read already
+  decoded to its slots (clear/readpixels/render-paths/buffers,
+  noops for unsupported).
+- **NEXT (rung 34): the honest gldInitDispatch** — the float's
+  OWN pattern for a capability it lacks is a NOOP FUNCTION
+  (gldNoop installed in unsupported slots). The stub's honest
+  dispatch: NOOPS IN EVERY SLOT (every rendering call
+  "succeeds" vacuously and logs — consistent with the RENDERER
+  string "software, no rendering"; the app draws, nothing
+  appears, no lies are told). The bridge then replaces noops
+  with Mesa calls slot by slot. **This is the bridge's opening
+  move proper: the table exists, filled honestly, and each slot
+  that goes real is one Mesa-backed GL function live.**
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

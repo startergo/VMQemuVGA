@@ -563,7 +563,35 @@ long gldDestroyContext(void* ctx, void* a1, void* a2, void* a3, void* a4, void* 
     return 0;
 }
 EPR(gldReclaimContext)
-EPR(gldAttachDrawable)
+/* RUNG 33 — the honest gldAttachDrawable, mirrored from the float
+ * (grf.t 0x1745d): esi is a DRAWABLE-TYPE code — 0x36
+ * (fullscreen-class) is REFUSED with 0x271c even by the float;
+ * other types run the float's glsAssignDrawable (renderer-side
+ * surface allocation), store the type at ctx+0x210, and compute
+ * buffer sizes from the drawable object at ctx+0x218. The stub
+ * has no renderer surface machinery yet (bridge territory): the
+ * mirror keeps the type store + the float's refusal, answers 0,
+ * and lets gldInitDispatch (the attach's follower) fire. */
+long gldAttachDrawable(void* ctx, unsigned type, void* a3,
+                       void* a4, void* a5, void* a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    char buf[80];
+    snprintf(buf, sizeof(buf),
+             "CALL gldAttachDrawable type=0x%x (rung 33)", type);
+    ep_log(buf);
+    if (!ctx) {
+        ep_log("  gldAttachDrawable -> -1 (no ctx)");
+        return -1;
+    }
+    if (type == 0x36) {
+        ep_log("  gldAttachDrawable -> 0x271c (fullscreen-class, per the float)");
+        return 0x271C;
+    }
+    *(unsigned*)((char*)ctx + 0x210) = type;   /* the float's store */
+    ep_log("  gldAttachDrawable -> 0 (type stored; surface machinery = bridge)");
+    return 0;
+}
 EPR(gldInitDispatch)
 EPR(gldUpdateDispatch)
 /* RUNG 31 — the first return-something-real entry. The float's
