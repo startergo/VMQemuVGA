@@ -3650,6 +3650,41 @@ refusal convention EXERCISED CLEANLY:**
 
 ---
 
+## RUNG 29 PRE-REGISTERED — the shared-slot contract and an
+honest gldCreateShared (committed before the read)
+
+**Known:** the call shape `(out = &shared->slots[i] (0x168+i·0x20),
+esi = device mask 0x1, edx = 4)`; return 0 = success with the
+0x20-byte slot filled by the driver; nonzero tears down the whole
+shared state. The consumers: gliCreateContext's post-creation
+build (0x16c7+, unread) and whatever entry receives the slot
+next.
+
+**Method (the established pattern):** read the FLOAT's own
+gldCreateShared FIRST (grf.t — the float is a full GLD serving
+the software path; its slot shape is ground truth), then the
+minimum engine code that consumes the slot.
+
+**Predictions (registered before reading):**
+- (i) The slot is a driver-opaque state block with a small
+  engine-visible header (refcount or magic at +0); the float's
+  build block gives the shape and values; the honest stub
+  mirrors them (heap, 0x20 bytes, persistent; gldDestroyShared
+  frees — the ownership contract).
+- (ii) The slot feeds the NEXT entry (gldCreateContext-class)
+  — the chain continues; each refusal surfaces as the next
+  clean error, naming the next rung.
+- (iii) The engine itself calls through a slot field (a
+  dispatch pointer) — then the slot needs a real vtable-ish
+  object and the float's values name it.
+**Verification:** mode k — expect the error to CHANGE (from
+10002 to the next code) or the next entry to fire in the stub
+log; either is progress; a crash names a field (crash-report
+instrument standing).
+**Exposure:** live-swap, no boot; probe-only.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
