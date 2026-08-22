@@ -2220,6 +2220,44 @@ struct (not GLD registration; no boot needed):**
   sets the flag at -0x84 that gates the popcount check) —
   but the preference route may bypass the question entirely
   by changing which display-mask path runs.
+
+**THE ACTUAL ERROR SITE — 0x96dd, NOT 0x9dcd (read complete;
+the preference question was answering the wrong site):**
+- **The `orb $0x40` polarity is INVERTED from expectation:**
+  `__CSCheckFix` returns 0 (no fix) → cmovel fires → bit 0x40
+  SET → FULL path runs. No preferences → check returns 0 →
+  gate IS open. The display-mask path is NOT the problem.
+- **The actual error site is 0x96dd — the FIRST check in the
+  helper, before any display matching:**
+```
+callq _glcGetIOAccelService     ; find the IOAccelerator service
+testb %al, %al                  ; did it succeed?
+jne 0x9708                      ; success → continue to display matching
+→ 0x96dd: glcRecordError(0x2716) + exit   ; FAILURE = kCGLBadDisplay
+```
+- **_glcGetIOAccelService** (0x4fb4) returns 0 when the cached
+  accelerator count is 0. The count is populated by the
+  discovery function at 0x4c40, which for each display calls:
+```
+CGSServiceForDisplayNumber(display)     → get the display's IOService
+IOAccelFindAccelerator(port, service, &accel) → find the accelerator
+```
+  If `IOAccelFindAccelerator` returns nonzero (failure) for the
+  display, the accelerator count stays 0 and every subsequent
+  call to glcGetIOAccelService returns 0 → the 0x2716 error.
+- **IOAccelFindAccelerator is the SAME function the GA CFPlugIn
+  used successfully in milestone 1** — but from the probe
+  process. The question is whether it succeeds from the
+  OpenGL framework's CGL initialization path. The accelerator
+  IS published (VMQemuVGAAccelerator with the discovery trio);
+  the display IS associated (CGSServiceForDisplayNumber
+  returns our display's service). The failure point is inside
+  IOAccelFindAccelerator itself — the matching between the
+  display's service and our accelerator.
+- **NEXT READ:** IOAccelFindAccelerator's matching criteria in
+  the IOKit framework — what property on the display service
+  or the accelerator does it check? The answer is a kext-side
+  property or association, not a preference.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
