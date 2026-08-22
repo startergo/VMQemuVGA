@@ -4244,6 +4244,48 @@ real dispatcher's reads (committed before the read)
 **Exposure:** read-only this rung; implementation follows the
 named mechanism.
 
+**RUNG 36 RESULT (2026-08-22) — THE GATE FOUND AND OPENED: the
+engine MEMCPYS the driver's entire table into its context, and
+the dispatcher's thunk IS GLD SLOT 11 (gldUpdateDispatch) — its
+return's bit 2 gates all dispatch. The honest mirror (the
+float's base return 4) opened it: NOOP DISPATCH #1 — THE FIRST
+GL CALL THROUGH THE DRIVER'S OWN TABLE. 0x506 GONE:**
+```
+CALL gldUpdateDispatch #1 -> 4 (rung 36)
+NOOP dispatch #1                       ← first dispatch through our table
+glClear done (0x506 gone; the error slot now shows uninit-garbage — a different class)
+CGLFlushDrawable -> 0
+```
+- **gliCreateContext's tail (0x18b4-0x1918) — the installer
+  read:** per driver: [engine-ctx+0x65b8] = the CreateContext
+  slot object; [engine-ctx+0x65c0] = &the per-driver sub-block
+  (the +0x59/+0x5a reads); then **memcpy(engine-ctx+0x6708,
+  plugin+0x120, 0x270)** — the ENTIRE 78-slot GLD table copied
+  into the engine context. [ctx+0x6760] = 0x6708+0x58 =
+  **slot 11**.
+- **gleDoSelectiveDispatchCore (0xdea89) mapped:** mode-mask
+  gate ([0x4e40]); deferred-state gate ([0x6ec]&[0x88c] |
+  [0x6e8]&[0x888] | (mode|[0x884])&[0x6e4]) →
+  gleUpdateDeferredState (its nonzero return SETS THE GL ERROR
+  directly); dirty-state gate (five ANDed pairs) → **the
+  [0x6760] call: gldUpdateDispatch(driver_ctx, template_block,
+  dirty_block)** → the return's bit 0 vs [0x798b], bit 2 to
+  continue.
+- **The float's gldUpdateDispatch (0x152da):** state-diff
+  machinery — drawable-change detection (invalidates buffers,
+  ORs 0x10000380 into the dirty block), function selection via
+  the shared's processor block; **base return 4 or 0xC — bit 2
+  always set** (0x15399/0x153d8), 0x10 ORed conditionally,
+  dirty-block ORs 0x80/0x100 for real state changes.
+- **The honest mirror:** return 4 (the float's base), mark
+  nothing dirty (the stub has no state — true). Dispatch opened.
+- **THE ARC STATE, END TO END:** formats ✓, shared ✓, context ✓,
+  current ✓, strings (real data) ✓, attach ✓, coupling
+  (CGLSetSurface OK) ✓, table installed ✓, **dispatch FLOWING
+  (noops)** — the stub is now a complete, honest, non-rendering
+  GL driver. **THE BRIDGE BEGINS: replace noops with Mesa, slot
+  by slot.**
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

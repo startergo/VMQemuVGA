@@ -662,7 +662,29 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
     ep_log("  gldInitDispatch -> 0 (22 noop slots; limits maxes=0x4000)");
     return 0;
 }
-EPR(gldUpdateDispatch)
+/* RUNG 36 — gldUpdateDispatch is THE DISPATCHER'S ENTRY (slot 11,
+ * [engine-ctx+0x6760] after the engine memcpy'd our whole table
+ * into its context at +0x6708). gleDoSelectiveDispatchCore calls
+ * it as (driver_ctx, template_block, dirty_block) and gates on
+ * the return bits: bit 2 (4) to continue, bit 0 (1) vs the
+ * engine's 0x798b. The FLOAT's base return is 4 (or 0xC), bit 2
+ * always set (grf.t 0x15399/0x153d8); its dirty-block ORs
+ * (0x80/0x100/0x10000380) mark real state changes. The stub has
+ * no state to change: return the float's base, mark nothing. */
+long gldUpdateDispatch(void* ctx, void* template_, void* dirty,
+                       void* a3, void* a4, void* a5)
+{
+    (void)template_; (void)dirty; (void)a3; (void)a4; (void)a5;
+    static long n = 0;
+    if (++n <= 5 || (n % 500) == 0) {
+        char buf[80];
+        snprintf(buf, sizeof(buf),
+                 "CALL gldUpdateDispatch #%ld (ctx=%p) -> 4 (rung 36)",
+                 n, ctx);
+        ep_log(buf);
+    }
+    return 4;
+}
 /* RUNG 31 — the first return-something-real entry. The float's
  * shape (grf.t 0x1dafc): switch on (name - 0x1F00), six names,
  * const char* or NULL; ctx unused. The honest string set: our
