@@ -286,8 +286,19 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
         return GLD_BAD_MATCH;
     }
     /* The 87-case float parser — restored (rung-12 phase-A map,
-     * now aimed at the correct caller) */
-    unsigned flags = 0x4C8;
+     * now aimed at the correct caller). RUNG 24: the request-struct
+     * constructor read (0xb55d) gives the attr→field mapping —
+     * attrs 5 (DoubleBuffer) and 6 (Stereo) OR bits into the
+     * REQUEST's +0x10 buffer-modes word, which the scorer compares
+     * for EXACT equality against node+0x10 — so the node ECHOES the
+     * walked modes into its own +0x10. */
+    unsigned flags = 0x4C8;   /* rung 24, read-justified: 0x480 baseline
+                               * (required by EVERY request — the constructor
+                               * defaults [request+0xc]=0x480) | 0x40 robust
+                               * (attr 75) | 0x8 backing (attr 76). NO 0x100 —
+                               * that is the attr-73 HARDWARE bit, honest only
+                               * with functional 3D. */
+    unsigned mode10 = 0;      /* the +0x10 exact-match echo */
     int complete = 0, si = 0;
     int* p = attrs;
     int walked = 0;
@@ -295,10 +306,12 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
         int code = *p;
         walked += 4;
         switch (code) {
-        case 1:  break;                       /* AllRenderers */
+        case 1:  break;                       /* AllRenderers (request CLEARS 0x400) */
         case 2: case 50: case 53:
             ep_log("  gldChoosePixelFormat -> 0 (shortcut, no object; out NULL)");
             return 0;                        /* float's shortcut: *out stays NULL */
+        case 5:  mode10 |= 0x8; break;        /* DoubleBuffer — echo (0xb7d0) */
+        case 6:  mode10 |= 0x2; break;        /* Stereo — echo (0xb7db) */
         case 3: case 4: case 7: case 8: case 9: case 10:
         case 51: case 52: case 57:
             p++; walked += 4; break;          /* value attrs: consumed */
@@ -346,12 +359,11 @@ build:
                                        : 0x1AF40100;
     *(unsigned long*)&obj[0] = 0;    /* chain terminator: single slot */
     obj[2] = use_id;       /* +8  (engine ORs 0x20000 — idempotent in-plane) */
-    obj[3] = 0xFFFFFFFF;   /* +0xc flags — RUNG 23 DIAGNOSTIC: claim every
-                            * capability, to discriminate the scorer's
-                            * subset-test reject (0xbb01) from the exact-
-                            * match reject (+0x10, 0xbb13). The parsed
-                            * `flags` (base 0x4C8, a rung-12 guess) is
-                            * bypassed; honest subset follows gate ID. */
+    obj[3] = flags;        /* +0xc — the rung-24 HONEST subset (0x4C8,
+                            * every bit read-justified; no hardware bit) */
+    obj[4] = mode10;       /* +0x10 — the buffer-modes ECHO of the walked
+                            * attrs (5->0x8, 6->0x2), matching the request's
+                            * own +0x10 composition for the exact test */
     obj[5] = 0x8000;       /* +0x14 constant */
     obj[7] = 0x1;          /* +0x1c */
     obj[8] = 0x1;          /* +0x20 */

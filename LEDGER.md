@@ -3214,6 +3214,63 @@ class:**
   npix=1 honestly, and the accelerated sets honestly refuse
   (npix=0) until the Mesa-backed claim exists.
 
+**RUNG 24 RESULT (2026-08-22) — the attr→field mapping READ (the
+prediction's mechanism confirmed); the +0x10 echo implemented;
+the honest subset INSUFFICIENT — all eight sets npix=0 — the
+scorer's later stages positively require node bits beyond the
+request's required set:**
+- **The request-struct constructor read (0xb55d, called at
+  0x9d2d with the worker's -0x90/-0x50 locals):**
+```
+defaults: [req+8]=0 (id-mask), [req+0x10]=0 (exact-modes),
+          [req+0x14]=0x3FFFFFFC, [req+0x34]=0xFFFFFFFF
+[req+0xc] = 0x480 baseline (0x400 when the worker flags clear
+            bit 0x10) — EVERY request requires 0x480/0x400
+attr 73 (Accelerated) -> orl $0x100 into [req+0xc]  (0xb8e0)
+attr 75 (Robust)      -> orl $0x40  into [req+0xc]  (0xb8eb)
+attr 1 (AllRenderers) -> CLEARS 0x400 from [req+0xc] (0xb851 —
+                         a relaxation; explains {1} passing)
+attr 76 (BackingStore)-> orl $0x8  into [req+0xc]  (0xb8f3)
+attr 49 -> 0x200; attr 50 -> 0x1; attr 90 -> 0x2000;
+attr 97 -> 0x10000; attr 70 (RendererID-value) -> [req+8]
+attr 5 (DoubleBuffer) -> orl $0x8 into [req+0x10]  (0xb7d0)
+attr 6 (Stereo)       -> orl $0x2 into [req+0x10]  (0xb7db)
+attr 84 (DisplayMask) -> the VALUE -> [req+0x34]    (0xb929)
+size attrs (7,9,10...) -> words at [req+0x26/0x28/0x2a]
+```
+- **Implemented:** the node's +0x10 ECHOES the walked buffer-mode
+  attrs (parser cases 5→|0x8, 6→|0x2 — the forwarded lists carry
+  them; the old table never had cases 5/6); the node's +0xc =
+  the rung-24 honest subset 0x4C8 (0x480 baseline | 0x40 robust |
+  0x8 backing — every bit read-justified, NO 0x100 hardware bit).
+- **RESULT: all eight sets npix=0** — including {75} and {1},
+  whose subset math PASSES (required 0x4C0/0x80 ⊆ 0x4C8). This
+  RESOLVES the rung-22 inconsistency ({75} failed there with the
+  same 0x4C8 despite passing the subset math): **the scorer's
+  LATER stages (0xba0a past 0xbb21, unread) positively test
+  node+0xc bits beyond the request's required set — and/or
+  node+0x14 (our 0x8000, another rung-12 guess) — zero-scoring
+  nodes that lack them.** 0xFFFFFFFF satisfied those stages
+  (rung 23); the honest word does not.
+- **The echo mechanism itself is confirmed live:** attr 5/6 bits
+  now reach node+0x10 (the parser walks them without
+  truncation); the exact-match reject class is addressed — the
+  remaining failure is the unread ranking/capability stages.
+- **RUNG 25 PRE-REGISTERED — the scorer's remainder (committed
+  before the read):** read 0xba0a from 0xbb62 to its return —
+  the color/size matching (0x5567 vs node+0x14 and the
+  attrs-desc), the four comparison tables selected by the
+  worker-flags (r15 at 0xba61), and the SCORE computation —
+  which node fields and bits produce a nonzero score.
+  PREDICTION: the score sums matched capabilities from node+0xc
+  (and/or node+0x14 sizes) against the request — the float's
+  real values for +0xc/+0x14 are the honest target, obtainable
+  from the float's OWN builder (GLRendererFloat's object
+  construction site — the same 87-case parser's build block in
+  /tmp/grf.t). THE FIX: read the float's built-object field
+  values from its disassembly and mirror the software-honest
+  ones, rather than guessing bit sets.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
