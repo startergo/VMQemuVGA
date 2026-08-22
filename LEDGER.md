@@ -3431,6 +3431,62 @@ endpoint 0x4C9 re-run ×2             -> npix=1, npix=1 (closed)
   become load-bearing); (c) the destroy-absence residual
   (secondary).
 
+**THE WATCHED BOOT — RUNG 19's SECOND HALF (2026-08-22 15:52) —
+OUTCOME (iii): desktop normal, 0 panics; WindowServer's boot-time
+GLD sequence is FOUR ENTRIES (load → initialize → version →
+stop); the honest {5,84,1} result SURVIVES the boot; and two
+state-dependence findings that qualify the bisect's absolutes:**
+- Pre-flight verified: bundle digest = the rung-26 build,
+  kext = the rung-17 build, vm-cap3d=1 in config.plist.
+- **Boot clean:** 0 panic lines; gate=1; IOGLBundleName,
+  AccelCaps, and the rung-17 property all published
+  (15:52:41-46).
+- **WindowServer (pid 97) loaded the GLD at boot:** STUB LOADED
+  → gldInitializeLibrary (heap-shaped psvc/arg1 — its call site
+  differs from the probes' stack shape) → glvmPreInit forwarded
+  (rc=3, guard=1) → gldGetVersion TRUE — **the log ends there.
+  No census consult, no pf call.** The boot-time entry sequence
+  is four entries; WindowServer registers the driver and asks
+  nothing further at boot under this registry state.
+- **Desktop proxies green:** compositing ~52–54 Hz sustained,
+  WindowServer healthy (pid 97, 0:05 CPU). The visual verdict
+  belongs to the desktop watch.
+- **Post-boot verification: the stub serves and {5,84,1} →
+  npix=1 STANDS** (fresh-process log: the full chain — census,
+  plugin dump, consult [0x5 0x54 0x1 0x4], object built).
+- **INSTRUMENT TRAP (found and fixed): the boot-time log is
+  ROOT-OWNED.** WindowServer's write creates /tmp/vm_gld_stub.log
+  as root:wheel 644; every non-root process's stub logging then
+  dies SILENTLY (fopen append fails, ep_log returns, consults
+  proceed unlogged). The earlier "no probe entries" was this,
+  not a load failure. RULE: after any boot that loads the stub,
+  sudo-remove the log before probe runs (or the stub logs
+  per-uid).
+- **TWO STATE-DEPENDENCE FINDINGS (both reproduced; both
+  deviations from pre-boot behavior):**
+  (1) `{53}` offscreen → **npix=1** (was 0 across rungs 19–26).
+      The stub's shortcut forces 0 whenever IT serves — so the 1
+      arrives via the ENGINE's fallback retry (the worker's
+      ecx=0 second pass consulting the FLOAT, which supports
+      offscreen). The fallback flag (byte[global+0x21]&0x8)
+      initializes differently under this boot's state.
+  (2) `GLD_PF_FLAGS=0x4C8` on {75} → **npix=1** (the bisect
+      endpoint FAILS to reproduce: pre-boot 0x4C8 → 0). The
+      stub's flags word is no longer decisive for {75} — the
+      scorer path itself differs, consistent with a different
+      comparator selection (worker flags & 3) or the fallback
+      answering before our node is scored.
+- **QUALIFICATION OF THE BISECT (correction, stated as one):**
+  the bit-0 requirement is STATE-DEPENDENT, not absolute — it
+  held under the pre-boot processes' engine configuration and
+  does not hold under this boot's. The rung-26 conclusion keeps
+  its mechanism (the float's conditional, the fourth table
+  error) but loses its absoluteness: "required" meant "required
+  under that state". Any future bisect must record the boot
+  state alongside the value.
+- The standing conditional in the stub is UNCHANGED (it mirrors
+  the float; harmless under either state).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
