@@ -3486,6 +3486,52 @@ state-dependence findings that qualify the bisect's absolutes:**
   state alongside the value.
 - The standing conditional in the stub is UNCHANGED (it mirrors
   the float; harmless under either state).
+- **The desktop watch's visual verdict: NORMAL** — rung 19's
+  second half fully closed, outcome (iii) complete on all three
+  instruments.
+
+---
+
+## RUNG 27 PRE-REGISTERED — the context rung: CGLCreateContext on
+the honest {5,84,1} format (committed before implementation)
+
+**The question:** the honest pixel format exists and counts. What
+happens when a consumer tries to USE it — which downstream GLD
+entries fire, and how does the caller receive the standing honest
+refusals (EPR: nonzero + *out=NULL)?
+
+**The change: PROBE-SIDE ONLY** (a new probe mode: choose
+{5,84,1}; if npix ≥ 1, CGLCreateContext(pf, NULL, &ctx); if
+created, one glGetString(GL_VERSION) — the first real GL call —
+then clean teardown). NO stub or kext change; the refusals are
+the honest standing state; this rung MAPS the downstream
+sequence, it does not implement it. No boot; WindowServer
+untouched; probe-only exposure.
+
+**Predictions (registered before running):**
+- (i) **Clean refusal propagation:** CGLCreateContext returns an
+  error (10002-class) with ctx=NULL; the stub log shows the
+  downstream entries firing in order (gldCreateShared and/or a
+  shared-state pf consult, then gldCreateContext) each refusing
+  -1; no crash; desktop unaffected. The convention's first
+  exercise under a real consumer.
+- (ii) **A refusal path crashes** (the rung-12 SIGBUS class — a
+  caller dereferencing an out-param the refusal didn't fill,
+  i.e. an entry whose out-zero shape is wrong): the crash report
+  names the entry and the missing field; the fix is a typed
+  refusal for that entry (next rung).
+- (iii) **The fallback answers instead** (the watched boot's
+  state-dependence theme): the engine's software path supplies
+  the context — possibly via the float — and CGLCreateContext
+  SUCCEEDS with a real software GL context; glGetString returns
+  a version string. Milestone-class if it holds: applications
+  could render through this chain while the Mesa-backed claim
+  remains the accelerated endgame.
+- Instruments: probe stdout (errors, ctx, version string), the
+  stub log (entry order; REMOVE THE ROOT-OWNED LOG FIRST — the
+  boot trap), crash reporter for (ii), desktop watch for
+  stability (probe-only).
+- Revert: none needed (no kext/stub change).
 
 ---
 
