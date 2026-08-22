@@ -3271,6 +3271,71 @@ size attrs (7,9,10...) -> words at [req+0x26/0x28/0x2a]
   values from its disassembly and mirror the software-honest
   ones, rather than guessing bit sets.
 
+**RUNG 25 RESULT (2026-08-22) — the float's build block READ (the
+complete object shape, ground truth); a THIRD transcription error
+found and fixed (0x8000 vs 0x8000000); the rung-12 flags base
+VALIDATED; and the honest negative: with the float's exact
+software values in place, ALL EIGHT sets still npix=0 — the
+differentiator is bits the scorer demands beyond the request:**
+- **The float's builder (grf.t 0x178cc–0x17c7d):** walk locals
+  initialized {word 0, word 0, word 0, dword 1, dword 1, dword 0,
+  flags = 0x4C8}; the SAME 87-case switch (subl $4, cmpl $0x56);
+  after the walk the stack object is assembled then malloc(0x38)
+  copied:
+```
+obj+0x00 = 0                      (chain link — single node)
+obj+0x08 = 0x1000400              (the float's OWN id — also
+                                   corrects rung 9's composed-id
+                                   decode; the float's plane)
+obj+0x0c = 0x4C8 | walk-ORs       (flags)
+obj+0x10 = walked modes (0)       (the +0x10 echo field)
+obj+0x14 = 0x8000000              (CONSTANT — 0x17c5d)
+obj+0x18 = 1                      (0x17c56)
+obj+0x1c = 1, obj+0x20 = 1
+obj+0x24..0x2a = 0; +0x2c/+0x30 = walk counters; +0x34 = claim
+```
+- **THIRD TRANSCRIPTION ERROR FOUND (after the dead gate and the
+  obj+0 anchor): the rung-12 table read 0x8000 where the float
+  writes 0x8000000** — off by 0x1000x — at +0x14, the field the
+  scorer exact-tests. Fixed. Also +0x18's 1 was never set in our
+  builds. Fixed.
+- **The rung-12 flags base 0x4C8 VALIDATED by ground truth** —
+  the float's own initializer writes 0x4C8. A guess that was
+  right, now confirmed rather than lucky.
+- **The scorer's structure (0xbb5f–0xbca0):** 0x5567/0x55b2/
+  0x55e7 extract component values from node+0x14/+0x18/+0x1c/
+  +0x20; four comparator FUNCTIONS selected by worker-flags bits
+  (r15 at 0xba61); 0xb469 is a weighted match-ratio
+  (`w × min/max` — full weight on equality); a +0x258 score
+  bonus for node+0xc bit 0x100 (hardware outranks in ties);
+  negative table results REJECT; **a zero total score never wins
+  the max-initialized-at-0 comparison.**
+- **RESULT (verified live — digests match, consult logged,
+  object built): ALL EIGHT SETS npix=0 with the float's exact
+  software values.** Combined with rung 23 (0xFFFFFFFF on +0xc
+  alone passes four sets): the scorer positively demands +0xc
+  bits BEYOND the request's required set — in the unread tail
+  (0xbca0–0xbd5c) or via the comparator functions. The object
+  fields read so far are NOT the differentiator.
+- Remaining candidates: (a) required +0xc bits in the unread
+  tail; (b) the +0x08 id (ours 0x20500 in OUR measured plane;
+  the float's 0x1000400 in its own) cross-checked caller-side in
+  the worker's driver-id arrays — unread.
+- **RUNG 26 PRE-REGISTERED — the empirical bisect of +0xc
+  (committed before running):** the by-eye read has hit
+  diminishing returns; the bits are nameable empirically. ONE
+  line per build, live-swap, fresh-process {75} (robust — the
+  cleanest subset-math-passing set) as the test probe:
+  0xFFFF first (narrows to 16 bits), then binary halves of the
+  passing range. PREDICTION: a minimal bit set emerges; leading
+  candidate (registered): bit 0x100 — if +0x100 ALONE flips
+  {75} from 0 to 1, the "hardware bonus" is load-bearing for
+  software nodes too (a scoring floor, not a tiebreak), and the
+  honesty ruling becomes the question (0x100 is the attr-73
+  hardware bit; claiming it unbacked violates the boundary —
+  the resolution would be the Mesa-backed claim, i.e. the
+  original endgame, arriving via the scoring path).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

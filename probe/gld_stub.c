@@ -364,7 +364,14 @@ build:
     obj[4] = mode10;       /* +0x10 — the buffer-modes ECHO of the walked
                             * attrs (5->0x8, 6->0x2), matching the request's
                             * own +0x10 composition for the exact test */
-    obj[5] = 0x8000;       /* +0x14 constant */
+    obj[5] = 0x8000000;    /* +0x14 — THE FLOAT'S OWN CONSTANT (0x17c5d:
+                            * movl $0x8000000). The rung-12 transcription
+                            * read 0x8000 — off by 0x1000x — and the scorer
+                            * EXACT-TESTS this field (0x5567 at 0xbb5f,
+                            * equality at 0xbb67). That misread rejected
+                            * every request. */
+    obj[6] = 1;            /* +0x18 — the float's 0x17c56: movl $0x1
+                            * (never set in our builds) */
     obj[7] = 0x1;          /* +0x1c */
     obj[8] = 0x1;          /* +0x20 */
     obj[13] = RUNG11_CLAIM; /* +0x34 our display claim (rung 22 reverted:
