@@ -1769,6 +1769,31 @@ above SUPERSEDED (three corrections cascade):**
   driver-id array (caller/CGL side) + loader-internal device masks.
   Next rung's fix list: pf entry interprets (out, mask, 4);
   no-object paths return NONZERO; never dereference arg2.
+
+**RUNG 13 PRE-REGISTERED — the honest pf entry with the mask contract
+(committed before implementation):**
+- The entry becomes `long gldChoosePixelFormat(void** out, int
+  display_mask, int four)` — arg2 is a MASK (never dereferenced);
+  the 87-case parser is RETIRED for our entry (it serves the float's
+  CGL-software-path caller, not ours).
+- Behavior: mask outside our claim (0x1) → return 0x2716
+  (kCGLBadMatch — nonzero, the caller's clean teardown); mask within
+  claim → build the 0x38-byte object (our id at +8, 0x4C8/+0xc,
+  0x8000/+0x14, the REQUESTED mask at +0x34), *out = obj, return 0
+  — success with a real slot, per the call-site contract.
+- **Predictions:** (a) NO SIGBUS anywhere in mode p — the
+  no-object-lie class is eliminated by construction (both paths
+  return either nonzero or a real object); (b) the accelerated set
+  reaches shared-state creation as before; the pf call's mask
+  decides: 0x4 (extended display) → 0x2716 clean refusal; 0x1 →
+  object; either way the caller proceeds without crash — npix
+  outcomes secondary; (c) desktop stable (WindowServer exposure
+  unchanged — it has not asked); (d) if an object is accepted, the
+  shared-state path CONTINUES — the stub log may show the NEXT entry
+  called (the next refusal frontier, likely gldCreateShared-class);
+  its nonzero refusal should again take a clean path.
+- Procedure: build (exit read directly), bundle + gate + reboot,
+  desktop watch, probe_r7 p + c + d, score, restore baseline.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
