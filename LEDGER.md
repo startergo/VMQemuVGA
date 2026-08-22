@@ -2024,7 +2024,21 @@ the first time (committed before any boot):**
   display." Then the EDID question (which VMsvga2 injected for a
   reason — Displays preferences resolutions, but possibly also
   feeding CGS's display-association table).
-  desktop watch, probe_r7 p + c + d, score, restore.
+
+**MASK CHECK RESULT — CLEAN (same day, no boot):**
+```
+main display id=1535231424
+CGDisplayIDToOpenGLDisplayMask(main) = 0x1
+online displays: 1
+  display[0] id=1535231424 mask=0x1
+```
+**CGS mask = our claim = 0x1. The mask is NOT the "invalid display"
+cause.** Single display, mask 0x1, our record claims 0x1 — exact
+match. The candidate order is now: (1) booleans+GLD — ALREADY
+TESTED, negative (rung 14 ran both live); (2) mask — NOW TESTED,
+clean; (3) EDID — the remaining candidate. The "invalid display"
+CGS error's cause is narrowed to EDID or something else entirely
+in CGS's accelerated-display qualification.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
