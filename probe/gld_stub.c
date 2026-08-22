@@ -566,7 +566,30 @@ EPR(gldReclaimContext)
 EPR(gldAttachDrawable)
 EPR(gldInitDispatch)
 EPR(gldUpdateDispatch)
-EPR(gldGetString)
+/* RUNG 31 — the first return-something-real entry. The float's
+ * shape (grf.t 0x1dafc): switch on (name - 0x1F00), six names,
+ * const char* or NULL; ctx unused. The honest string set: our
+ * identity for vendor/renderer, a version that claims NO GL
+ * capability the stub refuses to implement. The bridge later
+ * replaces these with Mesa's real answers. */
+const char* gldGetString(void* ctx, unsigned name,
+                         void* a2, void* a3, void* a4, void* a5)
+{
+    (void)ctx; (void)a2; (void)a3; (void)a4; (void)a5;
+    const char* s = NULL;
+    switch (name) {
+    case 0x1F00: s = "VMQemuVGA Project";                 break; /* GL_VENDOR   */
+    case 0x1F01: s = "VirtIO GPU stub (software, no rendering)"; break; /* GL_RENDERER */
+    case 0x1F02: s = "0.0 stub";                           break; /* GL_VERSION  */
+    default:     s = NULL;                                 break;
+    }
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "CALL gldGetString(0x%x) -> \"%s\" (rung 31)",
+             name, s ? s : "(NULL)");
+    ep_log(buf);
+    return s;
+}
 EPV(gldGetError)
 EPR(gldSetInteger)
 EPR(gldGetInteger)

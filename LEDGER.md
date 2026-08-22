@@ -3856,6 +3856,37 @@ implement).
   read settles the shape.
 **Exposure:** live-swap, probe-only, no boot.
 
+**RUNG 31 RESULT (2026-08-22) — gldGetString IMPLEMENTED AND
+LANDED (the float's shape, the honest strings); the observation:
+STRINGS ARE DISPATCH-GATED — the engine dead-ends every GL call
+before the driver on a context whose dispatch was never
+installed. THE BRIDGE'S FIRST ACT IS NOW A NAMED ENTRY:**
+- The float's gldGetString read (grf.t 0x1dafc): switch on
+  (name - 0x1F00), six names, const char* or NULL, ctx unused.
+  Implemented with the honest set: VENDOR "VMQemuVGA Project",
+  RENDERER "VirtIO GPU stub (software, no rendering)", VERSION
+  "0.0 stub" (claims no capability the stub refuses to
+  implement); unsupported names NULL.
+- **Result: GL_VERSION, GL_VENDOR, GL_RENDERER all (NULL) —
+  and ZERO gldGetString calls in the stub log.** The engine
+  never consulted the driver for any string.
+- **The corroborating datum (rung 30's log): gldInitDispatch
+  was never called either** — the engine built default state
+  through the creators, then unwound, with no dispatch
+  installation. **READING: GL calls on a context whose dispatch
+  was never installed dead-end in the ENGINE before any driver
+  entry — strings included.** The dispatch table is the gate,
+  and installing it is the bridge's core act.
+- **THE BRIDGE'S SHAPE, SHARPENED:** the bridge's first real
+  entry is gldInitDispatch — installing Mesa-backed GL functions
+  into the engine's context dispatch — after which every GL
+  call (strings first, observably) flows to the driver. The
+  honest strings implemented here become live the moment
+  dispatch is real; no further string work needed.
+- Rung 31 closes with the fork taken and its first waypoint
+  landed: the return-something-real path exists in the driver,
+  gated on dispatch, ready for the bridge.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

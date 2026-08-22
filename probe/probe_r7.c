@@ -199,6 +199,10 @@ int main(int argc, char *argv[])
             if (ec == 0 && ctx) {
                 const GLubyte *v = glGetString(GL_VERSION);
                 printf("[k] glGetString(GL_VERSION) = %s\n", v ? (const char*)v : "(NULL)");
+                const GLubyte *ve = glGetString(GL_VENDOR);
+                printf("[k] glGetString(GL_VENDOR)  = %s\n", ve ? (const char*)ve : "(NULL)");
+                const GLubyte *r = glGetString(GL_RENDERER);
+                printf("[k] glGetString(GL_RENDERER) = %s\n", r ? (const char*)r : "(NULL)");
                 fflush(stdout);
                 CGLReleaseContext(ctx);
             }
