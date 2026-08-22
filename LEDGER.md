@@ -2465,6 +2465,101 @@ the stub's own parser found refusing EVERYTHING (dead-gate bug):**
   accelerated wall is the 0x9dcd popcount/display-mask site; if it
   fails, the property is still not being read as expected.
 
+**DEAD-GATE AUDIT (2026-08-22, same session as the finding) — every
+conclusion resting on a reached-but-unproductive consult
+re-examined:**
+- **RUNG 14's gate conclusion — DEAD (correction):** "The attr-0
+  gate NEVER fires for CGL-driven calls — code 0 is the loader's
+  internal marker... npix=0 everywhere is the honest answer for a
+  software-class renderer that can't match the requested
+  attributes." The gate never fired because `case 0` is
+  unreachable inside `while (*p)` — a transcription defect
+  presented as contract. What the float does at list end is
+  UNKNOWN. npix=0 on reached consults was the dead gate refusing,
+  not a software-class judgment: the answer was never given.
+- **RUNG 12's OPEN puzzle — RESOLVED, in favor of "subtlety
+  misread":** rung 12 held open that the float's "r8 gate needs
+  attr code 0, which a zero-terminated list can never deliver —
+  either the float builds via a subtlety misread, or device+0x14's
+  content differed in its era." The misread existed — in the
+  transcription into our stub. Rung 14 then wrongly resolved the
+  open item into "the marker never fires." The float's own gate
+  mechanism at its caller remains unread.
+- **RUNG 15's "combination already tested" — WEAKENED, precise
+  form:** "the booleans alone (with a registered GLD) did not
+  unblock CGS's accelerated path" — the accelerated-set half
+  stands (those sets never reached the GLD; re-confirmed rung 17,
+  no consult for `{73,5}`). But "with a registered GLD" never
+  meant "with a GLD capable of answering": the GLD could not
+  answer anything, so no test of the GLD's ANSWER ever ran. No
+  ledger conclusion leaned on the GLD's pf answer (checked);
+  the phrasing overstated what was exercised.
+- **SURVIVES:** the accelerated npix=0 localization ABOVE the GLD
+  (rung 12 finding 3; rung 14; re-confirmed rung 17). SURVIVES:
+  rung 14's safety result — no SIGBUS under real attrs, out-zero
+  rule exercised, attrs `[0x4]`, `[0x35 0x4]`, `[0x5 0x4]` are
+  real CGL arrays. SURVIVES: rung 14 (d) — downstream entries not
+  called because no object was built (reason corrected: dead gate,
+  not honest refusal). SURVIVES: shortcut cases 2/50/53 returning
+  0 + NULL (separate return path, no gate involvement). Rung 16
+  (record +0x2e byte) — unaffected (tested gldGetRendererInfo
+  record bytes, not the parser).
+
+**FIFTH INSTANCE of the tool-failure class — our own code
+(2026-08-22):** the previous four were tools presenting plausible
+results that were never there. The fifth is the same failure mode
+from our own source: a parser that reads as if it handles the
+terminator, structurally cannot (`while (*p)` exits before
+`case 0` can run), and fails silently by refusing everything —
+producing plausible-looking evidence (an "honest" 0x2716 with a
+named reason in the log) that was never a judgment. THE RULE
+EXTENDS: when OUR code's output drives a conclusion, its failure
+mode is checkable the same way — for a parser, "is every path to
+success reachable?" The dead gate had NO reachable success path;
+that was checkable by reading the control flow before any boot
+ever ran it.
+
+**RUNG 18(b) PRE-REGISTERED — the direct IOAccelFindAccelerator
+instrument (run BEFORE the parser fix (a); needs no bundle, no
+boot; committed before the probe exists):**
+- **Why (b) first despite (a) being cheaper:** if the path does
+  not resolve, a working parser on a consult that never arrives is
+  uninterpretable. (b) locates the wall; (a)'s meaning depends on
+  it.
+- **Symbols confirmed exported (nm -g on the guest):**
+  `_IOAccelFindAccelerator` (IOKit, T), `_CGSServiceForDisplayNumber`
+  (CoreGraphics, T).
+- **The probe, three prints:** (1) CGSServiceForDisplayNumber(
+  CGMainDisplayID()) → print the returned node's CLASS and its OWN
+  `IOAccelerator` property — the function reads
+  IORegistryEntryCreateCFProperties(displayService), the node's
+  own properties ONLY; (2) IOAccelFindAccelerator(masterPort,
+  that_node, &accel, &id) → print ret, accel, id; (3) the same
+  call with the FB service found by class matching
+  ("VMVirtIOFramebuffer") — the milestone-1 shape.
+- **Signature is a hypothesis** from the disassembly read (4
+  args; refusal 0xe00002bc kIOReturnNotFound is named); the
+  return codes decide, not the header.
+- **Predictions:**
+  (i) CGS-faithful call returns 0 with accel ≠ 0 → rung 2
+  CONFIRMED by direct instrument; the accelerated wall is
+  downstream (0x9dcd popcount/display-mask site or below); then
+  (a) the parser fix becomes meaningful as the next step.
+  (ii) CGSServiceForDisplayNumber returns a display-side node
+  (IODisplayConnect/AppleDisplay class) whose own properties lack
+  `IOAccelerator` → CGS-faithful call 0xe00002bc while the FB
+  call succeeds → **rung 1 was nominal** (the property verified on
+  the wrong node; the rung-17 ioreg check verified the WRITE, not
+  the READ site's node); fix = publish on the node CGS passes.
+  (iii) BOTH calls return 0xe00002bc with the property
+  ioreg-verified on the FB → the read differs from the
+  disassembly interpretation (property TYPE — OSString vs
+  expected; or plane/iteration semantics) → re-read the 107-line
+  site with the type question open.
+- **Instrument note:** no truncation pipes on probe output (the
+  rung-17 SIGPIPE lesson); capture full stdout to a file and read
+  it back whole.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
