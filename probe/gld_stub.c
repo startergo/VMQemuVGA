@@ -116,7 +116,7 @@ void gldTerminateLibrary(void)
  * space 0x1AF4), SOFTWARE-class caps (honest — the stub is software),
  * modest constants where the float's fields were otool-unreadable. */
 #define GLD_BAD_MATCH 0x2716
-#define RUNG11_CLAIM  0x2
+#define RUNG11_CLAIM  0x1   /* 11b: the real display — enumerate-first */
 #include <string.h>
 #include <mach-o/loader.h>
 extern struct mach_header_64 _mh_bundle_header;
@@ -156,7 +156,7 @@ long gldGetRendererInfo(void* rec, int query_mask)
      * only by describe-queries against the nonexistent display. */
     for (int off = 0x3c; off < 0x88; off += 4)
         *(unsigned*)((char*)r + off) = 256;
-    ep_log("  RECORD filled (id=0x1AF40100, claim=0x2, software caps)");
+    ep_log("  RECORD filled (id=0x1AF40100, software caps, claim printed above)");
     return 0;
 }
 
