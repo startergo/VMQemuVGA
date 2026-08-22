@@ -2186,6 +2186,40 @@ if (flag_0x84 & 0x2) {                  // "accelerated" attribute
   the first-registered GLD's shared state or capabilities. If
   OUR GLD's registration doesn't set this bit, the restricted
   path runs and can zero the mask for accelerated requests.
+
+**THE GLOBAL AT 0x10e90 — READ COMPLETE: a PREFERENCE-POPULATED
+struct (not GLD registration; no boot needed):**
+- The ONLY store to 0x10e90 is `movq %rax, ...` at 0x6447,
+  immediately after `malloc(0x24)` — the struct is created and
+  populated by a function that calls
+  **CFPreferencesCopyMultiple** on the domain
+  `com.apple.opengl`, then reads individual boolean keys via
+  CFPreferencesGetAppBooleanValue, populating bytes at +0x20
+  and +0x21 bit by bit (read-modify-write pattern).
+- **The preference keys (extracted from __cstring):**
+  `RendererIDEnableKey`, `RendererIDKey`, `AllowOfflineKey`,
+  `ReverseAccelRenderersKey`, `EnforceMuxAware`.
+- **On this guest, NO com.apple.opengl preferences exist** —
+  the domain is empty, the struct stays at its zeroed state,
+  bit 0x40 at +0x20 is CLEAR, and the RESTRICTED display-mask
+  path runs. The restricted path calls
+  `_cglBadApplicationNotMuxAwareLockDown` (the mux-awareness
+  check) and uses `CGSGetOnlineDisplayList` (not the full
+  display list).
+- **The requested mask defaults to 0xFFFFFFFF** (all displays;
+  `movl $0xffffffff, -0x228(%rbp)` at 0x9750) — the AND with
+  the cached display mask cannot zero unless the cached mask
+  itself is 0.
+- **THE PRACTICAL TEST (one `defaults write` command):** set
+  `com.apple.opengl` preferences and see if the gate bit
+  changes, unblocking the full display-list path. The most
+  likely candidate: `EnforceMuxAware` (the restricted path's
+  own lock-down check) or `AllowOfflineKey` (might widen the
+  display set). Revert by deleting the preference.
+- **The bit-1-of-flag question remains open** (which attribute
+  sets the flag at -0x84 that gates the popcount check) —
+  but the preference route may bypass the question entirely
+  by changing which display-mask path runs.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
