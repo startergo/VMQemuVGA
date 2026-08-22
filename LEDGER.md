@@ -1329,6 +1329,39 @@ ANY REJECT → 0x1669 gfxPluginDisconnect → Terminate + free
   Initialize's return handling (read at 0x1669 predecessors);
   (4) destabilized → recovery unchanged.
 
+**RUNG 9 SUPERSESSIONS + CORRECTIONS (same night, before rung 10):**
+
+- **The rung-6b STANDING MODEL IS SUPERSEDED, not amended:** "the
+  loader's cycle is a capability-registration pass" is dead — the
+  Initialize→Version→Terminate sequence was the REJECTION path
+  (0x1669 gfxPluginDisconnect), observed identically on every rung
+  because the same a2 check failed every time. What a PASSING GLD's
+  cycle looks like: no Terminate, the 78-name loop, registration —
+  unobserved until rung 10.
+- **Correction 1 (load-bearing, marked):** the a2=&_mh_bundle_header
+  value came from an OTOOL SYMBOL-DISPLACEMENT MISREAD of
+  GLRendererFloat's disasm (rung 5) — the real instruction writes 0.
+  Third instance today of a tool presenting something plausible that
+  wasn't there (uniq -c filter, ~/Info.plist, otool rendering). The
+  artifact was flagged at rung 5 without its consequence being read —
+  one misread instruction silently shaped five rungs.
+- **Correction 2 (load-bearing, marked): the interface is 78 names,
+  not 92.** The loader's table (_gfx_gld_names, extracted statically:
+  78 pointers at file 0x6140+slice, entry 0 = gldGetVersion). The 92
+  came from VMsvga2's EntryPointNames.c — a cross-era SUPERSET: the
+  14 extras are the entries VMsvga2's own comments mark "Discontinued
+  OS 10.6.3" (TextureLevel family) plus the 10.5.8-era
+  MemoryPluginData/vertex families. Loader-78 ⊆ VMsvga2-92; the
+  loader asks for nothing VMsvga2 lacks. The "92 entry points" job
+  size quoted for months is corrected to 78.
+- **RUNG 10 INTERSECTION CHECK — DONE STATICALLY BEFORE THE RUN
+  (the pre-registered concern resolved):** the stub's exports cover
+  ALL 78 (the diff's one "missing" name, gldGetVersion, was a grep
+  artifact — the typed implementation exports it). The name loop
+  will resolve completely; with a2=0, the predicted sequence runs to
+  registration, and the failure mode after the loop shifts to
+  whatever the loader consults next.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
