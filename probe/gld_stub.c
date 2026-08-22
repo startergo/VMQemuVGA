@@ -167,7 +167,10 @@ long gldGetRendererInfo(void* rec, int query_mask)
     r[8] = 0x81;         /* +0x20 */
     r[9] = claim;        /* +0x24 the claim */
     r[10] = 0x00010004;  /* +0x28 word=4, +0x2a word=1 (packed per float) */
-    r[11] = 0x01000010;  /* +0x2c word=0x10, +0x2e byte=1 (packed) */
+    r[11] = 0x00010010;  /* +0x2c word=0x10, +0x2e byte=1 — CORRECTED from
+                            0x01000010 (rung-11a packing error: the 1 was at
+                            +0x2f, not +0x2e; the accelerated byte was NEVER
+                            SET — this is the rung-16 probe AND a bug fix) */
     r[12] = 1;           /* +0x30 */
     /* +0x3c..+0x84 limit fields — modest constants, documented as
      * guesses-with-margin (float's were otool-unreadable); consumed

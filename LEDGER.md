@@ -2122,6 +2122,33 @@ display):**
   (c) destabilized (a system that believes it has an accelerated
   renderer will route real work to the stub — outcome-3 standing,
   recovery proven).
+
+**RUNG 16 RESULT — OUTCOME (b) WITH A TWIST: the +0x2e byte was
+NEVER the accelerated flag (packing error found, corrected, still
+no change; 11:59–12:04):**
+- **A rung-11a packing error was found:** `r[11] = 0x01000010`
+  placed the `1` at byte +0x2f (MSB position of the dword), not
+  at +0x2e where the float's disasm shows `movb $0x1`. The
+  accelerated byte was NEVER SET — always 0 in our record.
+  Corrected to `r[11] = 0x00010010` (byte +0x2e = 1, matching
+  the float's record exactly).
+- **BUT the census STILL reports accelerated=0** — and the float
+  (software renderer) ALSO sets +0x2e = 1. **+0x2e is not the
+  accelerated flag; it's something else the float uses.** The
+  pre-registered hypothesis was right that the accelerated value
+  is the question, but wrong about which field encodes it.
+- The "invalid display" CGS errors persist identically; all pf
+  results unchanged; the GLD calls unchanged. Desktop normal.
+- **The accelerated value comes from ELSEWHERE** — candidates:
+  the dword at +0x14 (0x8008000, capability word — a bit here
+  may encode "hardware"), +0x18 (0x20000000, another capability
+  word), the renderer ID's class bits, or from outside the
+  record entirely.
+- **Next move (the method, not more candidates):** the
+  $0x2716-site read — find where 10006/kCGLBadDisplay is stored
+  on the display-matching path in the three binaries; that code
+  names the field it checks. /tmp/ogl.t (26582 lines) and
+  /tmp/gfx.t and /tmp/gle.t are all on disk.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
