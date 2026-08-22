@@ -3595,6 +3595,59 @@ their guarding conditions. **Fix discipline:** float's values or
 the read's own constants; single variable; verify by mode k
 (clean exit, error changes or context created).
 
+**RUNG 28 RESULT (2026-08-22) — THE CANONICAL ID FOUND AND
+MEASURED (rung 9's decode VINDICATED; the rung-21 "correction"
+CORRECTED); THREE FIRSTS: gldDestroyPixelFormat fired,
+gldCreateShared consulted (the first downstream entry ever), the
+refusal convention EXERCISED CLEANLY:**
+- **The context path's id gauntlet (gle.t 0x1526–0x1663):** the
+  pf node walk requires `(id & 0xff0000) == 0x20000` (the
+  decoration plane — 0x15b4; THIS is why the engine decorates),
+  tracks a preferred index when `(id & 0x7f00) == 0x400`
+  (0x15db), then `_gfxCreateSharedState(&ids, count)` — whose
+  per-id loop resolves the PLUGIN by `id & 0xffff00` AND the
+  DEVICE by `id & 0xffffff00` (exact, 0x1803/0x1826) before
+  consulting `[plugin+0x140]`. NULL from either lookup → NULL
+  shared state → 0x2712 (10002).
+- **The measurement (device list dumped via _gfxGetDevices,
+  exported):** ONE device, `+0x10(id) = 0x1020400`, mask 0x1;
+  `_gfx_float_device_id` (exported data) = 0x1020400 — the
+  version-composed id `0x1020000 | (a3 & 0xFF00)` built from OUR
+  gldGetVersion a3=0x400. **RUNG 9's DECODE WAS RIGHT ALL
+  ALONG.** The rung-21 "correction" (plugin+0x110 = 0x20400) was
+  itself wrong: +0x110 stores the id 16-bit-masked —
+  `0x1020400 & 0xffff00 = 0x20400` resolves the plugin lookup
+  fine. The full canonical id lives in the device table. Id
+  saga closed: 0x1AF40100 → 0x20500 → 0x20400 → **0x1020400**
+  (the measured device id; the stub now derives the pf id from
+  it at runtime).
+- **0x1020400 passes ALL FOUR id checks:** plugin
+  (0xffff00-plane = 0x20400 ✓), device (0xffffff00 exact ✓),
+  the 0xff0000 decoration plane (= 0x20000 — the composed id
+  CONTAINS the decoration bit ✓), the 0x7f00 preferred index
+  (= 0x400 ✓).
+- **RESULT (mode k, fresh process):** pf npix=1;
+  `CALL gldDestroyPixelFormat -> 0 (freed)` — THE FIRST FIRING
+  EVER (the rung-19 ownership fix exercised; the
+  destroy-absence residual CLOSED — the id resolution was what
+  the walk needed); `CALL gldCreateShared -> -1 (refusal; out
+  zeroed)` — **THE FIRST DOWNSTREAM CONSULT EVER** ([plugin+0x140]
+  = gldCreateShared, name index 4), refused cleanly: no crash,
+  exit 0, CGLCreateContext still 10002. **The refusal
+  convention's first real exercise — it held.**
+- **THE FRONTIER:** gldCreateShared must ANSWER for the context
+  to proceed. Its call shape (from _gfxCreateSharedState
+  0x1837-0x1855): `(out = &shared->slots[i] (0x168+i·0x20),
+  rsi = device mask (0x1), rdx = 4)`; return 0 = success with a
+  slot object. The slot's consumer: gliCreateContext's
+  _gfxCompareSharedState / the context build past 0x1668.
+- **NEXT (rung 29):** read the shared-slot contract (what
+  _gfxCompareSharedState and the context build read from
+  slots[i]) and implement an honest gldCreateShared — the first
+  CREATOR entry to go real since the pf entry; the writability
+  contract applies (heap, persistent, freed at the matching
+  destroy).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

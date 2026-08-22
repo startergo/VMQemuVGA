@@ -80,6 +80,7 @@ static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
  * the id-keyed lookups stay inside the registered plane. */
 static int g_plugins_dumped = 0;
 static unsigned g_measured_plane = 0;
+static unsigned g_device_id = 0;   /* rung 28: the canonical id (device+0x10) */
 
 static void dump_plugins_once(void)
 {
@@ -113,6 +114,33 @@ static void dump_plugins_once(void)
     }
     if (!n)
         ep_log("rung21: plugin list EMPTY");
+    /* RUNG 28: the shared-state path resolves the DEVICE by
+     * id & 0xffffff00 (_gfxGetDeviceWithDeviceID, exact) — measure
+     * the device list too (device: next@+0, plugin@+8, id@+0x10,
+     * mask@+0x14), plus the exported float device id. */
+    void* (*getdevices)(void) = (void* (*)(void))dlsym(h, "gfxGetDevices");
+    unsigned* float_id = (unsigned*)dlsym(h, "gfx_float_device_id");
+    if (float_id) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "rung28: gfx_float_device_id = 0x%x", *float_id);
+        ep_log(buf);
+    }
+    if (getdevices) {
+        int m = 0;
+        for (void* d = getdevices(); d && m < 8; d = *(void**)d, m++) {
+            unsigned did  = *(unsigned*)((char*)d + 0x10);
+            unsigned dmsk = *(unsigned*)((char*)d + 0x14);
+            char buf[128];
+            snprintf(buf, sizeof(buf),
+                     "rung28: device[%d] %p +0x10(id)=0x%x +0x14(mask)=0x%x",
+                     m, d, did, dmsk);
+            ep_log(buf);
+        }
+        if (!m)
+            ep_log("rung28: device list EMPTY (no devices registered)");
+        else if (!g_device_id)
+            g_device_id = *(unsigned*)((char*)getdevices() + 0x10);
+    }
 }
 
 int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
@@ -364,11 +392,20 @@ build:
      *     node, not by filtering. Both were misreads of rax's
      *     provenance: 0x8(%rax) is the OBJECT's own +8, not a
      *     pointed-to driver's. */
-    /* RUNG 21: the +8 id is DERIVED from the measured plugin-plane
-     * so the id-keyed lookups (plugin+0x110 == id & 0xffff00, exact)
-     * resolve. Fallback to the record id if the measurement failed. */
-    unsigned use_id = g_measured_plane ? (g_measured_plane | 0x0100)
-                                       : 0x1AF40100;
+    /* RUNG 28 (final form): the +8 id is the MEASURED DEVICE id —
+     * 0x1020400, the version-composed registration id (0x1020000 |
+     * a3&0xFF00 — rung 9's decode, RIGHT all along; the rung-21
+     * "correction" to the plugin field's 0x20400 was itself wrong:
+     * +0x110 stores the id 16-bit-masked, and 0x1020400 & 0xffff00
+     * = 0x20400 RESOLVES the plugin). The device lookup
+     * (_gfxCreateSharedState 0x1826: id & 0xffffff00, exact vs
+     * device+0x10) demands the full id. 0x1020400 passes ALL FOUR
+     * id checks: plugin (0xffff00-plane), device (0xffffff00
+     * exact), gliCreateContext's 0xff0000-plane (==0x20000 — the
+     * decoration bit is IN the composed id), and the 0x7f00
+     * preferred index (==0x400). */
+    unsigned use_id = g_device_id ? g_device_id
+                   : (g_measured_plane ? g_measured_plane : 0x1AF40100);
     *(unsigned long*)&obj[0] = 0;    /* chain terminator: single slot */
     obj[2] = use_id;       /* +8  (engine ORs 0x20000 — idempotent in-plane) */
     /* RUNG 26 bisect instrument: GLD_PF_FLAGS overrides +0xc per run
