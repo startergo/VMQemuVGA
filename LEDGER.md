@@ -2560,6 +2560,132 @@ boot; committed before the probe exists):**
   rung-17 SIGPIPE lesson); capture full stdout to a file and read
   it back whole.
 
+**RUNG 18(b) RESULT (2026-08-22) — PREDICTION (i) CONFIRMED; RUNG 2
+PASSES BY DIRECT INSTRUMENT; TWO SIGNATURE CORRECTIONS; THE WALL IS
+DOWNSTREAM OF THE ACCELERATOR BEING FOUND:**
+- First probe draft crashed (segfault 139, kCGErrorIllegalArgument,
+  buffered stdout eaten) — the CGSServiceForDisplayNumber signature
+  hypothesis was wrong. Corrected by reading the call site
+  (OpenGL.framework x86_64 @0x4e0f) and the callee body: **SIXTH
+  instance of the signature-hypothesis class, this time by not
+  reading the call site before running.** Correct signatures:
+  `int CGSServiceForDisplayNumber(CGDirectDisplayID, io_service_t
+  *out)` (2-arg, status return) and
+  `IOAccelFindAccelerator(display_service, u32 *out1, u32 *out2)`
+  (3-arg; the earlier ledger reading named arg1 "masterPort" —
+  wrong: the function makes its own master port at IOKit @0xef41;
+  both outs zeroed on entry; "IOAccelerator" CFString →
+  IORegistryEntryFromPath → conformsTo "IOAccelerator" →
+  "IOAccelIndex" CFNumber → *out2; 0 on success,
+  0xe00002bc absent/path-fail/conformance-fail). *out1 receives
+  the FOUND ACCELERATOR PORT (observed 0x2803), not a return
+  mirror — the post-FromPath `testl %eax; jne` is port validity.
+- **Probe result (run-exit 0, full output):**
+  `CGSServiceForDisplayNumber(0x22800040) -> ret=0 service=0x2603`,
+  node class **VMVirtIOFramebuffer** — CGS passes the FB itself
+  (prediction (ii)'s display-side-node scenario dead), the node's
+  own `IOAccelerator` present (CFString, exact path),
+  `IOAccelFindAccelerator(CGS node) -> ret=0x0 out1=0x2803
+  out2=0` — **the path resolves; the accelerator is found,
+  conforms, index read.** The FB-by-class call is the same call
+  (same node 0x2603).
+- **Ladder state after 18(b):** rung 1 PASS (rung 17); rung 2 PASS
+  (direct instrument); rungs 3–5 implied by 2, not separately
+  observed; rung 6 FAIL for `{73,5}` (10006, no GLD consult —
+  rung 17). The wall is DOWNSTREAM of the accelerator being found.
+- **THE 0x9dcd DISCRIMINATOR (pre-registered before the run):**
+  the 0x9dcd condition is "accelerated attr requested AND
+  popcount(display_mask)≠1". The probe sets `{73,5}` carry NO
+  display mask — popcount(0)=0≠1 — while plain sets skip the site
+  entirely (no accelerated attr). PREDICTION: a set WITH an
+  explicit single-display mask — `{kCGLPFAAccelerated=73,
+  kCGLPFADoubleBuffer=5, kCGLPFADisplayMask=84, 0x1, 0}`,
+  popcount(0x1)=1 — passes 0x9dcd and a gldChoosePixelFormat
+  consult appears in the stub log (and/or the 10006 changes).
+  If it is still 10006 with no consult, the wall is below 0x9dcd
+  or the mask in play is not the request's mask. Control:
+  `{5, 84, 0x1, 0}` (mask without acceleration). Instrument:
+  probe_r7 mode p extended with the two sets (a7/a8).
+
+**THE DISCRIMINATOR RAN (same session) — THE ACCELERATED WALL NEVER
+EXISTED. Every pf call consults the GLD; the caller's CGL error IS
+the stub's return code; the 10006s were the dead-gate parser's own
+0x2716 echoing back:**
+- Mode-p multi-set run first: `accel+double+mask1 {73,5,84,1}` →
+  still 10006 "invalid display" (explicit-mask prediction FAILED
+  — 0x9dcd-as-popcount is wrong or incomplete); `ALL+accelerated
+  {1,73}` → 0 npix=0. Four consults logged — with a content
+  mapping now legible: each engine consult list = the caller's
+  FORWARDED attrs + a TRAILER 4 + terminator. Forwarded: 5
+  (DoubleBuffer), 53 (OffScreen), 84 (DisplayMask, 0x54, with its
+  value). CONSUMED by the engine, never forwarded: 73
+  (Accelerated), 1 (AllRenderers), 75 (Robust).
+- **The per-process discriminator (mode q, one set per process,
+  eight runs — engine caching defeats in-process attribution):**
+```
+{73}             consult [0x4]            stub 0x2716 -> caller 10006
+{53}             consult [0x35 0x4]       stub 0 (shortcut) -> caller 0 npix=0
+{73,5}           consult [0x5 0x4]        stub 0x2716 -> caller 10006
+{75}             consult [0x4]            stub 0x2716 -> caller 10006
+{1}              consult [0x4]            stub 0x2716 -> caller 10006
+{1,73}           consult [0x4]            stub 0x2716 -> caller 10006
+{73,5,84,1}      consult [0x5 0x54 1 4]   stub 0x2716 -> caller 10006
+{5,84,1}         consult [0x5 0x54 1 4]   stub 0x2716 -> caller 10006
+```
+- **THE LAW: caller error == stub return (0x2716→10006,
+  0→0).** Every set consults; accelerated sets were never filtered
+  upstream; the observed 10006 was OUR refusal propagated by the
+  engine. The numerical identity 0x2716==kCGLBadDisplay(10006)
+  made the stub's own refusal read as CGS display-matching.
+- **Engine memoization (observed; mechanism not read —
+  hypothesis):** in the multi-set process, robust/ALL/ALL+accel
+  returned 0 npix=0 after offscreen's shortcut-0 consult, while
+  the same sets in fresh processes return 10006 — a prior
+  0-return consult in the process softens later refusals to
+  empty-success. This also explains rung-17's single-consult
+  probe log ({73,5} then {5}: identical [0x5 0x4] — one consult,
+  second call softened to 0/npix=0).
+- **"invalid display" stderr control:** fires for {75} and {1}
+  too (fresh processes, stderr visible) — it is CG's logging of
+  error 10006, not an accelerated-specific check. The multi-set
+  correlation with 73 was an artifact of the softened outcomes.
+- **CORRECTIONS CASCADE (stated as corrections):**
+  (1) Rung 14's "CGS filters accelerated above the GLD" — DEAD
+  (already weakened by the dead-gate audit; now fully: there was
+  no filter).
+  (2) The dead-gate audit's "SURVIVES: the accelerated npix=0
+  localization ABOVE the GLD" — DIES TOO; the audit was too
+  conservative.
+  (3) Rung 17's result line "the upstream CGS/GLEngine filter
+  still stands" — DEAD.
+  (4) The 0x96dd/0x9dcd display-matching sites exist in the
+  disassembly but were NEVER the source of the observed 10006s;
+  rung 15's mask check and the EDID elimination were solving a
+  nonexistent problem. (The rung-17 property remains real and
+  verified — rung 2 passes by direct instrument — but it was
+  never the pf blocker: consults were already reaching the GLD.)
+  (5) Rung 17's ladder rung 6 "FAIL for accelerated" — the reach
+  half was WRONG: accelerated sets DO reach the GLD (as [0x4]/
+  masked lists); the failure was the stub's answer.
+- **RUNG 18(a) REVISED — the parser must BUILD.** Per the float's
+  own default (goto build = truncate-AND-BUILD, not refuse) and
+  today's list shape (caller attrs + trailer 4 + 0):
+  (1) the 0-terminator ends the walk with the gate SET (walk
+  complete); (2) unknown attrs TRUNCATE-AND-BUILD (the float's
+  default), never refuse; (3) the built object stays
+  software-honest (caps word unchanged, no accelerated claim).
+  PREDICTIONS: `{5}` and `{5,84,1}` → npix=1 (real object). `{73}`
+  → consult [0x4] still, object returned — either npix=1 (engine
+  accepts any object; the acceleration question moves to context
+  creation) or a NEW error ≠ 10006 (engine validates a flag —
+  its identity names the next site). `{53}` keeps the shortcut
+  (0 + NULL, npix=0 — no dereference: npix=0 means the slot is
+  unused; the rung-12 crash was the shared-state path). Desktop
+  watch unchanged: the next boot loads this stub at WindowServer
+  start (bundle now in /S/L/E at boot, gate on) — first
+  real-consumer exposure of the convention `nonzero + *out=NULL`
+  under load.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

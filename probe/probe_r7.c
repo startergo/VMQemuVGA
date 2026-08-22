@@ -132,12 +132,50 @@ int main(int argc, char *argv[])
         CGLPixelFormatAttribute a4[] = { kCGLPFARobust, (CGLPixelFormatAttribute)0 };
         CGLPixelFormatAttribute a5[] = { kCGLPFAAllRenderers, (CGLPixelFormatAttribute)0 };
         CGLPixelFormatAttribute a6[] = { kCGLPFAAllRenderers, kCGLPFAAccelerated, (CGLPixelFormatAttribute)0 };
+        /* 18(b) 0x9dcd discriminator (pre-registered, LEDGER): the
+         * 0x9dcd condition is "accelerated AND popcount(mask)!=1";
+         * a7 carries an explicit single-display mask (popcount=1) —
+         * prediction: passes 0x9dcd -> a GLD consult appears. a8 is
+         * the mask-without-acceleration control. */
+        CGLPixelFormatAttribute a7[] = { kCGLPFAAccelerated, kCGLPFADoubleBuffer, kCGLPFADisplayMask, (CGLPixelFormatAttribute)0x1, (CGLPixelFormatAttribute)0 };
+        CGLPixelFormatAttribute a8[] = { kCGLPFADoubleBuffer, kCGLPFADisplayMask, (CGLPixelFormatAttribute)0x1, (CGLPixelFormatAttribute)0 };
         pixfmt("p", a1, "accelerated");
         pixfmt("p", a2, "offscreen");
         pixfmt("p", a3, "accel+double");
         pixfmt("p", a4, "robust");
         pixfmt("p", a5, "ALL_RENDERERS");
         pixfmt("p", a6, "ALL+accelerated");
+        pixfmt("p", a7, "accel+double+mask1");
+        pixfmt("p", a8, "double+mask1");
+        break;
+    }
+    case 'q': {
+        /* 18(b) discriminator: ONE set, ONE process — the engine
+         * caches identical GLD consults, so which set produced the
+         * trailer-only [0x4] consult is only separable per-process.
+         * argv[2] = set number 1..8, same sets as mode p. */
+        CGLPixelFormatAttribute sets[][6] = {
+            { kCGLPFAAccelerated, 0 },
+            { kCGLPFAOffScreen, 0 },
+            { kCGLPFAAccelerated, kCGLPFADoubleBuffer, 0 },
+            { kCGLPFARobust, 0 },
+            { kCGLPFAAllRenderers, 0 },
+            { kCGLPFAAllRenderers, kCGLPFAAccelerated, 0 },
+            { kCGLPFAAccelerated, kCGLPFADoubleBuffer, kCGLPFADisplayMask, (CGLPixelFormatAttribute)0x1, 0 },
+            { kCGLPFADoubleBuffer, kCGLPFADisplayMask, (CGLPixelFormatAttribute)0x1, 0 },
+        };
+        const char *names[] = { "accelerated", "offscreen", "accel+double",
+                                "robust", "ALL_RENDERERS", "ALL+accelerated",
+                                "accel+double+mask1", "double+mask1" };
+        int which = (argc > 2) ? atoi(argv[2]) : 1;
+        if (which < 1 || which > 8) { printf("bad set\n"); return 1; }
+        census("q");
+        printf("[q] about-to-call pf(%s)\n", names[which - 1]);
+        fflush(stdout);
+        CGLPixelFormatObj pf = NULL; GLint npix = 0;
+        CGLError e = CGLChoosePixelFormat(sets[which - 1], &pf, &npix);
+        printf("[q] pf(%s) -> %d npix=%d\n", names[which - 1], e, npix);
+        if (pf) CGLDestroyPixelFormat(pf);
         break;
     }
     default:
