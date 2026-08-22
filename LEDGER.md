@@ -1735,6 +1735,27 @@ THE FRAME OVERTURNED: the call is not attribute-shaped:**
   paths return NONZERO (0x2716-class) — clean teardown, never the
   dereference lie.
 
+**[device+0x14] PROVENANCE — first read done, ambiguous between two
+writers (no boot):**
+- A write site found at 0x1405–0x1437: `device+0x14 = local-or--1`
+  (sentinel 0xFFFFFFFF on the zero path, alongside plugin+0x118 and
+  device+0x10 = 0x1000000). Whether THIS block feeds the same struct
+  class `gfxGetDeviceWithDeviceID` returns needs one more hop (the
+  0x13xx block strncpy's a 0x100-byte name — display-table flavor).
+- EMPIRICAL CONSTRAINT (the raw16 dump IS a probe of the region):
+  the pointer aims at `{4, 0, 0, 0, <shared-cache pointers>, …}` —
+  a POINTER-BEARING descriptor with a small header. The shared-cache
+  pointers in the tail read LOADER-INTERNAL; the leading 4 could
+  still echo a record field. Record-derived vs loader-internal:
+  BOTH LIVE; the deciding read is gfxGetDeviceWithDeviceID's struct
+  layout + the writer of ITS +0x14 (gfx.t line 636 area).
+- **STANDING RULE from this arc (header-as-hypothesis):** two of the
+  trampoline header's claims have now failed silently — Initialize
+  is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
+  name count was 92 vs the loader's 78. EVERY signature in that
+  header is a hypothesis to confirm at the call site before it
+  shapes an implementation.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
