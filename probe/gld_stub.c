@@ -39,47 +39,88 @@ static void gld_stub_loaded(void)
 #define EPB(n) long n(void) { ep_log("CALL " #n " -> false"); return 0; }
 #define EPV(n) void n(void) { ep_log("CALL " #n " (void)"); }
 
-/* RUNG 4 (pre-registered): the handshake entries — declared in the
- * trampoline header with real signatures but ABSENT from the 92-name
- * table; hypothesized separately-dlsym'd by the loader as the GLD
- * init/teardown connection. gldInitializeLibrary LOGS ITS ARGUMENTS
- * (psvc dereferenced when non-NULL — the first kernel-side datum) and
- * returns nothing (void: no success claim possible). */
-void gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
-                          void* arg3, void* arg4)
+/* RUNG 6 (pre-registered 2026-08-21 late): the VM lifecycle pair goes
+ * REAL — first ACTING rung. Disassembly of the working GLD: real
+ * Initialize is SIX-arg (reads %r9d; the trampoline header's 5-arg
+ * void signature is incomplete), stores GLDisplayMask into
+ * gld_io_data, tail-calls glvmPreInit(arg6 & 1) and PROPAGATES its
+ * return. Terminate tail-calls glvmPostTerm. glvmPreInit lives in
+ * GLEngine (direct-grep; loads before any GLD — RTLD_DEFAULT has
+ * guaranteed ordering). gldGetVersion becomes GUARDED, mirroring the
+ * working GLD's own honesty: version-true only after a successful VM
+ * forward — never claims what the VM hasn't backed. */
+#include <dlfcn.h>
+static int g_vm_ok = 0;    /* rung 6b: mask-store guard — the working GLD's actual structure */
+static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
+
+int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
+                         void* arg3, void* arg4, int arg5)
 {
     FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
     if (f) {
         time_t t = time(NULL);
         char ts[32];
         strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
-        fprintf(f, "[%s pid=%d] CALL gldInitializeLibrary "
-                 "psvc=%p%s arg1=%p GLDisplayMask=0x%x arg3=%p arg4=%p\n",
+        fprintf(f, "[%s pid=%d] CALL gldInitializeLibrary(6-arg) "
+                 "psvc=%p%s arg1=%p mask=0x%x arg3=%p arg4=%p arg5=0x%x\n",
                  ts, (int)getpid(), (void*)psvc,
                  psvc ? " (*psvc below)" : " (NULL)",
-                 arg1, GLDisplayMask, arg3, arg4);
+                 arg1, GLDisplayMask, arg3, arg4, arg5);
         if (psvc)
             fprintf(f, "[%s pid=%d]   *psvc = %d (0x%x)\n",
                     ts, (int)getpid(), *psvc, *psvc);
+        int (*preinit)(int) = (int (*)(int))dlsym(RTLD_DEFAULT, "glvmPreInit");
+        if (!preinit) {
+            fprintf(f, "[%s pid=%d]   glvmPreInit UNRESOLVED (RTLD_DEFAULT)"
+                     " — VM not initialized, version will answer FALSE\n",
+                     ts, (int)getpid());
+            g_vm_mask = 0;
+            fclose(f);
+            return -1;
+        }
+        int rc = preinit(arg5 & 1);
+        g_vm_mask = GLDisplayMask;
+        g_vm_ok = (g_vm_mask != 0);   /* rung 6b: the REAL guard structure */
+        fprintf(f, "[%s pid=%d]   glvmPreInit(0x%x) -> %d (rc propagated; "
+                 "guard=mask!=0 -> %d)\n",
+                ts, (int)getpid(), arg5 & 1, rc, g_vm_ok);
         fclose(f);
+        return rc;
     }
+    g_vm_ok = 0;
+    g_vm_mask = 0;
+    return -1;
 }
 
 void gldTerminateLibrary(void)
 {
-    ep_log("CALL gldTerminateLibrary (void)");
+    FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
+    void (*postterm)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "glvmPostTerm");
+    if (f) {
+        ep_log("CALL gldTerminateLibrary -> glvmPostTerm forwarded");
+        fclose(f);
+    }
+    if (postterm) postterm();
+    g_vm_ok = 0;
+    g_vm_mask = 0;
 }
 
 /* ==== generated from VMsvga2 EntryPointNames.c + header return types ==== */
-/* RUNG 5 PHASE 2 (pre-registered): gldGetVersion answers TRUE with the
- * values OBSERVED by disassembling the working GLD (GLRendererFloat,
- * gldGetVersion @0x18d05): (3, 1, &_mh_bundle_header, 0x400). The only
- * entry that stops refusing — every other entry keeps its refusal. */
+/* RUNG 5 PHASE 2 + RUNG 6 GUARD: values OBSERVED by disassembling the
+ * working GLD (GLRendererFloat gldGetVersion @0x18d05):
+ * (3, 1, &_mh_bundle_header, 0x400). RUNG 6: GUARDED — true only when
+ * g_vm_ok (successful glvmPreInit forward), mirroring the working GLD's
+ * gld_io_data guard: version is downstream of VM init. Unbacked
+ * version claims are the over-claiming shape. */
 #include <mach-o/loader.h>
 extern struct mach_header_64 _mh_bundle_header;
 long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
 {
-    ep_log("CALL gldGetVersion -> TRUE (observed values 3,1,&hdr,0x400)");
+    if (!g_vm_ok) {
+        ep_log("CALL gldGetVersion -> FALSE (guarded: VM init not ok)");
+        return 0;
+    }
+    ep_log("CALL gldGetVersion -> TRUE (3,1,&hdr,0x400; VM ok)");
     if (a0) *a0 = 3;
     if (a1) *a1 = 1;
     if (a2) *a2 = (int)(unsigned long)&_mh_bundle_header;

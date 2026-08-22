@@ -1009,6 +1009,35 @@ not advance: the per-candidate-probe-cycle reading becomes the
 standing model, selection locus next; (3) destabilized — recovery
 unchanged.
 
+**RUNG 6b RESULT (19:58, live bundle swap — NO reboot; the probe
+dlopens /S/L/E per-process) — OUTCOME 2:**
+```
+Initialize(6-arg) mask=0x1 arg5=0x0 *psvc=0x3a03
+  glvmPreInit(0x0) -> 3 (rc PROPAGATED to loader; guard=mask!=0 -> 1)
+gldGetVersion -> TRUE (3,1,&hdr,0x400; VM ok)
+gldTerminateLibrary -> glvmPostTerm forwarded
+```
+Version answered TRUE despite rc=3 — the loader took it and
+TERMINATED anyway. Census unchanged (nrend=1, npix=0); system stable;
+the no-reboot bundle swap works (instrument speedup for all future
+rungs: binary swaps on a live gated boot). **STANDING MODEL (earned
+across rungs 4-6b): the loader's cycle is load → Initialize (rc
+ignored) → Version (recorded) → Terminate — a CAPABILITY
+REGISTRATION pass over every candidate GLD; selection/enumeration
+consult something else.** *psvc moved again this boot (0x3a03 after
+0x3903): boot-scoped handle class supported; still open.
+- NEXT LOCI (named, not run): (a) gldGetRendererInfo's real contract
+  by disassembling GLRendererFloat's implementation — the
+  acceptance-path reference for the struct it must fill, preparatory
+  for when a caller finally reaches it; (b) the selection question
+  sharpened: enumeration never lists us though our version data was
+  recorded — either GetRendererInfo is called only for chosen GLDs at
+  context time, or an IOKit-side claim gates enumeration (NOT load —
+  rung 3 settled load). The npix=0 wall from the flip experiment sits
+  at the far end of the same chain.
+- Baseline restored 20:04:53 (gate=0); bundle removed; kext
+  e96bec225536dcb95c82db6de2131596 remains deployed (gated).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
