@@ -1265,6 +1265,65 @@ findable by grep; a small host-side extractor (or manual otool on
 carved segments) yields the dispatch code. No boot risk; entirely
 static.
 
+**RUNG 9 RESULT — THE CARVE COLLAPSED INTO A DIRECT READ; ALL THREE
+QUESTIONS ANSWERED; OUR STUB HAS BEEN FAILING VALIDATION ON A
+MISREAD VALUE (2026-08-21 late night):**
+- The loader is **libGFXShared.dylib** (OpenGL.framework/Libraries,
+  120KB, ON DISK — disassembled directly with otool; the "carve"
+  became unnecessary once ownership was computed: cache .map +
+  header mapping table (EX fileOffset 0, RW 0x9e47000, RO
+  0xb048000) + grep byte offsets; first ownership lookup hit a
+  dropped-hex-digit arithmetic error → false "CoreSymbolication";
+  the corrected address 0x7fff84625d2b → libGFXShared __TEXT
+  0x7fff84621000-0x7fff84627000). My earlier on-disk grep of this
+  file ("0/MISSING") was the silent-tool-failure class AGAIN.
+- Path template confirmed in its cstrings: "/System/Library/"
+  "Extensions/" + ".bundle/Contents/MacOS/" + IOGLBundleName +
+  GL_RESOURCES + GLRendererFloat + the name table.
+- **THE VALIDATION SEQUENCE (0x14e5–0x1669), decoded:**
+```
+dlopen(<S/L/E/name.bundle/Contents/MacOS/name>, 5)
+dlsym "gldInitializeLibrary" → call it; args include THE LOADER'S OWN
+  CALLBACKS (rcx=gfxIODataFlush, r8=gfxIODataBindSurface — the
+  constant shared addresses our stub logged as arg3/arg4)
+dlsym "gldGetVersion" → call; FOUR out-ints
+  RET must be nonzero (true)
+  a3: bits ONLY within 0x0000FF00        (0x400 passes)
+  a0 MUST == 3
+  a1 MUST == 1
+  a2 MUST == 0 (NULL)                    ← OUR STUB WRITES
+                                         &_mh_bundle_header — REJECTED
+  a3 |= 0x20000;  _gfx_float_device_id = 0x1020000 | (a3 & 0xFF00)
+      = 0x1020400 — THE CENSUS RENDERER ID, composed here
+then the name loop: _gfx_gld_names[0..0x4E] — 78 entries (NOT 92),
+  each dlsym'd; ANY NULL → reject
+ANY REJECT → 0x1669 gfxPluginDisconnect → Terminate + free
+```
+- **Consequences:** (1) our observed Initialize→Version→Terminate
+  cycle was the REJECTION path every time — cause: a2 nonzero;
+  (2) the rung-5 value tuple's a2 came from a MISREAD of
+  GLRendererFloat's disasm (otool's symbol-displacement rendering
+  showed $__mh_bundle_header where the real instruction writes 0 —
+  the same rendering artifact flagged at rung 5 now corrected);
+  (3) question 3 answered: the id transform is
+  0x1020000 | (a3 & 0xFF00), computed in the loader;
+  (4) question 2 answered: a2 is not dereferenced — it is CHECKED
+  FOR ZERO; (5) question 1 answered: the consult (GetRendererInfo
+  et al.) follows the 78-name loop, which our stub (92+2 exports)
+  would fully satisfy ONCE VERSION VALIDATES.
+- **RUNG 10 PRE-REGISTERED (one line; live-swap):** gldGetVersion
+  writes a2 = 0 (NULL). Prediction: version validates → the 78-name
+  loop resolves against our exports (all present) → the plugin
+  REGISTERS → the next census consults gldGetRendererInfo — the
+  stub's refusal (-1) is logged as the first consult datum. Outcomes:
+  (1) consult fires (refusal logged; census unchanged-or-error =
+  honest) → 7b activates with real outcomes;
+  (2) consult fires AND census changes (unlikely with refusals —
+  anything beyond -1 would be fabrication);
+  (3) still rejected → the remaining gate is in the name loop or
+  Initialize's return handling (read at 0x1669 predecessors);
+  (4) destabilized → recovery unchanged.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
