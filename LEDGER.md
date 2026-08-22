@@ -3959,6 +3959,42 @@ still never fires — strings need no dispatch:**
 - 50 entry calls in the run's log — the full lifecycle now
   includes make-current. No crash, exit 0.
 
+**RUNG 32 FOLLOW-UP — THE TRIGGER FOUND (empirically, the
+discriminator ladder): THE DRAWABLE ATTACH. gldAttachDrawable is
+the gate before gldInitDispatch — and it is the GA-era coupling
+door, reached from the driver side:**
+- Discriminators run: create ✗, make-current ✗, strings ✗, and
+  **glClear ✗** (executed with NO dispatch call; glGetError
+  returned GARBAGE 0xeea896e4 — the engine's error state for an
+  undispatched context is uninitialized; datum recorded).
+- **probe_cgs_requester with the stub live (the full window →
+  CGSAddSurface → context → CGLSetSurface sequence):**
+```
+renderer[0]: accelerated=0 rendererID=0x1af60100   (census, unchanged)
+CGLChoosePixelFormat(plain {5}) -> 0 npix=1        (another set counting)
+CGLCreateContext -> 0 ctx=...
+CGLSetSurface(ctx,cid,wid,sid) -> -1               ← the coupling step
+CALL gldAttachDrawable -> -1 (refusal; out zeroed) ×2
+```
+- **THE TRIGGER: CGLSetSurface calls gldAttachDrawable;
+  gldInitDispatch follows a SUCCESSFUL attach** (the engine
+  installs dispatch when the context has a render target — why
+  it never fired). The refusal propagates as -1 (SetSurface
+  fails) — clean, no crash.
+- **THE BRIDGE'S ENTRY SEQUENCE, COMPLETE AND ORDERED:** pf ✓ →
+  shared ✓ → context ✓ → current ✓ → strings ✓ →
+  **gldAttachDrawable (NEXT — must answer)** → gldInitDispatch
+  (install Mesa's table) → rendering calls.
+- **The circle closes:** the GA-era coupling step (CGLSetSurface
+  — where the substitute's path died) is the SAME door the GLD
+  reaches from the driver side: gldAttachDrawable. The surface
+  work (AddSurface OK, surfaceID real) and the GLD work now meet
+  at one entry.
+- **NEXT (rung 33):** the float's gldAttachDrawable (grf.t) —
+  the contract (the drawable/surface args, what a success
+  stores), the honest mirror, and then the InitDispatch
+  firing becomes observable.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

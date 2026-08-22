@@ -207,6 +207,12 @@ int main(int argc, char *argv[])
                 const GLubyte *r = glGetString(GL_RENDERER);
                 printf("[k] glGetString(GL_RENDERER) = %s\n", r ? (const char*)r : "(NULL)");
                 fflush(stdout);
+                /* rung 32 follow-up: the first DISPATCH-CLASS call —
+                 * does gldInitDispatch fire here? */
+                glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                printf("[k] glClear done, glGetError = 0x%x\n", glGetError());
+                fflush(stdout);
                 CGLReleaseContext(ctx);
             }
             CGLDestroyPixelFormat(pf);
