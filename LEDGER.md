@@ -2957,6 +2957,58 @@ this rung if it is object-side, and the eight-set probe reruns —
 prediction: the named sets reach npix ≥ 1; a mechanism on the
 association side (iv) relocates instead and the rung records it.
 
+**RUNG 20 READ PART 1 (2026-08-22) — the full consult architecture
+mapped; npix IS the transformer's chain count; the remaining
+unknown is the attr-case switch; a 2-node discriminator
+registered:**
+- **The call architecture (crash-stack arithmetic: frame
+  "glcGetIOAccelService+821" = 0x4fb4+0x335 = 0x52e9):**
+```
+CGLChoosePixelFormat (0x14c5)
+  └─ worker 0x9660 (ecx=1; retry ecx=0 under fallback flag
+       byte[global+0x21]&0x8 when first returns 0 with *npix==0)
+       └─ glcGetIOAccelService (0x4fb4) — ENGINE-side plugin
+            dispatcher: locks a mutex; 0x4c40 builds the plugin
+            list; walks plugins BY INDEX; plugin struct: +8 path
+            string, +0x408 cache state (-1 check), +0x418,
+            +0x420 dlopen handle, +0x430 consult entry, +8
+            destroy slot; a LAZY path (0x531a) dlopens a module
+            per-call, dlsyms TWO entries by name, invokes,
+            DLCLOSES (load-invoke-unload — the software/float
+            class); the CACHED path (0x52e4) calls the resolved
+            consult entry with (&local_out, attrs)
+            ├─ consult (our gldChoosePixelFormat via GLEngine)
+            ├─ 0x37ff(plugin, attrs, raw_chain) — the TRANSFORMER
+            └─ destroy the raw chain (0x52fe, immediately after
+               the transform) — the ownership contract confirmed:
+               consult → transform → destroy, every call
+```
+- **The transformer 0x37ff:** walks the CALLER's raw attr array
+  through a ~87-case jump-table switch (`subl $0x4; cmpl $0x56`)
+  seeded with **esi = [plugin+0x40c]** — a capability word on the
+  ENGINE-side plugin struct (provenance not yet read); on
+  terminator it COUNTS THE CHAIN NODES (`0x39d7`: walk +0 links,
+  r14++) and mallocs `(14·nodes + nattrs)·4` — 14 dwords per node
+  = the CGLPixelFormat's per-screen record. **npix is this
+  count.** Our chain (1 node) should count 1 — so either an
+  attr-case bails to the default (0x3b26) BEFORE the count, or
+  the drop is post-count. The jump-table cases (0x57 entries at
+  ~0x3874) and the +0x40c provenance are the named remaining
+  reads.
+- **The dispatcher's destroy-after-transform (0x52fe) validates
+  the rung-19 destroy fix** — the engine frees the raw chain
+  through OUR entry on every consult; the old refusal leaked
+  per-call.
+- **THE 2-NODE DISCRIMINATOR (registered before running):**
+  extend the stub's gldChoosePixelFormat to return a TWO-node
+  chain (obj1+0 = obj2, obj2+0 = NULL). PREDICTION: if npix=2,
+  the chain count works and the drop is POST-COUNT (the
+  transformer's output handling or the worker's npix store);
+  if npix=0, the transformer bails BEFORE the chain walk (an
+  attr-case or the +0x40c capability check) — and the +0x40c
+  provenance read becomes the named next step. Instrument: the
+  same eight-set probe, live-swap, no boot.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
