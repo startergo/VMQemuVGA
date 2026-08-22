@@ -3123,6 +3123,49 @@ a mask-AND on the node's +0x34 and a zero-score-loses ranking:**
   honest multi-display claim is a separate decision after the
   gate is identified.
 
+**RUNG 22 RESULT (2026-08-22) — GATE 1 EXONERATED (npix=0 with
+claim=0xFFFFFFFF on all eight sets); GATE 2 CONFIRMED by the
+registered branch; the scorer read — its rejects are the node's
++0xc FLAGS (subset test) and +0x10 (exact match), both
+transcribed with guessed values in rung 12:**
+- All eight sets, fresh processes: exit 0, error 0, npix=0,
+  objects built (id=0x20500 from the measured plane). The
+  mask-AND gate (+0x34) passes with every display claimed — it
+  was never the drop.
+- **The scorer 0xba0a read — it is a request-vs-node MATCHER:**
+```
+0xba0a(request(rdi), attrs-desc(rsi), node(rdx), popcount(ecx), flags(r8d))
+0xba96: [request+8] vs [node+8]    id-mask fields: only bits the
+       request NAMES must match (0xfe0000/0x7f00/0xff/0xff000000
+       planes, each checked only if the request sets it)
+0xbb01: [request+0xc] & ~[node+0xc] != 0  -> REJECT
+       the request's REQUIRED capability flags must be a SUBSET
+       of the node's +0xc flags word
+0xbb13: [request+0x10] != [node+0x10]     -> REJECT
+       an EXACT-match field; ours is 0 (calloc)
+0xbb21: color/buffer-size matching (0x5567) when request flags
+       name it
+... (further reads follow; the first reject wins)
+```
+- **The two operative suspects, both from the rung-12
+  transcription's guesses:** node+0xc = flags with base 0x4C8
+  (NEVER read from the float — a guess), and node+0x10 = 0. A
+  required flag missing from ours, or any nonzero exact field,
+  rejects: score 0 → never wins the max-initialized-at-0
+  comparison → never counted → npix=0.
+- **RUNG 23 PRE-REGISTERED — the flags discriminator (committed
+  before running):** the claim reverts to the honest 0x1 (gate 1
+  is exonerated; single-variable discipline), and the node's
+  +0xc goes to 0xFFFFFFFF (claim every capability — DIAGNOSTIC,
+  the honesty question follows the gate identification).
+  PREDICTION: npix ≥ 1 on the {5}-class sets → the flags-subset
+  reject (0xbb01) is the operative one, and the honest fix is to
+  learn the request's required-flag bits per attr and set the
+  software-honest subset; npix still 0 → the exact-match +0x10
+  reject (0xbb13) is next, and the request struct's construction
+  (where the worker builds [-0x280] from the caller attrs)
+  becomes the named read.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

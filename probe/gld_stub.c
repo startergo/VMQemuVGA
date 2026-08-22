@@ -350,7 +350,10 @@ build:
     obj[5] = 0x8000;       /* +0x14 constant */
     obj[7] = 0x1;          /* +0x1c */
     obj[8] = 0x1;          /* +0x20 */
-    obj[13] = RUNG11_CLAIM; /* +0x34 our display claim */
+    obj[13] = 0xFFFFFFFF;  /* +0x34 claim — RUNG 22 DIAGNOSTIC: claim
+                            * every display, to discriminate the worker's
+                            * two gates (mask-AND on +0x34 vs the 0xba0a
+                            * score). NOT an honest standing value. */
     *out = obj;
     {
         char buf[128];
