@@ -106,6 +106,60 @@ void gldTerminateLibrary(void)
 }
 
 /* ==== generated from VMsvga2 EntryPointNames.c + header return types ==== */
+/* RUNG 11a (pre-registered): the honest renderer record, claiming a
+ * display we don't have. Contract per GLRendererFloat gldGetRendererInfo
+ * @0x1775b (rung-5 decode): ~0x88-byte record; mask protocol — answer
+ * ONLY for query masks within the claim, else 0x2716 (kCGLBadMatch),
+ * the float's EXACT condition: (!(claim & q) || (~claim & q)). Claim =
+ * 0x2 (nonexistent display on this VM — zero desktop reach by
+ * construction). Fields: OUR header anchor, OUR renderer id (vendor
+ * space 0x1AF4), SOFTWARE-class caps (honest — the stub is software),
+ * modest constants where the float's fields were otool-unreadable. */
+#define GLD_BAD_MATCH 0x2716
+#define RUNG11_CLAIM  0x2
+#include <string.h>
+#include <mach-o/loader.h>
+extern struct mach_header_64 _mh_bundle_header;
+long gldGetRendererInfo(void* rec, int query_mask)
+{
+    FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
+    if (f) {
+        time_t t = time(NULL);
+        char ts[32];
+        strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
+        fprintf(f, "[%s pid=%d] CALL gldGetRendererInfo(rec=%p, q=0x%x) "
+                 "claim=0x%x -> ", ts, (int)getpid(), rec, query_mask,
+                 RUNG11_CLAIM);
+        fclose(f);
+    }
+    unsigned* r = (unsigned*)rec;
+    int claim = RUNG11_CLAIM;
+    if (!(claim & query_mask) || (~claim & query_mask)) {
+        ep_log("  kCGLBadMatch 0x2716 (outside claim)");
+        return GLD_BAD_MATCH;
+    }
+    memset(r, 0, 0x88);
+    *(unsigned long*)&r[0] = (unsigned long)&_mh_bundle_header; /* +0 anchor */
+    r[2] = 0x1AF40100;   /* +8  our renderer id (our vendor space) */
+    r[3] = 0x6CD;        /* +0xc class field (software, per float) */
+    r[4] = 0xD;          /* +0x10 */
+    r[5] = 0x8008000;    /* +0x14 caps word (software class) */
+    r[6] = 0x20000000;   /* +0x18 caps word */
+    r[7] = 0x1001;       /* +0x1c */
+    r[8] = 0x81;         /* +0x20 */
+    r[9] = claim;        /* +0x24 the claim */
+    r[10] = 0x00010004;  /* +0x28 word=4, +0x2a word=1 (packed per float) */
+    r[11] = 0x01000010;  /* +0x2c word=0x10, +0x2e byte=1 (packed) */
+    r[12] = 1;           /* +0x30 */
+    /* +0x3c..+0x84 limit fields — modest constants, documented as
+     * guesses-with-margin (float's were otool-unreadable); consumed
+     * only by describe-queries against the nonexistent display. */
+    for (int off = 0x3c; off < 0x88; off += 4)
+        *(unsigned*)((char*)r + off) = 256;
+    ep_log("  RECORD filled (id=0x1AF40100, claim=0x2, software caps)");
+    return 0;
+}
+
 /* RUNG 5→10 EVOLUTION: values per the working GLD's disassembly, with
  * rung 9's correction: the loader (libGFXShared @0x157a-0x15b5)
  * validates (RET!=0, a0==3, a1==1, a2==0, a3 bits only in 0xFF00).
@@ -129,7 +183,6 @@ long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
     return 1;
 }
 
-EPR(gldGetRendererInfo)
 EPR(gldChoosePixelFormat)
 EPR(gldDestroyPixelFormat)
 EPR(gldCreateShared)

@@ -98,6 +98,25 @@ int main(int argc, char *argv[])
     case 'm':
         census("m");
         break;
+    case 'x': {
+        /* rung 11: query an arbitrary display mask (argv[2], hex) */
+        unsigned mask = (argc > 2) ? strtoul(argv[2], NULL, 16) : 0x2;
+        CGLRendererInfoObj ri = NULL;
+        GLint nrend = 0;
+        CGLError e = CGLQueryRendererInfo(mask, &ri, &nrend);
+        printf("[x] QueryRendererInfo(0x%x) -> %d nrend=%d\n", mask, e, nrend);
+        if (e == kCGLNoError && ri && nrend > 0) {
+            for (GLint i = 0; i < nrend && i < 4; i++) {
+                GLint accel = -1, rid = -1;
+                CGLDescribeRenderer(ri, i, kCGLRPAccelerated, &accel);
+                CGLDescribeRenderer(ri, i, kCGLRPRendererID, &rid);
+                printf("  [x] renderer[%d]: accelerated=%d rid=0x%x\n",
+                       i, accel, rid);
+            }
+        }
+        if (ri) CGLDestroyRendererInfo(ri);
+        break;
+    }
     case 'd':
         census("d");
         describe_walk("d");

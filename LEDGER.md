@@ -1439,6 +1439,44 @@ run):**
   requires the revert path proven; (4) destabilized → the confirmed
   revert path.
 
+**RUNG 11a RESULT — BOTH COEXISTENCE PREDICTIONS FALSIFIED; THE
+EXCLUSIVITY IS STRUCTURAL (22:20–22:30; baseline 22:30:44 gate=0):**
+- Instrument note: the first build shipped WITHOUT its executable —
+  a `clang | grep -c` pipe masks compile failure (grep's exit wins;
+  the build-failure discipline extended to pipes) — and the reboot
+  had already fired. Harmless by luck AND design: WindowServer booted
+  on stock GL (never loaded the broken bundle), and the LIVE-INSTALL
+  of the fixed bundle on the already-gated boot made WindowServer the
+  safest possible observer — only the probes consulted.
+- Main-display census (q=0x1): OUR GLD consulted, honest
+  kCGLBadMatch (claim=0x2) → **CGLQueryRendererInfo returned 10006
+  (kCGLBadMatch), nrend=0 — the float renderer did NOT answer behind
+  us. Prediction 1 FALSIFIED.**
+- Query 0x2 (our claimed bit): **10006, NO stub log at all — CGL
+  never queries a display that does not exist. Prediction 2
+  FALSIFIED; a nonexistent-display claim can never be consumed.**
+- **CONFIRMED (prediction 3): the registry-named GLD owns its
+  display's renderer answer EXCLUSIVELY. No honest coexistence. The
+  mask protocol itself works — our BadMatch was accepted and
+  propagated exactly per the contract — but it cannot SCOPE the
+  consult.**
+- Blast radius (recorded): rung 10's desktop was normal with a
+  refusing registered GLD — WindowServer's boot tolerates census
+  failure; the substitute stack defines its own CGL and never
+  consults the system loader (immune — the browser is unaffected).
+  The blast radius of a registered GLD's answers = REAL-CGL apps
+  that query renderers.
+- Forward consequence: 11b (claim the real display, mask=0x1) makes
+  our GLD THE renderer authority — enumeration would show our rid,
+  and everything downstream (gldChoosePixelFormat, gldCreateShared,
+  gldCreateContext — all currently refusals) becomes load-bearing
+  the moment an app asks for a context. The Mesa-backed
+  implementation begins there; the honest ladder's next rung is
+  ENUMERATE-FIRST: claim 0x1, verify our rid appears in a census,
+  revert before any context work.
+- Field-packing fix made pre-run: the float's word/byte fields at
+  +0x28..+0x2e are two dwords (0x00010004, 0x01000010).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
