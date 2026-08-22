@@ -2090,6 +2090,38 @@ in CGS's accelerated-display qualification.
   has real EDID for the first time; the HDDC claim is now
   backed). The 1024x768 mode selection is a mode-table
   interaction to investigate separately.
+
+**THE FOURTH CANDIDATE — OUR OWN RECORD'S accelerated=0 (recorded
+before any test; the rejection may be about the RENDERER, not the
+display):**
+- The three exhausted candidates all assumed the CGS "invalid
+  display" rejection was about the display. A candidate not on
+  the list: **the record says accelerated=0.** Honest
+  software-class caps have been maintained throughout, and
+  enumeration respects them (rung 11b: accelerated=0 taken at
+  face value). If the display-matching layer asks "is there an
+  ACCELERATED renderer for this display," the answer from our
+  own record is no — and rejecting an accelerated pixel format
+  would be CORRECT BEHAVIOR, not a gate.
+- **10006 = kCGLBadDisplay = 0x2716 — the same constant as the
+  refusal code.** The site producing it is findable the same way
+  site 2 was: search the three binaries for stores of $0x2716
+  on the display-matching path.
+- **RUNG 16 PRE-REGISTERED (one bit, gated, revertable):** set
+  the record's accelerated flag (byte at +0x2e = 1 instead of
+  the current honest software-class value) — the first time
+  claiming acceleration is JUSTIFIED AS A PROBE rather than an
+  over-claim, because the claim is being TESTED. Outcomes:
+  (a) accelerated sets REACH the GLD (the "invalid display" was
+  our own accelerated=0 reflected back) → hypothesis confirmed;
+  the honest position afterwards is to REVERT the bit until Mesa
+  backs it — a probe result, not a production claim;
+  (b) "invalid display" persists → the accelerated flag is not
+  the criterion either; the next move is the $0x2716-site read
+  in the three binaries (the code itself, not more candidates);
+  (c) destabilized (a system that believes it has an accelerated
+  renderer will route real work to the stub — outcome-3 standing,
+  recovery proven).
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
