@@ -1399,6 +1399,46 @@ gate=0):**
   claims. Gate + live-swap revert to hand; desktop watch mandatory;
   slclean recovery standing.**
 
+**RUNG 11a PRE-REGISTERED — the honest record claiming a display we
+don't have (zero desktop reach by construction; committed before the
+run):**
+- **REVERT PATH CONFIRMED BEFORE THE RUN (not during):** WindowServer
+  dlopens the GLD at boot and holds the mapping — a mid-session
+  bundle swap CANNOT unload it from WindowServer. The broken-desktop
+  revert is therefore: ssh → remove vm-cap3d from boot-args → reboot
+  (ssh survives broken-desktop states — proven in the m3 black/white
+  era; the arg-removal reboot is exercised successfully on every rung
+  today). Slclean stands behind it. The live-swap speedup remains
+  PROBE-ONLY.
+- **The mask-claim instrument:** the record claims mask 0x2 — a
+  display bit that does not exist on this single-display VM. The
+  desktop's real rendering (main display, bit 0) can never consult
+  this record; the float renderer answers everything real. 11a tests
+  the record STRUCTURE, the mask protocol (kCGLBadMatch per the
+  float's exact condition), and COEXISTENCE with zero reach into
+  real GL.
+- **The record (rung-5 contract, honest fields):** +0 qword = OUR
+  bundle header (record anchor — the misread-corrected context: a2
+  of VERSION must be 0, but the RECORD's +0 anchor is a pointer per
+  the float's disasm); +8 = OUR renderer id (0x1AF40100 — our vendor
+  space, not Apple's, no impersonation); +0x24 = 0x2 (the claim);
+  caps/version/class fields = the float's SOFTWARE-class values
+  (honest: our stub is software-class); modest limit constants where
+  the float's fields were unreadable (documented as such — consumed
+  only by describe-queries against a nonexistent display).
+  Return 0 for query masks ⊆ 0x2; 0x2716 otherwise — the float's
+  exact protocol.
+- **Predictions:** (1) main-display census returns the FLOAT renderer
+  again (nrend=1, rid=0x1020400) — COEXISTENCE CONFIRMED, the
+  replacement effect is the mask's doing; (2) a probe querying
+  display-bit-1 consults OUR record (first real record consumed) —
+  census shows our renderer for that mask only; (3) main-display
+  census still errors (-1/nrend=0) — the consult is slot-ordered,
+  not mask-filtered; coexistence NOT achievable via mask; the
+  single-renderer risk stands and 11b (claiming the real display)
+  requires the revert path proven; (4) destabilized → the confirmed
+  revert path.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
