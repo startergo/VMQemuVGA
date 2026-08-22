@@ -18,6 +18,7 @@
  */
 
 #include <OpenGL/OpenGL.h>
+#include <OpenGL/gl.h>
 #include <ApplicationServices/ApplicationServices.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,6 +177,33 @@ int main(int argc, char *argv[])
         CGLError e = CGLChoosePixelFormat(sets[which - 1], &pf, &npix);
         printf("[q] pf(%s) -> %d npix=%d\n", names[which - 1], e, npix);
         if (pf) CGLDestroyPixelFormat(pf);
+        break;
+    }
+    case 'k': {
+        /* rung 27 (pre-registered, LEDGER fc99001): the context
+         * rung — choose the honest {5,84,1} format; if it counts,
+         * create a context; if created, ONE glGetString (the first
+         * real GL call). Probe-side only; stub refusals stand. */
+        CGLPixelFormatAttribute ak[] = {
+            kCGLPFADoubleBuffer, kCGLPFADisplayMask,
+            (CGLPixelFormatAttribute)0x1, (CGLPixelFormatAttribute)0 };
+        CGLPixelFormatObj pf = NULL; GLint npix = 0;
+        CGLError e = CGLChoosePixelFormat(ak, &pf, &npix);
+        printf("[k] pf(double+mask1) -> %d npix=%d pf=%p\n", e, npix, (void*)pf);
+        fflush(stdout);
+        if (e == 0 && pf && npix > 0) {
+            CGLContextObj ctx = NULL;
+            CGLError ec = CGLCreateContext(pf, NULL, &ctx);
+            printf("[k] CGLCreateContext -> %d ctx=%p\n", ec, (void*)ctx);
+            fflush(stdout);
+            if (ec == 0 && ctx) {
+                const GLubyte *v = glGetString(GL_VERSION);
+                printf("[k] glGetString(GL_VERSION) = %s\n", v ? (const char*)v : "(NULL)");
+                fflush(stdout);
+                CGLReleaseContext(ctx);
+            }
+            CGLDestroyPixelFormat(pf);
+        }
         break;
     }
     default:

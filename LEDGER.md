@@ -3533,6 +3533,37 @@ untouched; probe-only exposure.
   stability (probe-only).
 - Revert: none needed (no kext/stub change).
 
+**RUNG 27 RESULT (2026-08-22) — PREDICTION (i) WITH A TWIST:
+clean refusal, NO crash — but the refusals never fired. The
+ENGINE's own context-path validation rejects the format before
+any downstream GLD entry is consulted:**
+```
+[k] pf(double+mask1)  -> 0 npix=1 pf=0x100105a40
+[k] CGLCreateContext  -> 10002 ctx=0x0     (kCGLBadPixelFormat)
+run-exit 0; "invalid pixel format" CG stderr = CG's rendering of 10002
+```
+- The stub log for the run: load → initialize → version →
+  census/plugin-dump → ONE pf consult ([0x5 0x54 0x1 0x4],
+  object built) — **and nothing else. No gldCreateShared, no
+  gldCreateContext, no shared-state re-consult.** The refusal
+  convention (nonzero + *out=NULL) remains unexercised — the
+  engine rejected the format ENGINE-SIDE.
+- **The frontier: gliCreateContext's own validation of the pf
+  object** (GLEngine 0x1526+, glimpsed in rung 19's read: it
+  walks the pf's BYTES as counts — `movzbl (%r13),%eax`,
+  size computations `×0x17f8` and `×24` per entry). The CGL
+  pf object our node was copied into feeds those computations;
+  some field fails the check. The next read names it.
+- No boot, no desktop exposure; the probe-only rung is closed
+  clean. The refusal convention's safety remains established by
+  rung 10/12 evidence, still awaiting its first real exercise.
+- **NEXT (rung 28 candidates):** (a) read gliCreateContext's pf
+  validation (0x1526–0x1650 — which field produces 10002) and
+  fix the offending object field from the float's values, the
+  established pattern; (b) the state-dependence question (which
+  boot-state flag feeds the fallback) — secondary to the
+  context path, which is now the live frontier.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
