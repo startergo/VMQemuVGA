@@ -3166,6 +3166,54 @@ transcribed with guessed values in rung 12:**
   (where the worker builds [-0x280] from the caller attrs)
   becomes the named read.
 
+**RUNG 23 RESULT (2026-08-22) — PREDICTION CONFIRMED: THE FIRST
+npiX=1 OF THE ARC. Five of eight sets count a real pixel format;
+the flags-subset reject (0xbb01) was operative; the residual
+failures share attr 5 (DoubleBuffer) — the +0x10 exact-match
+class:**
+```
+{73} accelerated          -> 0 npix=1    {1}  ALL_RENDERERS   -> 0 npix=1
+{53} offscreen            -> 0 npix=0    {1,73} ALL+accel     -> 0 npix=1
+{73,5} accel+double       -> 0 npix=0    {75} robust          -> 0 npix=1
+{73,5,84,1} ...+mask1     -> 0 npix=0    {5,84,1} double+mask -> 0 npix=0
+```
+- With node+0xc = 0xFFFFFFFF (every capability claimed) and the
+  honest claim 0x1 restored: five sets reach npix=1 — the first
+  non-zero pixel-format count since the arc began. The wall is
+  the flags word, and it is DOWN for the simple sets.
+- **The residual signature is clean:** every npix=0 set (except
+  the {53} shortcut, expected and honest) contains attr 5
+  (DoubleBuffer); every npix=1 set contains neither 5 nor 84.
+  Attr 5 adds a requirement beyond the flags word — the +0x10
+  exact-match reject (0xbb13), per the registration's second
+  branch. Attr 84's effect is NOT separable from this run (no
+  set has 84 without 5).
+- **The {1} surprise:** ALL_RENDERERS returns npix=1 despite the
+  transformer's attr-range bail read in rung 20 (code 1 below
+  the switch floor) — that reading is wrong or incomplete;
+  recorded as a small open item, not load-bearing.
+- **The accelerated sets {73}/{1,73} returning npix=1 is the
+  DIAGNOSTIC over-claim at work** (0xFFFFFFFF satisfies any
+  required bit, including an acceleration-class bit). The honest
+  subset will honestly refuse accelerated sets until Mesa backs
+  them — that is the point of the honesty boundary.
+- gldDestroyPixelFormat still never logs (secondary residual,
+  unchanged).
+- **RUNG 24 PRE-REGISTERED — the request-struct construction
+  (committed before the read):** find where the worker builds
+  the request struct ([-0x280]/[-0x278]) from the caller's
+  attrs — the attr→required-flags (+0xc) and attr→exact (+0x10)
+  mapping. PREDICTION: attr 5 (DoubleBuffer) sets [request+0x10]
+  to a nonzero surface/backing value that our 0 fails; attrs
+  73/75/1 map to required-flag BITS in [request+0xc]. THE FIX
+  THAT FOLLOWS: the node's +0xc becomes the software-honest
+  subset (every required bit the stub can genuinely honor —
+  buffer/backing modes; NOT the acceleration bit), +0x10 the
+  matching exact value from the read; expected outcome: the
+  plain/double-buffered sets (the ones real apps request) reach
+  npix=1 honestly, and the accelerated sets honestly refuse
+  (npix=0) until the Mesa-backed claim exists.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

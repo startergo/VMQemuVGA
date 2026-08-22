@@ -346,14 +346,17 @@ build:
                                        : 0x1AF40100;
     *(unsigned long*)&obj[0] = 0;    /* chain terminator: single slot */
     obj[2] = use_id;       /* +8  (engine ORs 0x20000 — idempotent in-plane) */
-    obj[3] = flags;        /* +0xc */
+    obj[3] = 0xFFFFFFFF;   /* +0xc flags — RUNG 23 DIAGNOSTIC: claim every
+                            * capability, to discriminate the scorer's
+                            * subset-test reject (0xbb01) from the exact-
+                            * match reject (+0x10, 0xbb13). The parsed
+                            * `flags` (base 0x4C8, a rung-12 guess) is
+                            * bypassed; honest subset follows gate ID. */
     obj[5] = 0x8000;       /* +0x14 constant */
     obj[7] = 0x1;          /* +0x1c */
     obj[8] = 0x1;          /* +0x20 */
-    obj[13] = 0xFFFFFFFF;  /* +0x34 claim — RUNG 22 DIAGNOSTIC: claim
-                            * every display, to discriminate the worker's
-                            * two gates (mask-AND on +0x34 vs the 0xba0a
-                            * score). NOT an honest standing value. */
+    obj[13] = RUNG11_CLAIM; /* +0x34 our display claim (rung 22 reverted:
+                             * gate 1 exonerated; honest value stands) */
     *out = obj;
     {
         char buf[128];
