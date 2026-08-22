@@ -4062,6 +4062,40 @@ CGSFlushSurface -> 0 (OK); CGSOrderSurface -> 0 (OK)
 
 ---
 
+## RUNG 34 PRE-REGISTERED — the honest gldInitDispatch: noops in
+every slot; the full app draw cycle (committed before
+implementation)
+
+**The implementation (per the float's read, grf.t 0x14d3b):**
+`(ctx, dispatch_block(rsi), limits_out(rdx))` — fill EVERY
+offset the float writes (+0x0/+8/+10/+18/+20/+28/+30/+38/+40/
++48/+80/+88/+90/+98/+a0/+b8/+c0/+c8/+d0/+f0/+f8/+100) with a
+noop function (the float's own pattern for unsupported
+capability); the limits block zeroed (the float's no-drawable
+branch: maxes [0]/[4] = 0 without ctx+0x218). NO slots beyond
+the float's writes (the block's upper extent is engine-owned).
+The noop logs its first dispatches then runs silent (GL apps
+make thousands of calls).
+
+**The probe extension:** probe_cgs_requester gains the full app
+draw cycle after the surface coupling — CGLSetCurrentContext,
+glClearColor/glClear, **CGLFlushDrawable** (the compositing
+call — the first flush through our driver).
+
+**Predictions:**
+- (i) gldInitDispatch answered 0; the engine accepts the
+  all-noop table; the draw cycle runs (glClear succeeds
+  vacuously, CGLFlushDrawable returns something); the noop log
+  shows the engine's first dispatch-class calls; no crash.
+- (ii) The engine validates a slot (calls one immediately, or
+  checks a slot non-NULL beyond the float's set) — a crash or
+  error names it.
+- (iii) The flush path fires a new entry (gldFlush-class) —
+  another refusal convention exercise.
+**Exposure:** live-swap, probe-only, no boot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
