@@ -2902,6 +2902,63 @@ OpenGL.framework worker at 0x9660:**
 
 ---
 
+## RUNG 20 PRE-REGISTERED — the 0x9660 worker's npix counter
+(committed before the read)
+
+**The question, precisely:** gliChoosePixelFormat returns 0 with
+our single-object chain (+0=NULL, +8 decorated to 0x1AF60100);
+the worker at OpenGL.framework 0x9660 returns 0; *npix stays 0.
+Where between the chain head and the count does the object die?
+
+**What is already known about 0x9660 (from rung 19's read of its
+caller):** called as `f(attrs_transformed, attrs, npix_out,
+ecx)` — ecx=1 on the first attempt, retried with ecx=0 when the
+first returns 0 with *npix==0 under the fallback flag
+(byte[global+0x21]&0x8). The 0x2716 sites at 0x96dd and 0x9dcd
+are inside its entry section (display-matching / accel-service
+checks that run BEFORE the consult — real code, but never the
+source of the observed 10006s). The gliChoosePixelFormat call is
+made from inside it (the crash stack's frame order).
+
+**Predictions (registered before reading):**
+- (i) **Per-object field validation:** the worker walks the chain
+  and checks each object's field(s) against the request —
+  candidates +0xc flags (base 0x4C8, never read from the float),
+  +0x14 (0x8000), +0x1c/+0x20 (1s), +0x34 (claim 0x1) vs the
+  request/CGS mask. Mismatch drops the node. Discriminator: the
+  read names the offset; fix = set the field (honesty boundary
+  stands: hardware-acceleration bits only with functional 3D).
+- (ii) **Mask intersection:** the worker ANDs the object's mask
+  field with its own display mask; 0 → dropped. Known wrinkle:
+  claim 0x1 vs display mask 0x1 should PASS (rung 15) — if this
+  is the mechanism, the mask in play is derived differently
+  (plugin-accumulated, or per-virtual-screen).
+- (iii) **Id cross-check:** the worker counts only objects whose
+  decorated +8 id matches an id in its own renderer list
+  (census-side data). Our 0x1AF60100 equals the census rid —
+  would pass unless the worker composes its expected id by a
+  different rule.
+- (iv) **Pre-consult drop:** the object dies BEFORE the chain is
+  examined — the display-association (CGSServiceForDisplayNumber
+  / IOAccel path at the entry section) fails to bind the request
+  to our display, and BOTH the ecx=1 and ecx=0 passes drop at the
+  same entry check; the consult result is never counted on
+  either pass. If so, the fix is in the association inputs, not
+  the object.
+- Secondary question the same read settles: what DO the 0x96dd /
+  0x9dcd checks gate, now that they are known not to have
+  produced the observed errors?
+
+**Instrument:** /tmp/ogl.t (OpenGL.framework x86_64
+disassembly). Read 0x9660's entry checks, the
+gliChoosePixelFormat call site, and the post-call counting.
+**Verification:** whatever mechanism is named, the fix lands in
+this rung if it is object-side, and the eight-set probe reruns —
+prediction: the named sets reach npix ≥ 1; a mechanism on the
+association side (iv) relocates instead and the rung records it.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
