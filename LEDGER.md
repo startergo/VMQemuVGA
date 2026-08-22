@@ -3926,6 +3926,39 @@ made anything current).
   with dispatch (bridge territory proper).
 **Exposure:** probe-side only; live-swap; no boot.
 
+**RUNG 32 RESULT (2026-08-22) — THE CURRENT-CONTEXT HYPOTHESIS
+CONFIRMED; THE STRINGS ARE LIVE (the first real data an app has
+received from this driver); the dispatch contract READ (a table
+the driver fills with its renderer's operations); gldInitDispatch
+still never fires — strings need no dispatch:**
+```
+[k] CGLSetCurrentContext -> 0
+[k] glGetString(GL_VERSION)  = 0.0 stub
+[k] glGetString(GL_VENDOR)   = VMQemuVGA Project
+[k] glGetString(GL_RENDERER) = VirtIO GPU stub (software, no rendering)
+```
+- **Prediction (i) CONFIRMED, refined:** the gate was
+  CURRENT-CONTEXT (CGL-layer), not dispatch — CGLSetCurrentContext
+  succeeded and the string calls flowed to the driver entry
+  directly. Rung 31's "dispatch-gated strings" reading is
+  CORRECTED: strings consult gldGetString with no dispatch
+  installed. The rung-31 strings went live unchanged.
+- **The float's gldInitDispatch contract (grf.t 0x14d3b):
+  `(ctx, dispatch_block(rsi), limits_out(rdx))`** — the driver
+  FILLS a fixed-layout table with its renderer's operations:
+  gldClear@+0x8, gldReadPixels@+0x10, accum/drawpix/copypix/
+  bitmap/vertex-array/blit, begin/end-primitive-buffer@+0xb8/c0,
+  the point/line/poly renderers@+0x30/38/40, noops where
+  unsupported — and a LIMITS block (texture dims clamped to
+  0x4000, from ctx+0x218's chain). **The bridge's installation
+  point, read: Mesa's functions fill this table.**
+- **gldInitDispatch never fired even now** — its trigger is NOT
+  strings and NOT make-current; presumably the first
+  RENDERING-class call or drawable attach. Naming its trigger
+  (the engine call-site read) is the bridge rung's next step.
+- 50 entry calls in the run's log — the full lifecycle now
+  includes make-current. No crash, exit 0.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

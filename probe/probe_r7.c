@@ -197,6 +197,9 @@ int main(int argc, char *argv[])
             printf("[k] CGLCreateContext -> %d ctx=%p\n", ec, (void*)ctx);
             fflush(stdout);
             if (ec == 0 && ctx) {
+                CGLError em = CGLSetCurrentContext(ctx);
+                printf("[k] CGLSetCurrentContext -> %d\n", em);
+                fflush(stdout);
                 const GLubyte *v = glGetString(GL_VERSION);
                 printf("[k] glGetString(GL_VERSION) = %s\n", v ? (const char*)v : "(NULL)");
                 const GLubyte *ve = glGetString(GL_VENDOR);
