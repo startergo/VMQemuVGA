@@ -1829,6 +1829,39 @@ nonzero refusal did NOT prevent the crash (08:37–08:52; baseline
   third episode); the IP route (ARP-cache 192.168.64.40 + the
   config's key + legacy algorithms) unblocked everything — the
   ssh-via-IP procedure is now the standing workaround.
+
+**SECOND CALL-SITE READ (libGFXShared + OpenGL framework disasm; no
+boot) — THE ANSWER IS A THREE-LAYER CORRECTION:**
+1. **The plugin function table base is 0x120, NOT 0x130**
+   (`leaq 0x120(%r12), %r13` at 0x173b — the rung-9 base was
+   off by one slot). Every table-offset attribution shifts:
+   `*0x140` = slot 4 = **gldCreateShared** (NOT
+   gldChoosePixelFormat); `*0x148` = slot 5 = gldDestroyShared;
+   slot 2 (gldChoosePixelFormat) = offset **0x130**.
+2. **_gfxCreateSharedState (0x17bc) calls gldCreateShared — not
+   our pf entry.** The (slot_out, device_mask, 4) contract decoded
+   in rung 12 belongs to gldCreateShared, not gldChoosePixelFormat.
+3. **NO call through *0x130 exists anywhere in libGFXShared.** Our
+   pf entry is NEVER called through the plugin table in
+   libGFXShared — the caller is in the **OpenGL framework binary**
+   itself: CGLChoosePixelFormat (@0x14c5 in OpenGL.framework) →
+   internal helper at **0x9660** (a ~4KB format-selection engine
+   that uses CGS display info, glcPluginCount, glcGetIOAccelService,
+   then per-display enumeration) — and somewhere inside that helper
+   the GLD's pf slot is invoked with the OBSERVED shape
+   (out, stack_attrs, 0).
+- **The {4,0,0,0} rung-12 datum was the caller's REAL attribute
+  array** — the OpenGL framework's internal format-selection
+  engine passing the app's CGL attributes (converted to internal
+  codes) on its stack. The 87-case parser reading is back in play
+  for THIS caller.
+- **Practical consequence: the call-site contract for our pf entry
+  is in the OpenGL framework's 0x9660 helper, not in
+  libGFXShared.** The next read is that helper's indirect-call
+  region (the call through the plugin table with three args and
+  rdx=0) and its return-value handling — whether it checks the
+  GLD's return before dereferencing *out. /tmp/ogl.t has the
+  disassembly (26582 lines; 0x9660-0xa65c is the function's span).
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
