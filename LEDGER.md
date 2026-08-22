@@ -3745,6 +3745,50 @@ honest mirror (committed before the read)
 **Exposure:** live-swap, no boot; probe-only. The desktop is
 untouched (probe process only).
 
+**RUNG 30 RESULT (2026-08-22) — THE CONTEXT EXISTS. A COMPLETE
+CONTEXT LIFECYCLE THROUGH THE STUB GLD — create, default-state
+consultation (dozens of entries, all refusals clean), teardown
+with the refcount handshake. NO CRASH:**
+```
+[k] pf(double+mask1)        -> 0 npix=1
+[k] CGLCreateContext        -> 0 ctx=0x100829800     ← LIVE CONTEXT
+[k] glGetString(GL_VERSION) -> (NULL)                ← refusal → NULL
+run-exit 0
+```
+- **The float's gldCreateContext read (grf.t 0x1403d):** a full
+  software GL context — gldVecAlloc(0xC60), GL-state float
+  defaults at +4..+0x1c, rasterizer hooks, **args at
+  +0x738/0x740/0x748** (the offsets its own gldDestroyContext
+  confirms: +0x738 = the shared, whose +0 mutex it locks and
+  whose +0x48 refcount it decrements).
+- **Implemented as the honest minimal mirror:** the float's
+  SIZE (0xC60), the arg offsets, zeros elsewhere (the engine
+  treats the GLD context as opaque except through entries);
+  gldDestroyContext mirrors the refcount handshake (lock,
+  decrement, unlock, free).
+- **The observed downstream cascade — the first real GL consumer
+  sequence through the driver:** 10× gldCreateTexture (the
+  engine's default texture objects), gldCreateVertexArray,
+  2× gldCreatePipelineProgram, gldSetInteger — ALL REFUSED
+  cleanly (nonzero + out-zeroed); then the unwind: the
+  UnbindTexture/DestroyTexture pairs ×10, the pipeline and
+  vertex-array destroys, gldDestroyContext (handshake done,
+  freed), gldDestroyShared (freed). **No crash, exit 0.**
+- **The refusal convention held under its heaviest exercise** —
+  dozens of creator/refusal/destroyer calls in one lifecycle.
+- **The honest state:** contexts exist and live through full
+  lifecycles; every GL call refuses; nothing renders.
+  glGetString → NULL is the refusal reaching the app level.
+- **THE ENDGAME, NOW WITH A COMPLETE LIFECYCLE TO PLUG INTO:**
+  the remaining distance is the GL entries themselves — the
+  Mesa-backed bridge forwarding GLD entries to virgl — the
+  original destination, now reachable through a driver whose
+  pixel formats, shared state, contexts, and teardown all work.
+  Cheapest next datum (rung 31 candidate): an honest
+  gldGetString (a string the stub can back — the software-null
+  identity) to give apps a probeable version — or go straight
+  for the bridge design.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

@@ -509,9 +509,60 @@ long gldDestroyShared(void* obj, void* a1, void* a2, void* a3, void* a4, void* a
     free(obj);
     return 0;
 }
-EPR(gldCreateContext)
+/* RUNG 30 — the honest gldCreateContext, mirrored from the float
+ * (grf.t 0x1403d): gldValidatePixelFormat first (refuse 0x2712 if
+ * no pf), gldVecAlloc(0xC60), GL-state defaults at +4..+0x1c
+ * (engine-irrelevant), args at +0x738/0x740/0x748 — the offsets
+ * the float's own gldDestroyContext confirms (+0x738 = the shared;
+ * it locks the shared's +0 mutex and decrements +0x48). The
+ * engine treats the GLD context as opaque except through entries.
+ * Mirror: the float's SIZE, the arg offsets, zeros elsewhere. */
+long gldCreateContext(void** out, void* pf, void* shared,
+                      void* a4, void* a5, void* a6)
+{
+    (void)a4;
+    if (out) *out = (void*)0;               /* THE RULE — always, first */
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "CALL gldCreateContext pf=%p shared=%p (rung 30)",
+             pf, shared);
+    ep_log(buf);
+    if (!pf) {
+        ep_log("  gldCreateContext -> 0x2712 (no pf, per the float's validate)");
+        return 0x2712;
+    }
+    unsigned char* ctx = (unsigned char*)calloc(1, 0xC60);
+    if (!ctx) {
+        ep_log("  gldCreateContext -> 0x2712 (alloc fail)");
+        return 0x2712;
+    }
+    *(void**)(ctx + 0x738) = shared;   /* the float's arg3 slot; DestroyContext locks it */
+    *(void**)(ctx + 0x740) = a5;
+    *(void**)(ctx + 0x748) = a6;
+    *out = ctx;
+    ep_log("  gldCreateContext -> 0 (object 0xC60 built, rung 30)");
+    return 0;
+}
+/* RUNG 30 — the destroy mirrors the float's handshake: lock the
+ * shared's +0 mutex, decrement the shared's +0x48 refcount (the
+ * field the float initialized in CreateShared), unlock, free. */
+long gldDestroyContext(void* ctx, void* a1, void* a2, void* a3, void* a4, void* a5)
+{
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    ep_log("CALL gldDestroyContext (rung 30)");
+    if (ctx) {
+        void* shared = *(void**)((char*)ctx + 0x738);
+        if (shared) {
+            pthread_mutex_lock((pthread_mutex_t*)shared);
+            (*(int*)((char*)shared + 0x48))--;   /* the float's refcount handshake */
+            pthread_mutex_unlock((pthread_mutex_t*)shared);
+        }
+        free(ctx);
+    }
+    ep_log("  gldDestroyContext -> 0 (freed; refcount handshake done)");
+    return 0;
+}
 EPR(gldReclaimContext)
-EPR(gldDestroyContext)
 EPR(gldAttachDrawable)
 EPR(gldInitDispatch)
 EPR(gldUpdateDispatch)
