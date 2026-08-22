@@ -1148,6 +1148,49 @@ unread gate.
   headers; live-swap used again (bundle installed on an
   already-gated booted system, no reboot needed mid-rung).
 
+## 2026-08-21 (rung 8) — PRE-REGISTERED: the IOKit renderer-claim experiment (AccelCaps=3, a matured deferral)
+
+**Property choice is grounded, not a guess matrix:** the worked
+example publishes `AccelCaps=3` on the ACCELERATOR in the same
+property block as IOGLBundleName
+(../../VMsvga2-modern/AC/VMsvga2Accel.cpp:604). Milestone 1 DEFERRED
+our copy with a recorded return-condition — "returns when the surface
+path works" — and that condition MATURED on 2026-08-21 (milestone 2
+rung 2: surface binding probe-verified; registry live). This rung
+executes the deferral under the vm-cap3d gate. One property, one
+variable vs rung 6b's configuration; stub stays the rung-6b build
+(GetRendererInfo = log+refuse — the question is whether it gets
+CALLED; 7b remains deferred).
+
+**The change:** VMQemuVGAAccelerator publishes
+`setProperty("AccelCaps", 3, 32)` gated by cap3dPublishGate(), loud
+log; the milestone-1 deferral comment updated to name its matured
+condition. FB untouched; ordinary boots byte-identical.
+
+**Pre-registered outcomes (instrument: stub log ×4 probe_r7 modes +
+census + desktop watch):**
+1. **CONSULT HAPPENS** — any NEW entry called on our GLD (first
+   candidate: gldGetRendererInfo) → the claim opened selection; 7b
+   activates next with its own outcome addendum.
+2. **CENSUS MOVES WITHOUT CONSULT** — nrend/npix change with no new
+   entry call (loader synthesized from the claim) → also opens 7b,
+   different reading (the record is not consulted — the registry
+   claim IS the renderer).
+3. **NO CHANGE** — AccelCaps is not the selection key; the
+   elimination table extends; the named next route is the STATIC
+   cache carve.
+4. **WINDOWSERVER LOOP / DESTABILIZED** — the ORIGINAL AccelCaps
+   deferral risk (QE claim invites accelerated compositing; the
+   2026-08-20 open/close loop) — now with the GA surface working,
+   possibly gentler, possibly not. Recovery: gate off (arg removal),
+   slclean if unbootable. Desktop watch is MANDATORY in the first
+   minutes after boot.
+
+Procedure: kext build → deploy + caches → bundle + gate → reboot →
+verify AccelCaps in ioreg + log → desktop watch → probe_r7 all modes
+→ score → restore baseline.
+(Committed before implementation — commit-before-build rule.)
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
