@@ -1679,6 +1679,62 @@ PREDICTIONS FALSIFIED; THE NEXT GATE IS THE RECORD→REQUEST MAPPING
   after the instrumentation fix), revert unneeded (baseline restored
   routinely).
 
+**THE THREE FINDINGS FROM RUNG 12, SEPARATED BY REACH (recorded
+before the mapping read):**
+1. **CONTRACT FACT — the loader rewrites the request layer:** the
+   GLD never sees the caller's attribute set; the 87-case map
+   describes the loader's internal front-end protocol, not anything
+   caller-driven. Every attribute-level hypothesis of the arc was
+   aimed one layer low.
+2. **SAFETY FACT — the refusal convention's boundary:** the caller
+   dereferences *out on success, so 0-with-no-object is
+   indistinguishable from a lie. AUDIT RESOLVED EMPIRICALLY: nonzero
+   refusals are safe everywhere (rung 10 proved it live —
+   gldGetRendererInfo -1 propagated as a clean census error; the
+   caller's own teardown confirms it, below); the crash came from
+   the MIRROR copying the float's success code without the object.
+   RULE: pointer-out entries either refuse NONZERO or succeed with a
+   real object — never 0-with-nothing. Covers ChoosePixelFormat +
+   all creators + struct-fills by the same argument.
+3. **THE NPIX=0 FILTER RELOCATED ABOVE THE GLD:** the wall the flip
+   experiment measured (npix=0 accelerated) was never the driver's
+   to lift — and now sharper: the accelerated request reached the
+   GLD via shared-state creation, so the filter sits in CGL's
+   post-shared-state attribute matching, not in renderer
+   consultation. "Make the GLD claim acceleration" was aimed one
+   layer too low throughout.
+
+**THE RECORD→REQUEST MAPPING READ (libGFXShared disasm, no boot) —
+THE FRAME OVERTURNED: the call is not attribute-shaped:**
+- The pf call site (0x1855, table base 0x130 → slot 2) lives in
+  **_gfxCreateSharedState** — CGL's shared-state creation (the
+  context path's prerequisite). CGLChoosePixelFormat internally
+  builds shared state, consulting EVERY registered driver — which is
+  why the accelerated set reached the GLD (no pre-filter at
+  consultation).
+- The call is THREE-arg: `gldChoosePixelFormat(void** slot_out,
+  <device+0x14 field>, 4)` — the "attributes" pointer is a field of
+  the LOADER's device struct (built at registration), and **edx=4 is
+  a constant third argument** — the trampoline header's 2-arg
+  signature is incomplete (same class as Initialize's 6th arg).
+  Our raw16 {4, 0, 0} = the device-struct region the pointer aims
+  at.
+- **The caller's own code confirms the safety rule:** `testl %eax;
+  jne teardown` — nonzero takes the CLEAN failure loop
+  (DestroyPixelFormat on created slots + free); success (0) is a
+  promise of a valid slot at shared+0x168+r13*0x20 — the promise my
+  no-object return broke, hence the SIGBUS.
+- OPEN (named, one 20-line read away): what populates the
+  device-struct target at +0x14 (registration-time code), and how
+  the float satisfies this exact call — the float's zero-terminated
+  parser on {4,0,0...} truncates at case-4-consumes-0 and its r8
+  gate needs attr code 0, which a zero-terminated list can never
+  deliver — either the float builds via a subtlety misread, or
+  device+0x14's content differed in its era. THE HONEST MIRROR FIX
+  (pre-registered as the next rung's opening move): the no-object
+  paths return NONZERO (0x2716-class) — clean teardown, never the
+  dereference lie.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
