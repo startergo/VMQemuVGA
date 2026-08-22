@@ -3009,6 +3009,66 @@ CGLChoosePixelFormat (0x14c5)
   provenance read becomes the named next step. Instrument: the
   same eight-set probe, live-swap, no boot.
 
+**RUNG 20 READ PART 2 + DISCRIMINATOR RESULT (2026-08-22) — the
+transformer's happy path CANNOT return NULL; +0x40c is a
+round-robin index, not a capability word; the ID-PLANE RULE found
+(`plugin+0x110` exact vs `id & 0xffff00`) — the first mechanism
+that fits every observation:**
+- **2-node discriminator: npix=0** (fresh process, consult
+  logged, 2-NODE CHAIN built) — AND `gldDestroyPixelFormat`
+  never logged. Two observables, one contradiction with the
+  assumed flow.
+- **The transformer 0x37ff fully read:** +0x40c is a ROUND-ROBIN
+  counter (increment, modulo a global; rotates across 16-byte
+  slots of the table at plugin+0x410). The happy path: attr walk
+  (switch, codes 4..0x5a; four bail jumps — 0x3840 out-of-range
+  attr, 0x39c7 >46 attrs, 0x39d1 count overflow, 0x3a48
+  malloc-fail; attr code 1 = AllRenderers is BELOW the switch
+  floor — the {1} sets bail legitimately) → chain node count →
+  malloc (14 dwords/node + attrs) → copy caller attrs → copy
+  0x38 bytes per chain node (OUR exact object size) → store the
+  output at [table+idx+8] → return it. **The happy path cannot
+  return NULL.** So npix=0 for {5}-class sets is NOT a
+  transformer bail.
+- **The dispatcher tail read:** on success `*out = r13` (the
+  transformer's return) and the consult's error is the function's
+  return; a cached-answer path (plugin+0x408 != -1 → 0x33c4)
+  can short-circuit without consulting. The lazy path's two
+  dlsym names confirmed by strings: `gliChoosePixelFormat` /
+  `gliDestroyPixelFormat` — the engine loads GLEngine by name.
+- **THE ID-PLANE RULE (libGFXShared _gfxGetPluginWithDriverID,
+  0x179d):** walks `_gfx_plugin_head`, comparing
+  **`plugin+0x110` EXACTLY against `id & 0xffff00`**. No
+  tolerance. And `_gfxCreateSharedState` (0x17f9) resolves EVERY
+  driver id through this lookup, storing plugin-or-NULL at
+  shared+0x170 per slot.
+- **The mechanism that fits everything:** our pf objects claim id
+  0x1AF40100 (plane 0x1AF40000; decorated 0x1AF60100 → plane
+  0x1AF60000). Per rung 9's decode the loader registered the
+  device under the version-composed id `0x1020000 | 0x400 =
+  0x1020400` (plane 0x1020000). DIFFERENT PLANES →
+  gliDestroyPixelFormat's per-node plugin resolution misses →
+  destroy skipped (the observed absence) → and any worker-side
+  per-node id resolution misses identically → the node is never
+  counted → npix=0. The census worked because it reads the
+  RECORD directly (record+8 | 0x20000), not the plugin table.
+- **RUNG 21 PRE-REGISTERED — measure the registered id, don't
+  guess it (committed before implementation):** the stub runs in
+  the same process as libGFXShared; `_gfx_plugin_head` is an
+  exported global. The stub's gldChoosePixelFormat will dlopen
+  libGFXShared by path (same handle), dlsym `_gfx_plugin_head`,
+  walk the plugin list, and log each plugin's +0x110 (and +0x118
+  mask) ONCE per process. PREDICTION: the log shows ONE plugin
+  (ours) with +0x110 in the 0x102xxxx (version-composed) plane,
+  NOT 0x1AF4/0x1AF6xxxx. THE FIX FOLLOWS FROM THE MEASURED
+  VALUE: the pf object's +8 id moves to the measured plane
+  (preserving our low vendor bits); prediction then:
+  destroy-logs + npix ≥ 1 on the {5}-class sets. If +0x110 is
+  0x1AF4-plane after all, the id-mismatch hypothesis dies and
+  the worker's npix store becomes the named next read.
+- The 2-node diagnostic shape reverts to single-node (the
+  discriminator served its purpose; one honest object).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
