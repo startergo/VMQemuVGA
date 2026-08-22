@@ -1735,20 +1735,40 @@ THE FRAME OVERTURNED: the call is not attribute-shaped:**
   paths return NONZERO (0x2716-class) — clean teardown, never the
   dereference lie.
 
-**[device+0x14] PROVENANCE — first read done, ambiguous between two
-writers (no boot):**
-- A write site found at 0x1405–0x1437: `device+0x14 = local-or--1`
-  (sentinel 0xFFFFFFFF on the zero path, alongside plugin+0x118 and
-  device+0x10 = 0x1000000). Whether THIS block feeds the same struct
-  class `gfxGetDeviceWithDeviceID` returns needs one more hop (the
-  0x13xx block strncpy's a 0x100-byte name — display-table flavor).
-- EMPIRICAL CONSTRAINT (the raw16 dump IS a probe of the region):
-  the pointer aims at `{4, 0, 0, 0, <shared-cache pointers>, …}` —
-  a POINTER-BEARING descriptor with a small header. The shared-cache
-  pointers in the tail read LOADER-INTERNAL; the leading 4 could
-  still echo a record field. Record-derived vs loader-internal:
-  BOTH LIVE; the deciding read is gfxGetDeviceWithDeviceID's struct
-  layout + the writer of ITS +0x14 (gfx.t line 636 area).
+**[device+0x14] PROVENANCE — RESOLVED BY THE STRUCT READ; the entry
+above SUPERSEDED (three corrections cascade):**
+- `_gfxGetDeviceWithDeviceID` walks `_gfx_device_head`: device =
+  malloc(0x18) — **next@+0, plugin@+8, deviceID@+0x10, mask@+0x14
+  = `1 << display_index`** (creation at 0x103c–0x1075; the same
+  mask is OR'd into plugin+0x118 — the plugin's accumulated display
+  claim). **[device+0x14] is a DISPLAY BITMASK, LOADER-INTERNAL,
+  NOT record-derived — the record-shapes-the-request inference is
+  DEAD.** (The 0x1405 write site found earlier belongs to a
+  different block — the display-table path — not this struct.)
+- **CORRECTION CASCADE 1 — the raw16 "descriptor" was GARBAGE:**
+  _gfxCreateSharedState passes the MASK as gldChoosePixelFormat's
+  second argument; our stub treated mask 0x4 (= 1<<2, the EXTENDED
+  display — matches this VM's second display) as a POINTER and read
+  address 4 — an illegal dereference this VM's layout happened to
+  permit, yielding low-memory garbage that we mistook for a
+  pointer-bearing descriptor. The "descriptor" reading is dead.
+- **CORRECTION CASCADE 2 — arg2 of gldChoosePixelFormat is a display
+  mask (int), not an attribute pointer** — the trampoline header's
+  signature fails a THIRD time, now on parameter MEANING. The
+  honest stub: interpret arg2 as a mask, never dereference it.
+- **CORRECTION CASCADE 3 — the float's 87-case parser serves a
+  DIFFERENT CALLER:** GLRendererFloat is NOT in the device list
+  _gfxCreateSharedState walks (it is the Resources/ software
+  fallback, consulted by CGL's software path with REAL attribute
+  lists). The map remains valid for the float's own caller — but it
+  was never the contract OUR pf entry faces. Our entry's real
+  contract (from the only call site): (slot_out, display_mask,
+  const 4); success=0 promises a slot; nonzero refuses cleanly.
+- **The request-layer separation, now clean:** the RECORD feeds
+  ENUMERATION (proven, rung 11b); the pf REQUEST inputs are the
+  driver-id array (caller/CGL side) + loader-internal device masks.
+  Next rung's fix list: pf entry interprets (out, mask, 4);
+  no-object paths return NONZERO; never dereference arg2.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
