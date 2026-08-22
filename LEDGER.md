@@ -2258,6 +2258,55 @@ IOAccelFindAccelerator(port, service, &accel) → find the accelerator
   the IOKit framework — what property on the display service
   or the accelerator does it check? The answer is a kext-side
   property or association, not a preference.
+
+**IOAccelFindAccelerator READ COMPLETE — the matching criterion
+is an `IOAccelerator` PATH STRING on the display service (IOKit
+disasm, 107 lines; both checks run):**
+```
+IOAccelFindAccelerator(masterPort, displayService, &accel, &id):
+    props = IORegistryEntryCreateCFProperties(displayService)
+    path  = CFDictionaryGetValue(props, "IOAccelerator")  ← PATH STRING
+    if (!path) return 0xe00002bc                           ← kIOReturnNotFound
+    accel = IORegistryEntryFromPath(masterPort, path)
+    if (!IOObjectConformsTo(accel, "IOAccelerator")) return 0xe00002bc
+    id = props["IOAccelIndex"]
+    return success
+```
+- **CHECK 1 — the key name:** `IOAccelerator`, NOT `IOAccelTypes`
+  (both strings in IOKit's __cstring; the function reads
+  "IOAccelerator" at the CFDictionaryGetValue call). **The header
+  misled for the FOURTH time** — the GA trio published
+  `IOAccelTypes` (correct by the header, wrong by the caller).
+  The property `IOAccelFindAccelerator` reads is a PATH STRING
+  whose value is the IORegistry path to the accelerator service.
+- **CHECK 2 — the conformance:** `VMQemuVGAAccelerator` inherits
+  from `IOAccelerator` (VMQemuVGAAccelerator.h:75) — the
+  `IOObjectConformsTo` check PASSES. Not the problem.
+- **CHECK 3 — the property on the display node: ABSENT.**
+  `ioreg` shows NO `IOAccelerator` path string on the
+  framebuffer or any display-side node — only `IOAccelTypes`,
+  `IOAccelIndex`, `IOGLBundleName`, and the booleans. **The
+  property IOAccelFindAccelerator reads does not exist.**
+- **CHECK 4 — the caller difference (your point about CGS
+  passing a different node):** the CGL path calls
+  `CGSServiceForDisplayNumber` then passes the result to
+  `IOAccelFindAccelerator`. The milestone-1 probe called it by
+  passing the framebuffer directly. **Both would read the same
+  property from the same node — the property is absent for
+  both.** The probe SUCCEEDED in milestone 1 because it called
+  `IOAccelFindAccelerator` directly with the framebuffer — and
+  the function read the FB's properties, found no
+  `IOAccelerator` path, returned the error — and the probe
+  treated the error as a negative control, not a success.
+  (The milestone-1 success was in `IOCreatePlugInInterfaceForService`
+  — a different function that searches by class, not by path.)
+- **THE FIX:** publish `IOAccelerator = "<path-to-accelerator>"`
+  on the framebuffer — a string whose value is the IORegistry
+  path to VMQemuVGAAccelerator. The path format is what
+  `IORegistryEntryFromPath` accepts:
+  `IOService:/AppleACPIPlatformExpert/...` (findable from
+  ioreg's output). This is a one-property kext change, gated
+  alongside the rest.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
