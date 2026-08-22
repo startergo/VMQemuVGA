@@ -2149,6 +2149,43 @@ no change; 11:59–12:04):**
   on the display-matching path in the three binaries; that code
   names the field it checks. /tmp/ogl.t (26582 lines) and
   /tmp/gfx.t and /tmp/gle.t are all on disk.
+
+**THE $0x2716 SITE READ — THE MECHANISM DECODED (no boot; pure
+disasm in /tmp/ogl.t):**
+- All 0x2716 stores are in the **OpenGL framework** binary
+  (none in libGFXShared or GLEngine). Four sites in the 0x9660
+  display-matching helper.
+- **The decisive site (0x9dcd):**
+```
+if (flag_0x84 & 0x4) {
+    r12d = 0;                           // SKIP the mask computation
+} else {
+    r12d = popcount(display_mask);       // 0x7202 = bit-counter
+}
+if (flag_0x84 & 0x2) {                  // "accelerated" attribute
+    if (r12d == 1) continue;             // exactly ONE matching display → OK
+    else → glcRecordError(0x2716)       // ZERO or MULTIPLE → kCGLBadDisplay
+}
+```
+- **The error fires when the accelerated attribute is requested
+  AND the display-mask popcount ≠ 1.** With our single display
+  (mask 0x1, popcount=1), the check SHOULD pass — UNLESS the
+  display-mask function returns 0 (popcount=0) or a multi-bit
+  mask.
+- **The display-mask function (0x7757)** takes the requested
+  mask (from attribute parsing) and a path selector (bit 5 of
+  the flags). It routes through a **global gate** — a struct
+  pointer at 0x10e90 with bit `0x40` at offset `0x20`:
+  - Gate SET → FULL path: `CGSGetDisplayList` (all displays) +
+    OR of all `CGSGetDisplayOpenGLDisplayMask` results.
+  - Gate CLEAR → RESTRICTED path: `CGSGetOnlineDisplayList` +
+    per-display mask + a BIT-REMAPPING loop, which **can return
+    0** if `requested_mask & global_mask == 0`.
+- **The REMAINING QUESTION (the next read):** what sets the
+  global at 0x10e90 and its 0x20/0x40 bit — almost certainly
+  the first-registered GLD's shared state or capabilities. If
+  OUR GLD's registration doesn't set this bit, the restricted
+  path runs and can zero the mask for accelerated requests.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
