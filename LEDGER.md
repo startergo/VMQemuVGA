@@ -3566,6 +3566,37 @@ run-exit 0; "invalid pixel format" CG stderr = CG's rendering of 10002
 
 ---
 
+## RUNG 28 PRE-REGISTERED — gliCreateContext's pf validation:
+which field produces 10002 (committed before the read)
+
+**Known going in:** gliCreateContext (GLEngine 0x1526+) reads
+the pf object's FIRST BYTES as counts (`movzbl (%r13),%eax`,
+`movzbl 0x1(%r13),%edx`) and computes offsets `count×0x18` and
+`count×0x17f8` — the CGL pf's internal header/arrays. The
+transformer (0x37ff) built that object as [attrs][node copies];
+our node's copied bytes feed these computations.
+
+**Predictions (registered before reading):**
+- (i) A COUNT/INDEX field derived from our node bytes (most
+  likely the node's +8 id, +0xc flags, or +0x10 modes — read as
+  a byte-sized index) lands OUT OF RANGE of the per-count arrays
+  (0x17f8-element or ×24 tables) → 0x2712 (10002). The fix:
+  the offending node field takes the float's value or a
+  header-shaped value, per the read.
+- (ii) A STRUCTURAL check fails first — e.g. the pf must carry
+  ≥1 renderer id the engine recognizes (the worker's driver-id
+  array cross-check), and our id (0x20500) is not in the
+  expected set → the fix is id-side.
+- (iii) The validation passes and the failure is deeper (the
+  stub log would then show downstream entries on a retry —
+  re-run mode k after any fix to confirm).
+**Instrument:** /tmp/gle.t 0x1526–0x1700, the 0x2712 stores and
+their guarding conditions. **Fix discipline:** float's values or
+the read's own constants; single variable; verify by mode k
+(clean exit, error changes or context created).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
