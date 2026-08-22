@@ -106,12 +106,13 @@ void gldTerminateLibrary(void)
 }
 
 /* ==== generated from VMsvga2 EntryPointNames.c + header return types ==== */
-/* RUNG 5 PHASE 2 + RUNG 6 GUARD: values OBSERVED by disassembling the
- * working GLD (GLRendererFloat gldGetVersion @0x18d05):
- * (3, 1, &_mh_bundle_header, 0x400). RUNG 6: GUARDED — true only when
- * g_vm_ok (successful glvmPreInit forward), mirroring the working GLD's
- * gld_io_data guard: version is downstream of VM init. Unbacked
- * version claims are the over-claiming shape. */
+/* RUNG 5→10 EVOLUTION: values per the working GLD's disassembly, with
+ * rung 9's correction: the loader (libGFXShared @0x157a-0x15b5)
+ * validates (RET!=0, a0==3, a1==1, a2==0, a3 bits only in 0xFF00).
+ * The rung-5 "&_mh_bundle_header" was an otool symbol-displacement
+ * MISREAD — the real GLD writes 0; a2 nonzero rejected the plugin on
+ * every prior rung. RUNG 6 guard kept: true only after the
+ * Initialize mask store (the working GLD's own honesty structure). */
 #include <mach-o/loader.h>
 extern struct mach_header_64 _mh_bundle_header;
 long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
@@ -120,10 +121,10 @@ long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
         ep_log("CALL gldGetVersion -> FALSE (guarded: VM init not ok)");
         return 0;
     }
-    ep_log("CALL gldGetVersion -> TRUE (3,1,&hdr,0x400; VM ok)");
+    ep_log("CALL gldGetVersion -> TRUE (3,1,NULL,0x400; VM ok; rung 10)");
     if (a0) *a0 = 3;
     if (a1) *a1 = 1;
-    if (a2) *a2 = (int)(unsigned long)&_mh_bundle_header;
+    if (a2) *a2 = 0;
     if (a3) *a3 = 0x400;
     return 1;
 }

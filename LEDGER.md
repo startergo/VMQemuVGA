@@ -1362,6 +1362,43 @@ ANY REJECT → 0x1669 gfxPluginDisconnect → Terminate + free
   registration, and the failure mode after the loop shifts to
   whatever the loader consults next.
 
+**RUNG 10 RESULT — THE CONSULT (21:53–22:07; baseline 22:07:42
+gate=0):**
+- Boot: **WindowServer PASSED validation — Load → GetVersion(TRUE,
+  a2=0) and NO TERMINATE.** The plugin REGISTERED in WindowServer's
+  process (stub log: constructor, Initialize, Version-true — and no
+  disconnect). Desktop normal throughout; WindowServer stable.
+- Census probes (both masks — main-display 0x1 and 0xFFFFFFFF):
+  **CGLQueryRendererInfo now CALLS our gldGetRendererInfo** — the
+  first consult of the arc. Our honest -1 refusal propagates: the
+  query returns **-1, nrend=0**.
+- **nrend=0 IS THE RISK DATUM, not a side note:** it was 1 before —
+  the registry-named GLD REPLACES the float renderer in the consult
+  rather than joining a list. An honest refusal now costs the system
+  its only working renderer. Every previous rung's refusal was safe
+  because something else still answered; **that protection is gone.**
+  The refusal-registered state is NOT a safe steady state.
+- Score: outcome 1 exactly as pre-registered (consult fires, refusal
+  honest, census error = honest). The rung-6b question is closed:
+  enumeration DOES ask the GLD; the silence was the rejection path
+  all the way down.
+- **RUNG 11 (7b activated) PRE-REGISTERED — the honest contract, with
+  the risk re-registered:** gldGetRendererInfo implements the rung-5
+  decoded record with our identity (own bundle header at +0, own
+  mask, OUR renderer-id space in a3's 0xFF00 field, software-class
+  capability words, kCGLBadMatch 0x2716 for masks outside the claim —
+  the MASK PROTOCOL is now load-bearing). FIRST SUB-QUESTION: whether
+  the float-renderer replacement is the MASK's doing — our Initialize
+  mask is 0x1 (the loader's), the float renderer presumably claims
+  the same; if a narrower/different claim in the RECORD leaves the
+  float renderer enumerating alongside, coexistence is achievable and
+  the single-renderer risk drops. **OUTCOME 3 (DESTABILIZED) IS
+  RE-REGISTERED EXPLICITLY with elevated standing: this is the first
+  rung where being wrong reaches WindowServer's rendering path — the
+  desktop's software rendering is downstream of whatever the stub
+  claims. Gate + live-swap revert to hand; desktop watch mandatory;
+  slclean recovery standing.**
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
