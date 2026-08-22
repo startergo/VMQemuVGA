@@ -1862,6 +1862,54 @@ boot) — THE ANSWER IS A THREE-LAYER CORRECTION:**
   rdx=0) and its return-value handling — whether it checks the
   GLD's return before dereferencing *out. /tmp/ogl.t has the
   disassembly (26582 lines; 0x9660-0xa65c is the function's span).
+
+**THE PF CALLER FOUND AND READ — GLEngine.bundle, not the OpenGL
+framework (GLEngine /tmp/gle.t, gliChoosePixelFormat @0x13cf;
+the 0x9660 helper in the framework is a SCORING function, not the
+caller):**
+- **The call chain is THREE layers deep:** App → CGLChoosePixelFormat
+  (OpenGL framework 0x14c5) → … → **GLEngine.bundle's
+  gliChoosePixelFormat (@0x13cf)** → plugin->slot[2](*0x130) = our
+  gldChoosePixelFormat. The framework's 0x9660 helper does format
+  SCORING (its *%r15 calls are local comparator dispatch, not
+  plugin-table calls). The actual GLD invocation happens in
+  GLEngine — between the framework and the GLD.
+- **The true contract, decoded:**
+```
+gliChoosePixelFormat(pix_out /*rdi*/, attrs /*rsi — the CALLER'S RAW
+                     CGL attribute array, unmodified*/) {
+    *pix_out = NULL;
+    for (plugin = gfxGetPlugins(); plugin; plugin = plugin->next) {
+        struct slot_obj* local;              // rbp-0x38, NEVER INITIALIZED
+        rc = plugin->slot[2](&local, attrs, /*rdx never set — garbage/0*/);
+        if (local != NULL) {                 // IS checked (safe for NULL)
+            walk slot list; |0x20000 to id@+8; link to *pix_out chain
+        }
+        if (rc != 0) break;                  // nonzero = stop (checked)
+    }
+    if (rc != 0 && *pix_out) gliDestroyPixelFormat(*pix_out);
+}
+```
+- **THE CRASH MECHANISM (rung 12/13's SIGBUS, finally explained):**
+  rsi IS the caller's raw attribute array (no rewriting, no mask —
+  the rung-12 {4,0,0,0} was real CGL attribute data on the stack).
+  rdx is NEVER SET — whatever garbage was in rdx arrives as the
+  third argument (observed 0). The caller DOES check the return
+  (nonzero breaks the loop) and DOES check *out (NULL skips
+  linking). **The bug: `local` at rbp-0x38 is NEVER INITIALIZED —
+  our refusal (0x2716 or 0) left whatever garbage was on the stack
+  in that slot; the caller then dereferenced it at 0x142d.**
+- **THE FIX (one line): our pf entry must ALWAYS write NULL to *out
+  on refusal** — `if (out) *out = NULL;` before any return path.
+  With that, a nonzero refusal + NULL out = clean break: the caller
+  checks rc≠0, skips linking, exits, returns error to CGL. No
+  crash.
+- **The attribute semantics question reopens for THIS entry:** rsi
+  IS the caller's real CGL attribute array (the 87-case float
+  parser contract IS the right model here). The honest pf entry for
+  this caller: parse the actual attributes, build a real format
+  object for software-honest sets, refuse with NULL-out for the
+  rest.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
