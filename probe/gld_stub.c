@@ -70,12 +70,6 @@ static void gld_stub_loaded(void)
 static int g_vm_ok = 0;    /* rung 6b: mask-store guard — the working GLD's actual structure */
 static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
 
-/* RUNG 18a: the pf object's +0 target — a WRITABLE driver object.
- * The engine decorates +8 with 0x20000 (GLEngine+0x1444); the
- * bundle header is read-only and faults. See the comment at the
- * build site for the crash evidence. */
-static unsigned long g_driver_obj[8];
-
 int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
                          void* arg3, void* arg4, int arg5)
 {
@@ -284,17 +278,23 @@ build:
         ep_log("  gldChoosePixelFormat -> 0x2716 (alloc fail; out NULL)");
         return GLD_BAD_MATCH;
     }
-    /* RUNG 18a crash fix: obj+0 must point at a WRITABLE driver
-     * object — the engine ORs 0x20000 into its +8 (GLEngine+0x1444,
-     * `orl $0x20000, 0x8(%rax)`, the rid-decoration site: census rid
-     * = id | 0x20000). The rung-14 value &_mh_bundle_header is
-     * read-only __TEXT — KERN_PROTECTION_FAILURE at stub_base+8
-     * (2026-08-22, gliChoosePixelFormat+117). The float's +0 was
-     * NEVER its bundle header; that was the otool symbol-displacement
-     * misread (rung-9 class) planted at a second site. */
-    g_driver_obj[1] = 0x1AF40100;   /* +8 our renderer id; engine ORs 0x20000 -> 0x1AF60100 */
-    *(unsigned long*)&obj[0] = (unsigned long)&g_driver_obj;
-    obj[2] = 0x1AF40100;   /* +8  our renderer id */
+    /* RUNG 19 — the chain contract, read from gliChoosePixelFormat
+     * (GLEngine 0x13cf-0x149b): a pf object's +0 IS THE CHAIN LINK
+     * to the next pf object (multi-slot returns are a linked list;
+     * the engine appends our object at the tail via [tail+0]=obj,
+     * decorates EACH node's own +8 with 0x20000 at 0x1444, and
+     * follows +0 until NULL). +8 is the renderer id ON the object.
+     * Single-slot return: +0 MUST be NULL.
+     *   - +0 = &_mh_bundle_header (rung 14): the walk decorated
+     *     header+8 — read-only __TEXT, SIGBUS at stub_base+8.
+     *   - +0 = &g_driver_obj (rung 18a): the walk APPENDED the fake
+     *     driver object as a second "pixel format" — chain
+     *     poisoning; npix=0 by validation failure on the bogus
+     *     node, not by filtering. Both were misreads of rax's
+     *     provenance: 0x8(%rax) is the OBJECT's own +8, not a
+     *     pointed-to driver's. */
+    *(unsigned long*)&obj[0] = 0;    /* chain terminator: single slot */
+    obj[2] = 0x1AF40100;   /* +8  our renderer id (engine ORs 0x20000 -> 0x1AF60100) */
     obj[3] = flags;        /* +0xc */
     obj[5] = 0x8000;       /* +0x14 constant */
     obj[7] = 0x1;          /* +0x1c */
@@ -302,11 +302,23 @@ build:
     obj[13] = RUNG11_CLAIM; /* +0x34 our display claim */
     *out = obj;
     ep_log(complete
-           ? "  gldChoosePixelFormat -> 0 (object BUILT, walk complete; id=0x1AF40100)"
-           : "  gldChoosePixelFormat -> 0 (object BUILT after truncation; id=0x1AF40100)");
+           ? "  gldChoosePixelFormat -> 0 (object BUILT, +0=NULL chain end, walk complete; id=0x1AF40100)"
+           : "  gldChoosePixelFormat -> 0 (object BUILT, +0=NULL chain end, after truncation; id=0x1AF40100)");
     return 0;
 }
-EPR(gldDestroyPixelFormat)
+/* RUNG 19 — the ownership contract's other half. gliDestroyPixelFormat
+ * (GLEngine 0x149c) walks the pf chain (+0 links) and calls THIS entry
+ * per node via plugin slot 0x138/8=39, expecting 0 on success
+ * (0x1505: testl %eax; je -> success path). The refusal macro leaked
+ * every object AND failed teardown. The chain objects are ours
+ * (calloc'd in gldChoosePixelFormat): free them here, answer 0. */
+long gldDestroyPixelFormat(void* obj, void* a1, void* a2, void* a3, void* a4, void* a5)
+{
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    ep_log("CALL gldDestroyPixelFormat -> 0 (freed; rung 19 ownership)");
+    free(obj);
+    return 0;
+}
 EPR(gldCreateShared)
 EPR(gldDestroyShared)
 EPR(gldCreateContext)

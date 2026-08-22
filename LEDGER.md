@@ -2849,6 +2849,57 @@ outcomes:
   first (rm -rf /S/L/E/VMVirtIOGLEngine.bundle) so no unwatched
   boot inherits the exposure.
 
+**RUNG 19 RESULT (2026-08-22, same session) — THE CHAIN CONTRACT
+(read at GLEngine 0x13cf–0x149b): pf objects are a LINKED LIST;
+two real bugs fixed (the crash's true mechanism, and chain
+poisoning); npix=0 persists; the counter is RELOCATED to the
+OpenGL.framework worker at 0x9660:**
+- **The read (predictions (i)–(iv) registered above; the truth was
+  a fifth shape):** gliChoosePixelFormat iterates PLUGINS
+  (gfxGetPlugins list), calls the pf entry per plugin via
+  [plugin+0x130] (slot 38), APPENDS each returned object at the
+  current tail via `[tail+0] = obj`, then walks the chain
+  decorating EACH node's OWN +8 with 0x20000 (`orl $0x20000,
+  0x8(%rax)` at 0x1444 — the id field ON the object), following
+  +0 until NULL. **obj+0 IS THE CHAIN LINK; obj+8 IS the renderer
+  id on the object.** Multi-slot returns are a linked list built
+  through the objects themselves. The engine writes through the
+  objects it accepts (contract confirmed at the append, the
+  decoration, and gliDestroyPixelFormat's per-node plugin
+  destroy call at [plugin+0x138] = slot 39, expecting 0).
+- **Correction of the rung-18a reading:** 0x8(%rax) is the
+  OBJECT's own +8 — not "a driver object pointed to by obj+0".
+  The rung-18a g_driver_obj was a misread of rax's provenance:
+  it did not point at a driver; it APPENDED a fake object into
+  the chain. Both prior failures re-explained by one mechanism:
+  +0=&_mh_bundle_header made the walk decorate the read-only
+  header as a "next object" (SIGBUS at stub_base+8); +0=
+  &g_driver_obj made the walk treat the fake driver as a second
+  pixel format (npix=0 by validation failure on a bogus node).
+- **Implemented:** obj+0 = NULL (single-slot chain terminator;
+  g_driver_obj deleted); gldDestroyPixelFormat now frees the
+  object and returns 0 (gliDestroyPixelFormat at 0x149c walks
+  the same chain and calls the destroy entry per node, expecting
+  0 — the refusal leaked every object and failed teardown).
+- **Verified (eight sets, fresh processes):** all exit 0, error
+  0, objects built with +0=NULL, destroy not faulted — **npix
+  STILL 0 for every set.** The registered prediction (named
+  sets' npix ≥ 1) FAILED: the chain contract was necessary (two
+  real bugs) but not sufficient. The counting/validation is
+  ABOVE GLEngine.
+- **RELOCATED (from the CGLChoosePixelFormat body, OpenGL.framework
+  x86_64 0x14c5–0x15ac):** the worker is the helper at **0x9660**
+  — called with ecx=1 (first attempt), and RETRIED with ecx=0
+  when the first returns 0 but *npix==0 AND a fallback flag
+  (byte [global+0x21] & 0x8) is set — the accelerated-first/
+  software-retry structure. The crash stack's
+  "glcGetIOAccelService+821" was nearest-symbol attribution for
+  this same region. **The npix counter and the object validator
+  are in 0x9660's post-consult code — that is rung 20's read.**
+- Rung 19's SECOND HALF (the watched boot) remains PENDING: the
+  stub in /S/L/E is now chain-correct; no reboot has occurred
+  since it landed; the exposure rules above still govern.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
