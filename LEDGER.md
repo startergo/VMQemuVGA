@@ -1794,6 +1794,41 @@ above SUPERSEDED (three corrections cascade):**
   its nonzero refusal should again take a clean path.
 - Procedure: build (exit read directly), bundle + gate + reboot,
   desktop watch, probe_r7 p + c + d, score, restore baseline.
+
+**RUNG 13 RESULT — a SECOND CALL SITE with a different shape;
+nonzero refusal did NOT prevent the crash (08:37–08:52; baseline
+08:52:27 gate=0):**
+- Boot: WindowServer registered (pid 95, Version-true, no
+  Terminate); desktop normal; probe-contained crash again;
+  WindowServer never asked.
+- The entry's first true args, logged:
+  `gldChoosePixelFormat(out=0x7fff5fbff898, mask=0x5fbffa00, four=0)`
+  — **rsi is a STACK POINTER (the caller's attribute buffer) and
+  rdx=0 — NOT the _gfxCreateSharedState shape (edx=4, esi=device
+  mask field).** A SECOND pf call site exists, and IT is the one
+  that fires for the accelerated set. The rung-12 raw16 `{4,0,0,0}`
+  was REAL: the caller's stack attribute array, first element 4.
+- Our 0x2716 refusal returned; **the caller crashed anyway (SIGBUS,
+  exit 138)** — this call site dereferences *out REGARDLESS of the
+  return value, or checks it differently. The teardown-safety
+  proven at _gfxCreateSharedState does NOT apply here.
+- Predictions: (a) FALSIFIED (nonzero did not save us); (b) the
+  mask-decision never applied (wrong call-site contract); (c) HELD
+  (desktop stable); (d) N/A.
+- **The mask reading of rung 12's cascade-2 stands CORRECTED
+  AGAIN:** arg2 is a stack attribute pointer at THIS site — the
+  87-case parser interpretation is back in play for THIS caller
+  (the float's parser may serve exactly this site after all; the
+  device-mask reading applied only to the OTHER site).
+- **Decisive next read (named):** identify the second call site in
+  gfx.t — the one passing a stack buffer and rdx=0 — and read its
+  return handling: does it check eax at all before using *out? The
+  honest entry for THIS caller may have to ALWAYS write a valid
+  object (there may be no safe refusal).
+- Network note: post-boot mDNS loss again (~15 min, desktop normal,
+  third episode); the IP route (ARP-cache 192.168.64.40 + the
+  config's key + legacy algorithms) unblocked everything — the
+  ssh-via-IP procedure is now the standing workaround.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
