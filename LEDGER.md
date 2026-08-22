@@ -2762,6 +2762,95 @@ consults were reaching the GLD and being refused by our own bugs.
 
 ---
 
+## RUNG 19 PRE-REGISTERED — the slot-filter read, the writability
+contract, the third-site grep, and the boot-exposure decision
+(committed before the read)
+
+**THE WRITABILITY CONTRACT (contract fact, reach beyond this
+entry):** the engine WRITES THROUGH objects it accepts —
+`orl $0x20000, 0x8(%rax)` at GLEngine+0x1444 operates on OUR
+memory; the engine does not copy the object. Therefore any object
+handed to the engine must be (a) WRITABLE (never static const,
+never a load-command page, never read-only __TEXT) and (b)
+PERSISTENT across the call (never caller-scratch, never freed at
+return — ownership transfers until the matching destroy entry).
+This constrains every future creator entry (gldCreateShared,
+gldCreateContext, texture/buffer/framebuffer creators): return
+heap objects, keep them owned, destroy them in the matching
+gldDestroy*.
+
+**THE THIRD-SITE GREP (done before this registration):** exactly
+one live use of `&_mh_bundle_header` remains — the
+gldGetRendererInfo record's +0 anchor (gld_stub.c:166), set in
+rung 11 and never touched since. The crash evidence exonerates it
+for the census path: if the census's rid composition
+(record+8 | 0x20000) wrote through record+0's target the way the
+pf path writes through obj+0, every census since rung 11 would
+have SIGBUS'd at stub_base+8. None did — the census does not
+write through record+0. FLAGGED as a standing hazard with the fix
+deferred: changing record+0 would alter the working census path
+(one variable at a time), and no write-through has been observed
+or read there. The dead second extern redeclaration at the pf
+entry's include block is noted and harmless.
+
+**THE SLOT-FILTER READ — predictions registered BEFORE reading
+(GLEngine 0x1440–0x1550; the OR walk runs 0x1440–0x1460; the
+filter follows; the instrument is the disassembly /tmp/gle.t):
+Current state to explain: all eight sets → error 0, npix=0,
+object built and decorated, no crash — accepted but not counted.**
+- (i) **Request-vs-object matching:** the filter matches the
+  FORWARDED request attrs (5=DoubleBuffer, 84=DisplayMask+value)
+  against object fields — most likely the flags word +0xc (our
+  base 0x4C8 was never read from the float) or +0x34 (claim/mask)
+  vs the request's mask; mismatch drops the slot. Fix within this
+  rung: set the named field. HONESTY BOUNDARY registered now: bits
+  describing buffer modes/shapes are settable (software-capable
+  properties); bits claiming HARDWARE acceleration are set only
+  when functional 3D is real — the stub stays software-honest.
+- (ii) **Deeper driver-object walk:** the filter dereferences
+  g_driver_obj fields beyond +8 (e.g. a pointer at +0x10 to a
+  table); our zeroed quadwords fail. Fix: populate the named
+  offset.
+- (iii) **A second entry gates the count:** slots are counted only
+  after another entry (describe/CreateShared-class) that the stub
+  refuses; the soft-fail reads as npix=0. Observable in the stub
+  log: the entry's refusal line appears; fix = answer that entry.
+- (iv) **npix is sourced from a mask-filtered list, not the slot
+  list:** the walk's slots and the counted slots are different
+  collections (the -0x38(%rbp) slot vs a display-bound list); a
+  request with no explicit mask counts nothing. Fix is
+  REQUEST-side (the probe adds an explicit mask attr), not an
+  object field.
+- Each outcome is distinguishable by what the read names; the
+  implementation follows the named mechanism, verified by rerunning
+  the eight-set probe (prediction: the named sets' npix becomes
+  ≥1; sets outside the fixed scope keep npix=0).
+
+**THE BOOT-EXPOSURE DECISION (deliberate):** the object-building
+stub is live in /S/L/E with the gate ON — every reboot from now
+is a WindowServer experiment with a stub that now SUCCEEDS rather
+than refusing. THE NEXT REBOOT IS RUNG 19's SECOND HALF, a
+watched boot. Instruments: the desktop watch; the kernel log
+(WindowServer GLD-load lines); the stub log (boot-time entry
+sequence — which entries the real consumer calls, and the refusal
+convention under load for the first time). Pre-registered
+outcomes:
+- (i) desktop normal, WindowServer decorates and keeps objects →
+  the convention survives real load;
+- (ii) desktop fails or boot hangs → REVERT: gate OFF (remove
+  vm-cap3d from config.plist — without IOGLBundleName,
+  WindowServer never loads the GLD), or bundle removal from
+  slclean if unbootable;
+- (iii) desktop normal with stub-log refusals → maps the
+  boot-time entry sequence (which entries the real consumer
+  calls first).
+- Until that deliberate boot: no non-watched shutdowns; if the
+  session must end without the watched boot, REMOVE THE BUNDLE
+  first (rm -rf /S/L/E/VMVirtIOGLEngine.bundle) so no unwatched
+  boot inherits the exposure.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
