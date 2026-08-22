@@ -2039,6 +2039,33 @@ TESTED, negative (rung 14 ran both live); (2) mask — NOW TESTED,
 clean; (3) EDID — the remaining candidate. The "invalid display"
 CGS error's cause is narrowed to EDID or something else entirely
 in CGS's accelerated-display qualification.
+
+**EDID CHECK RESULT — ABSENT, AND THE CAUSE IS FOUND (no boot):**
+- `ioreg` shows NO IODisplayEDID property — the display's EDID
+  data is entirely missing from the registry (only ConnectFlags
+  and PrefsKey exist under the display nodes).
+- **The mechanism:** our kext CLAIMS HDDC support
+  (`kConnectionSupportsHLDDCSense` returns Success at
+  VMVirtIOFramebuffer.cpp:1903) but implements NEITHER
+  `getDDCBlock()` NOR `hasDDCConnect()` — the two methods that
+  actually serve EDID data. The base-class defaults return
+  nothing; IODisplay gets no EDID; the registry reflects its
+  absence. The claim is unbacked — the same over-claiming shape
+  as `crsr=1` and AccelCaps-before-surface-path.
+- **The worked example implements both** (VMsvga2.h:149-150,
+  VMsvga2.cpp:722-744): `getDDCBlock()` serves from an m_edid
+  buffer; `hasDDCConnect()` gates the claim.
+- **Hypothesis (marked):** CGS's accelerated-display qualification
+  reads EDID; its absence produces "invalid display" for
+  accelerated format requests. VMsvga2 implemented EDID for a
+  reason — the reason may extend beyond Displays preferences into
+  CGS's display-acceleration table. **Settle-it test:** implement
+  getDDCBlock() returning a minimal valid EDID (the worked
+  example's, or a standard 128-byte base block with the correct
+  timing for the current mode), boot, and check whether
+  (a) IODisplayEDID appears in ioreg; (b) the "invalid display"
+  CGS errors vanish; (c) accelerated pf requests pass CGS and
+  reach our GLD.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
