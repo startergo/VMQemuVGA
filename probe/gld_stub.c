@@ -35,9 +35,26 @@ static void gld_stub_loaded(void)
     ep_log("STUB LOADED (constructor, rung 3)");
 }
 
-#define EPR(n) long n(void) { ep_log("CALL " #n " -> -1 (GLDReturn refusal)"); return -1; }
-#define EPB(n) long n(void) { ep_log("CALL " #n " -> false"); return 0; }
-#define EPV(n) void n(void) { ep_log("CALL " #n " (void)"); }
+/* OUT-ZERO RULE (rung 13 lesson, applied across ALL entries in one
+ * pass): every entry with an out-parameter writes NULL to it before
+ * ANY return path. The GLEngine caller's stack slot is never
+ * initialized — a refusal that doesn't write *out leaves garbage
+ * that the caller dereferences (the rung-12/13 SIGBUS mechanism).
+ * The generic form: first arg is void* (the commonest out shape);
+ * we zero it ONLY if non-NULL and ONLY for entries in the
+ * out-parameter families (creators, queries, format entries).
+ * Risk: if an entry's first arg is an integer handle rather than a
+ * pointer, writing through it faults — accepted for a gated stub;
+ * each entry gets a typed signature when its call site is read. */
+#define EPR(n) long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    if (a0) *(void**)a0 = (void*)0; \
+    ep_log("CALL " #n " -> -1 (refusal; out zeroed)"); return -1; }
+#define EPB(n) long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    if (a0) *(void**)a0 = (void*)0; \
+    ep_log("CALL " #n " -> false (out zeroed)"); return 0; }
+#define EPV(n) void n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    if (a0) *(void**)a0 = (void*)0; \
+    ep_log("CALL " #n " (void; out zeroed)"); }
 
 /* RUNG 6 (pre-registered 2026-08-21 late): the VM lifecycle pair goes
  * REAL — first ACTING rung. Disassembly of the working GLD: real
@@ -184,39 +201,82 @@ long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
     return 1;
 }
 
-/* RUNG 13 (pre-registered): the honest pf entry with the MASK contract,
- * read from the only call site that calls us (_gfxCreateSharedState
- * 0x1855): (slot_out, display_mask, const 4). Arg2 is a MASK — never
- * dereferenced (the rung-12 raw16 read address 4 = mask 1<<2; the
- * "descriptor" was low-memory garbage). The 87-case parser is RETIRED
- * for our entry — it serves the float's CGL-software-path caller.
- * Nonzero = the caller's clean teardown; success promises a real slot. */
-long gldChoosePixelFormat(void** out, int display_mask, int four)
+/* RUNG 14 (pre-registered): the honest pf entry — rsi IS the caller's
+ * raw CGL attribute array (GLEngine gliChoosePixelFormat @0x13cf, the
+ * only call site; verified: movq %r14,%rsi — no rewriting, no mask).
+ * rdx is NEVER SET by the caller (garbage — do not read it). The 87-
+ * case float parser from rung 12 IS the right contract model here
+ * (correct work aimed at the wrong site, now correctly aimed). The
+ * out-zero rule applies: *out = NULL before ANY return path. */
+long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
 {
+    if (out) *out = (void*)0;               /* THE RULE — always, first */
     FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
     if (f) {
         time_t t = time(NULL);
         char ts[32];
         strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
-        fprintf(f, "[%s pid=%d] CALL gldChoosePixelFormat(out=%p, mask=0x%x, four=%d)\n",
-                ts, (int)getpid(), (void*)out, display_mask, four);
+        fprintf(f, "[%s pid=%d] CALL gldChoosePixelFormat attrs=[", ts, (int)getpid());
+        for (int i = 0; i < 12 && attrs[i]; i++)
+            fprintf(f, "%s0x%x", i ? " " : "", attrs[i]);
+        fprintf(f, "] (out zeroed)\n");
         fclose(f);
     }
-    if (!(RUNG11_CLAIM & display_mask)) {
-        ep_log("  gldChoosePixelFormat -> 0x2716 (mask outside claim 0x1; clean teardown)");
+    if (!attrs || !attrs[0]) {
+        ep_log("  gldChoosePixelFormat -> 0x2716 (no attrs)");
         return GLD_BAD_MATCH;
     }
+    /* The 87-case float parser — restored (rung-12 phase-A map,
+     * now aimed at the correct caller) */
+    unsigned flags = 0x4C8;
+    int gate = 0, si = 0;
+    int* p = attrs;
+    int walked = 0;
+    while (*p) {
+        int code = *p;
+        walked += 4;
+        switch (code) {
+        case 0:  gate = 1; break;
+        case 1:  break;                       /* AllRenderers */
+        case 2: case 50: case 53:
+            ep_log("  gldChoosePixelFormat -> 0 (shortcut, no object; out NULL)");
+            return 0;                        /* float's shortcut: *out stays NULL */
+        case 3: case 4: case 7: case 8: case 9: case 10:
+        case 51: case 52: case 57:
+            p++; walked += 4; break;          /* value attrs: consumed */
+        case 47: case 48: case 72: case 54: break;  /* no-op pass */
+        case 49: flags |= 4; si = 1; break;
+        case 76: flags |= 1; break;           /* BackingStore */
+        case 86: flags |= 0x2000; break;
+        case 80: p++; walked += 4; break;     /* Window: consumes mask value */
+        default:
+            goto build;                      /* TRUNCATE — the 63-code default */
+        }
+        p++;
+        if (walked > 0xc3) {
+            ep_log("  gldChoosePixelFormat -> 0x2710 (attr overflow; out NULL)");
+            return 0x2710;
+        }
+    }
+build:
+    if (!gate) {
+        ep_log("  gldChoosePixelFormat -> 0x2716 (no attr-0 gate; out NULL)");
+        return GLD_BAD_MATCH;                /* changed from rung-12's 0: nonzero + NULL */
+    }
     unsigned* obj = (unsigned*)calloc(1, 0x38);
-    if (!obj) return GLD_BAD_MATCH;
+    if (!obj) {
+        ep_log("  gldChoosePixelFormat -> 0x2716 (alloc fail; out NULL)");
+        return GLD_BAD_MATCH;
+    }
     *(unsigned long*)&obj[0] = (unsigned long)&_mh_bundle_header;
-    obj[2] = 0x1AF40100;        /* +8  our renderer id */
-    obj[3] = 0x4C8;             /* +0xc constant */
-    obj[5] = 0x8000;            /* +0x14 constant */
-    obj[7] = 0x1;               /* +0x1c */
-    obj[8] = 0x1;               /* +0x20 */
-    obj[13] = (unsigned)display_mask & RUNG11_CLAIM;  /* +0x34 the served mask */
+    obj[2] = 0x1AF40100;   /* +8  our renderer id */
+    obj[3] = flags;        /* +0xc */
+    obj[5] = 0x8000;       /* +0x14 constant */
+    obj[7] = 0x1;          /* +0x1c */
+    obj[8] = 0x1;          /* +0x20 */
+    obj[13] = RUNG11_CLAIM; /* +0x34 our display claim */
     *out = obj;
-    ep_log("  gldChoosePixelFormat -> 0 (slot built, id=0x1AF40100, mask served)");
+    ep_log("  gldChoosePixelFormat -> 0 (object built, id=0x1AF40100)");
     return 0;
 }
 EPR(gldDestroyPixelFormat)

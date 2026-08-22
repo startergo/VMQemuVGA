@@ -1910,6 +1910,52 @@ gliChoosePixelFormat(pix_out /*rdi*/, attrs /*rsi — the CALLER'S RAW
   this caller: parse the actual attributes, build a real format
   object for software-honest sets, refuse with NULL-out for the
   rest.
+
+**THE RDX FINDING — the header's third and worst failure (recorded
+separately for reach):** the caller NEVER SETS rdx. Site 1's edx=4
+is a coincidence of that call site's register state, not a
+contractual third argument. Any implementation reading a third
+argument here is reading NOISE. This is worse than an incomplete
+signature — the header describes a parameter that DOES NOT EXIST
+at this site. Three header failures now: Initialize (6 args not
+5), ChoosePixelFormat (2 meaningful args, third is garbage), and
+the 92≠78 count.
+
+**THE OUT-ZERO RULE — applied across ALL entries in one pass (not
+just the pf entry):** every entry's refusal path writes NULL to
+its out-parameter before returning. The EPR/EPB/EPV macros now
+take six void* args and zero the first if non-NULL (the commonest
+out shape). The GLEngine caller's stack slot is never initialized
+— both sides assumed the other owned it. Without this rule, the
+refusal convention that protected the ladder is silently
+incomplete: the next entry exercised would have the same
+uninitialized-slot crash. Risk accepted: if an entry's first arg
+is an integer handle rather than a pointer, writing through it
+faults — mitigated by the gated boot and the per-entry typed
+signatures as call sites are read.
+
+**RUNG 14 PRE-REGISTERED — the honest pf entry with the parser
+restored, out-zero rule live (committed before any boot):**
+- gldChoosePixelFormat: *out = NULL FIRST (the rule); then the
+  87-case float parser (rung-12's correct work, now aimed at the
+  correct caller); shortcuts (2/50/53) return 0 with *out NULL;
+  truncate-default → build path; no-attr-0-gate → 0x2716 + NULL
+  out (changed from rung-12's return-0 — NULL-out makes it safe);
+  object built → 0 with real slot.
+- The 87-case map was correct work aimed at the wrong site for
+  two rungs. It now aims at the site it was decoded for.
+- Predictions (probe_r7 mode p): (a) NO SIGBUS — the
+  uninitialized-slot mechanism is eliminated by *out = NULL;
+  (b) accelerated set → TRUNCATE (attr 73 is default) → parser
+  truncates → object built (software caps) → npix=1 — the
+  honest answer for "give me any format"; (c) offscreen →
+  shortcut (attr 53) → return 0, out NULL → npix=0; (d) the
+  built object's consumption path exercised — the next entries
+  called (CreateShared at minimum, since the caller chains) take
+  the out-zeroed refusal cleanly; (e) destabilized → proven
+  revert.
+- Procedure: build (exit checked), bundle + gate + reboot,
+  desktop watch, probe_r7 p + c + d, score, restore.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
