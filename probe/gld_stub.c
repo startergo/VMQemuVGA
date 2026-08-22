@@ -70,6 +70,12 @@ static void gld_stub_loaded(void)
 static int g_vm_ok = 0;    /* rung 6b: mask-store guard — the working GLD's actual structure */
 static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
 
+/* RUNG 18a: the pf object's +0 target — a WRITABLE driver object.
+ * The engine decorates +8 with 0x20000 (GLEngine+0x1444); the
+ * bundle header is read-only and faults. See the comment at the
+ * build site for the crash evidence. */
+static unsigned long g_driver_obj[8];
+
 int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
                          void* arg3, void* arg4, int arg5)
 {
@@ -210,7 +216,17 @@ long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
  * rdx is NEVER SET by the caller (garbage — do not read it). The 87-
  * case float parser from rung 12 IS the right contract model here
  * (correct work aimed at the wrong site, now correctly aimed). The
- * out-zero rule applies: *out = NULL before ANY return path. */
+ * out-zero rule applies: *out = NULL before ANY return path.
+ *
+ * RUNG 18(a) (pre-registered in LEDGER, commit 8cd4e38): the dead
+ * gate is GONE. The rung-14 transcription put `case 0: gate=1`
+ * inside `while (*p)` where code 0 is unreachable — the parser
+ * refused EVERY list (observed: caller error == stub return,
+ * 0x2716→10006, for all eight probe sets). Per the float's own
+ * default (goto build = TRUNCATE-AND-BUILD) and the observed list
+ * shape (caller attrs + trailer 4 + 0-terminator): the terminator
+ * completes the walk; an unknown attr truncates it; BOTH build.
+ * The object stays software-honest (no accelerated claim). */
 long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
 {
     if (out) *out = (void*)0;               /* THE RULE — always, first */
@@ -232,14 +248,13 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
     /* The 87-case float parser — restored (rung-12 phase-A map,
      * now aimed at the correct caller) */
     unsigned flags = 0x4C8;
-    int gate = 0, si = 0;
+    int complete = 0, si = 0;
     int* p = attrs;
     int walked = 0;
     while (*p) {
         int code = *p;
         walked += 4;
         switch (code) {
-        case 0:  gate = 1; break;
         case 1:  break;                       /* AllRenderers */
         case 2: case 50: case 53:
             ep_log("  gldChoosePixelFormat -> 0 (shortcut, no object; out NULL)");
@@ -253,6 +268,7 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
         case 86: flags |= 0x2000; break;
         case 80: p++; walked += 4; break;     /* Window: consumes mask value */
         default:
+            ep_log("  walk TRUNCATED at unknown attr (build anyway; 18a)");
             goto build;                      /* TRUNCATE — the 63-code default */
         }
         p++;
@@ -261,17 +277,23 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
             return 0x2710;
         }
     }
+    complete = 1;                            /* terminator: walk complete — 18a */
 build:
-    if (!gate) {
-        ep_log("  gldChoosePixelFormat -> 0x2716 (no attr-0 gate; out NULL)");
-        return GLD_BAD_MATCH;                /* changed from rung-12's 0: nonzero + NULL */
-    }
     unsigned* obj = (unsigned*)calloc(1, 0x38);
     if (!obj) {
         ep_log("  gldChoosePixelFormat -> 0x2716 (alloc fail; out NULL)");
         return GLD_BAD_MATCH;
     }
-    *(unsigned long*)&obj[0] = (unsigned long)&_mh_bundle_header;
+    /* RUNG 18a crash fix: obj+0 must point at a WRITABLE driver
+     * object — the engine ORs 0x20000 into its +8 (GLEngine+0x1444,
+     * `orl $0x20000, 0x8(%rax)`, the rid-decoration site: census rid
+     * = id | 0x20000). The rung-14 value &_mh_bundle_header is
+     * read-only __TEXT — KERN_PROTECTION_FAILURE at stub_base+8
+     * (2026-08-22, gliChoosePixelFormat+117). The float's +0 was
+     * NEVER its bundle header; that was the otool symbol-displacement
+     * misread (rung-9 class) planted at a second site. */
+    g_driver_obj[1] = 0x1AF40100;   /* +8 our renderer id; engine ORs 0x20000 -> 0x1AF60100 */
+    *(unsigned long*)&obj[0] = (unsigned long)&g_driver_obj;
     obj[2] = 0x1AF40100;   /* +8  our renderer id */
     obj[3] = flags;        /* +0xc */
     obj[5] = 0x8000;       /* +0x14 constant */
@@ -279,7 +301,9 @@ build:
     obj[8] = 0x1;          /* +0x20 */
     obj[13] = RUNG11_CLAIM; /* +0x34 our display claim */
     *out = obj;
-    ep_log("  gldChoosePixelFormat -> 0 (object built, id=0x1AF40100)");
+    ep_log(complete
+           ? "  gldChoosePixelFormat -> 0 (object BUILT, walk complete; id=0x1AF40100)"
+           : "  gldChoosePixelFormat -> 0 (object BUILT after truncation; id=0x1AF40100)");
     return 0;
 }
 EPR(gldDestroyPixelFormat)

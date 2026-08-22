@@ -2686,6 +2686,80 @@ the stub's return code; the 10006s were the dead-gate parser's own
   real-consumer exposure of the convention `nonzero + *out=NULL`
   under load.
 
+**RUNG 18(a) RESULT (2026-08-22, same session) — the parser builds;
+the crash was obj+0; all eight sets now error-0; npix=0 persists by
+a THIRD mechanism (object accepted, slot not counted):**
+- Implementation per the registration: dead gate removed (unknown
+  attr → truncate-AND-build; terminator → walk complete, build);
+  object software-honest.
+- **FIRST 18a BUILD CRASHED — SIGBUS (exit 138) at
+  gliChoosePixelFormat+117 = GLEngine+0x1444:**
+```
+orl $0x20000, 0x8(%rax)      ; rax = pf-object +0 target
+```
+  The engine WRITES: it ORs 0x20000 into +8 of whatever the
+  object's +0 points at, walking the slot list (loop at
+  0x1440–0x1460). **This is the rid-decoration site** — the census
+  rid `id | 0x20000` (0x1AF40100 → 0x1AF60100), now located
+  mechanistically. Our obj+0 = &_mh_bundle_header (read-only
+  __TEXT) → KERN_PROTECTION_FAILURE at cr2 = stub_base+8
+  (0x1000f6008). The otool symbol-displacement misread planted at
+  a SECOND site (rung-9 falsified it for GetVersion's a2; the
+  float's pf-object +0 was never its bundle header — the engine
+  writes through it, so it CANNOT be).
+- **Fix:** writable static `g_driver_obj[8]`, +8 = 0x1AF40100 (the
+  engine's OR makes it 0x1AF60100 — matching the census rid);
+  obj+0 = &g_driver_obj.
+- **Result (all eight sets, fresh processes):** exit 0, CGL error
+  0, npix=0, object built (walk complete or truncated), NO crash.
+  Every 10006 is GONE — accelerated sets included. The stub log
+  per set: `{73}`→[0x4] built; `{53}`→[0x35 0x4] shortcut (0 +
+  NULL); `{73,5}`/`{5,84,1}`→[0x5 0x4]/[0x5 0x54 1 4] built after
+  truncation; `{75}`/`{1}`/`{1,73}`→[0x4] built.
+- **The registered pair of outcomes did not anticipate the actual
+  third:** the object is ACCEPTED (decorated, no refusal
+  propagated) yet npix=0 — the slot is filtered from the count
+  AFTER the OR walk. The filter reads object fields; candidates:
+  +0xc flags (our base 0x4C8 — the float's base value was never
+  actually read), +0x14 (0x8000), +0x1c/+0x20 (1s), +0x34 claim
+  (0x1). NEXT RUNG (register before reading): the post-walk slot
+  filter at GLEngine ~0x1440–0x1550 — what field(s) decide
+  counted-vs-dropped.
+- Desktop note: the object-building stub is live in /S/L/E;
+  WindowServer started before the swap (bundle absent at its
+  boot), so the boot-time load of this stub remains untested —
+  that exposure lands on the next reboot, and app-level CGL
+  consumers exercise it from now on.
+
+**THE COLLISION RULE (named, 2026-08-22) — a new kind in the
+failure family:** 0x2716 is 10006 decimal — kCGLBadDisplay. The
+stub's refusal code collided EXACTLY with the error being
+diagnosed, and CG rendered it in the system's own words
+("invalid display") — our refusal came back wearing the system's
+voice. Combined with the dead gate (refusing everything), that
+manufactured a wall out of nothing but the echo. THE RULE: choose
+sentinel and refusal codes that CANNOT collide with the error
+space under diagnosis — otherwise the instrument's output becomes
+indistinguishable from the system's answer. The family now has
+three kinds: (a) tools presenting plausible results that were
+never there (uniq -c, ~/Info.plist, otool displacement — twice
+now, rung-9 a2 and rung-18a obj+0, clang|grep -c); (b) our own
+code presenting plausible results (the dead-gate parser); (c) our
+instrument's value indistinguishable from the system's (this
+collision).
+
+**WHAT SURVIVES THE RETRACTION (explicit, so the ledger does not
+over-retract):** four rungs (14–17) bought three real findings and
+one phantom. REAL and still standing: (1) the IOAccelerator key
+decode and the property fix — IOAccelFindAccelerator genuinely
+requires it (verified by direct instrument, rung 2 passes); it was
+never about the accelerated pf sets; (2) the preference-gate
+polarity read; (3) the site-2 uninitialised-*out crash fix (the
+out-zero rule); (4) the 87-case parser contract as the model for
+an honest implementation. RETRACTED: only the inference from
+truncation-refusals to an upstream wall — there was no wall; the
+consults were reaching the GLD and being refused by our own bugs.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
