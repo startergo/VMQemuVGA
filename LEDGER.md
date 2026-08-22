@@ -4228,6 +4228,24 @@ last layer:**
 
 ---
 
+## RUNG 36 PRE-REGISTERED — gleDoSelectiveDispatchCore: the
+real dispatcher's reads (committed before the read)
+
+**Predictions:**
+- (i) The core selects functions from the driver's DISPATCH
+  TABLE (our all-noop block satisfies it structurally) and/or
+  the per-driver engine block — the failure is a field it
+  checks before calling, named by the read.
+- (ii) The core calls a driver function immediately — the first
+  real dispatch, a logged noop.
+- (iii) The core keys on the [[ctx+0x65c0]+0x5a] config state
+  (a caps/config block another entry fills) — the read names
+  which.
+**Exposure:** read-only this rung; implementation follows the
+named mechanism.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
