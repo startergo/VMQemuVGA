@@ -557,6 +557,23 @@ bool VMVirtIOFramebuffer::start(IOService* provider)
                             setProperty("IOAccelRevision",
                                         (uint64_t)kCurrentGraphicsInterfaceRevision,
                                         32);
+                            /* RUNG 17 — the caller's key. The trio's
+                             * IOAccelTypes (kIOAccelTypesKey) is read by
+                             * nothing on the CGL path; IOAccelFindAccelerator
+                             * (IOKit disasm) does CFDictionaryGetValue(props,
+                             * "IOAccelerator") on the DISPLAY service, then
+                             * IORegistryEntryFromPath + conformsTo
+                             * "IOAccelerator". Same path string the trio
+                             * computed, the key the caller actually reads.
+                             * Gated with the rest of the vm-cap3d family:
+                             * ungated boots stay byte-identical and the
+                             * revert is the arg, not a rebuild. */
+                            if (VMVirtIOGPU::cap3dPublishGate()) {
+                                setProperty("IOAccelerator", accelPath);
+                                IOLog("VMVirtIOFramebuffer: rung 17 — "
+                                      "IOAccelerator=\"%s\" published "
+                                      "(gate=1)\n", accelPath);
+                            }
                             IOLog("VMVirtIOFramebuffer: IOAccel trio "
                                   "published — IOAccelTypes=\"%s\" "
                                   "Index=0 Revision=%u\n",

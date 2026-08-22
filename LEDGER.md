@@ -2377,6 +2377,94 @@ prediction ladder (committed before implementation):**
   header is a hypothesis to confirm at the call site before it
   shapes an implementation.
 
+**RUNG 17 RESULT (2026-08-22) — rung 1 PASS, rung 6 FAIL for
+accelerated sets, first-ever plain pf consult reached the GLD, and
+the stub's own parser found refusing EVERYTHING (dead-gate bug):**
+
+- **DEPLOY CORRECTION — guest `nvram boot-args` does not survive
+  reboot.** OpenCore's `config.plist` (on the automounted
+  `EFI-LEGACY` volume, `EFI/OC/config.plist`) supplies boot-args at
+  every boot and overwrites guest NVRAM. A pre-reboot
+  `nvram boot-args=... vm-cap3d=1` was verified written, then the
+  first reboot came up `gate=0` (kernel.log 14:09:33 "vm-cap3d
+  gate=0 -> publishing no") with guest NVRAM back to the old
+  string. The gate boot required editing config.plist's NVRAM
+  boot-args (full string preserved, `vm-cap3d=1` appended,
+  `plutil -lint` OK). The doc's warning was right; this is the
+  observed confirmation.
+- **The unplanned gate=0 boot doubled as the ungated control:** the
+  new binary (md5 `074af8e8b70af71fbf2b862bc4f96ea8`, verified on
+  guest after copy) booted normally with no panic and no rung-17
+  log line — the registered "ungated boots byte-identical"
+  prediction held. Cache rebuilt explicitly (Extensions.mkext
+  9,800,503 bytes, fresh mtime).
+- **The GLD bundle was NOT on the guest** — boot-time /tmp cleanup
+  removed the old `/tmp/rung16` staging, and `/S/L/E` never held a
+  persistent copy. Deployed after the boot (root:wheel 755), so
+  WindowServer did NOT load the stub this boot (bundle absent at
+  its load time); only the per-process probe dlopen exercised the
+  GLD. Consequence: this rung measures fresh-process consult
+  behavior; the rung-8 "WindowServer loads the GLD at boot"
+  behavior is untested on this build and the desktop watch
+  transfers to the next boot (bundle now present in /S/L/E at boot
+  time, gate on).
+- **LADDER RUNG 1 — PASS.** Kernel log 14:12:17:
+  `rung 17 — IOAccelerator="IOService:/AppleACPIPlatformExpert/
+  PCI0/AppleACPIPCI/S10@2/VMVirtIOFramebuffer/VMQemuVGAAccelerator"
+  published (gate=1)`; ioreg shows the identical string under
+  `"IOAccelerator"` on the FB.
+- **LADDER RUNG 6 (accelerated) — FAIL.** probe_cgs_requester
+  (pid 253): `CGLQueryRendererInfo -> 0 nrend=1`,
+  `renderer[0]: accelerated=0 rendererID=0x1af60100` (unchanged);
+  `CGLChoosePixelFormat(accelerated) -> 10006 npix=0` — and the
+  stub log contains NO gldChoosePixelFormat consult for it. The
+  accelerated set never reached the GLD: the upstream CGS/GLEngine
+  filter still stands. Outcome branch (d) — the filter is elsewhere
+  in the chain — with branches (b)/(c) not excluded because rungs
+  2–4 have no instrument yet.
+- **NEW OBSERVABLE — plain pf sets now CONSULT the GLD.** The
+  plain call `{kCGLPFADoubleBuffer=5, 0}` returned `0 npix=0` and
+  the stub logged
+  `CALL gldChoosePixelFormat attrs=[0x5 0x4] (out zeroed)`. First
+  pf consult to reach the stub in the whole arc. Meaning of attr
+  4 unknown (raw value recorded; the stub's own table treats 4 as
+  value-consuming; 5=kCGLPFADoubleBuffer per CGLTypes.h). A GLD
+  refusal surfaces downstream as success-with-zero-formats, not an
+  error.
+- **THE DEAD-GATE BUG (correction of every prior npix=0 reading):**
+  the stub's parser refused the consult with `0x2716 (no attr-0
+  gate)`. In `./probe/gld_stub.c` the walk is
+  `while (*p) { switch (*p) { case 0: gate = 1; ... } }` — the loop
+  body can never be entered with code 0, so `case 0` is unreachable,
+  `gate` is always 0 at `build:`, and EVERY attr list is refused
+  0x2716. The parser has never been able to build an object. On
+  every prior rung, npix=0 on consults that reached the GLD was
+  this bug, not an upstream verdict. The float's gate structure —
+  inferred from the disassembly — treats the terminator as the
+  gate-setter; the transcription wrapped it in `while (*p)` and
+  dead-coded it.
+- **Boot stability:** gate=1 boot normal, 0 panic/error lines in
+  kernel.log, refresh ~56 Hz sustained.
+- **Instrument note:** the first probe run (pid 246) left no stub
+  log because its output was piped through `head -30`; the pipe
+  close SIGPIPE-killed the probe during early output, before its
+  first CGL call. Filter-based viewing (`grep -v`), not
+  truncation, for probes whose output is the artifact.
+- **NEXT (rung 18, two independent fronts):**
+  (a) **stub parser fix** — set gate on natural walk completion
+  (terminator reached without a truncating default), the honest
+  reading of the float's gate; prediction: plain pf consults
+  return npix=1 with a real pf object (live-swap, no boot; the
+  WindowServer-at-boot load on this NEXT boot is the stability
+  watch, refusal convention `nonzero + *out=NULL` under load for
+  the first time);
+  (b) **rung-2 direct instrument** — call IOAccelFindAccelerator
+  (exported by IOKit) with the FB service from a probe; with the
+  property present it should return kIOReturnSuccess and a
+  non-zero accel port. If it passes by direct call, the
+  accelerated wall is the 0x9dcd popcount/display-mask site; if it
+  fails, the property is still not being read as expected.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
