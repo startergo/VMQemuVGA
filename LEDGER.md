@@ -1561,6 +1561,55 @@ gate=0). THE ARC'S MILESTONE: nrend=1 now means OURS.**
   method that produced the record contract), then Mesa-backed
   contexts.
 
+## 2026-08-21 (rung 12) — PRE-REGISTERED: pixel-format-first from the float's disassembly
+
+**Evidence base (decoded BEFORE registering, from /tmp/grf.t —
+GLRendererFloat `_gldChoosePixelFormat` @0x17892, 426 lines):**
+- Signature confirmed: `GLDReturn gldChoosePixelFormat(void**
+  struct_out, int* attributes)` — rdi=out, rsi=attrs, walked +4/code.
+- Opens with `glsAllDisplayMask()` → r13d → lands at obj+0x34.
+- The attribute parser is a JUMP TABLE over codes 0..0x56 (86 codes)
+  accumulating into stack locals (-0x82..-0x74 words, r12/r14/r15).
+- **Success epilogue (0x17e7e–0x17f00): malloc'd ~0x38-byte object:**
+  +0 anchor qword; **+8 = 0x1000400 (the renderer id — the SAME id
+  field as the record's +8; ours = 0x1AF40100)**; +0xc = 0x4C8
+  (constant); +0x14 = 0x8000 (constant); +0x34 = all-display mask;
+  +0x10/+0x18/+0x1c/+0x20/+0x24..+0x2c = attribute-derived words;
+  +0x31..0x33 zero bytes; `*struct_out = obj`; **return 0.**
+- Error path returns **0x2718 = 10008 = kCGLBadAttribute** (the
+  CGL-level error observed historically on bad attribute lists).
+
+**Phase A (remaining decode, no boot — outcomes for phase B fixed in
+an addendum only after this is read; the unread-gate rule):**
+- Resolve the 86-case jump table: per attribute code — accepted
+  (effect on which local), ignored, or 0x2718. Specifically the
+  ACCELERATED attribute's case (the honest boundary: the float is
+  software and yields no accelerated formats — read exactly how it
+  declines).
+- The libGFXShared CALL SITE (in /tmp/gfx.t): what the loader passes
+  (raw caller attrs? pre-processed?) and what it does with our return
+  and the object.
+- Misread discipline elevated (the &hdr class): every otool
+  `__mh_bundle_header(...)` symbol-displacement rendering in this
+  function gets MANUALLY resolved before trusting; two-source
+  cross-check (float impl + loader call site) wherever both are
+  readable.
+
+**Phase B (implementation, gated live-swap; boundary: FORMATS ONLY —
+probe_r7 mode p is the instrument, it never creates contexts):**
+- Typed gldChoosePixelFormat: accept the software-honest attribute
+  sets per the phase-A table; 0x2718 where the float rejects; build
+  the object per the decoded shape with OUR id at +8 and the decoded
+  constants; *out=obj; return 0.
+- gldDestroyPixelFormat mirrors the lifecycle (trampoline header:
+  "calls free(struct_in), returns 0") — the object we malloc must be
+  freeable by our own destroy.
+- Risk (registered): pf objects are CONSUMED (CGLDescribePixelFormat
+  and, later, context creation) — a malformed object crashes
+  consumers; WindowServer exposure if it asks; desktop watch
+  mandatory; revert path proven (arg + reboot).
+- Predictions: fixed in the phase-A addendum before phase B runs.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
