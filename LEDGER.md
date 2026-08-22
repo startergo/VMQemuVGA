@@ -1610,6 +1610,38 @@ probe_r7 mode p is the instrument, it never creates contexts):**
   mandatory; revert path proven (arg + reboot).
 - Predictions: fixed in the phase-A addendum before phase B runs.
 
+**PHASE A ADDENDUM — the full case map; predictions FIXED (committed
+before phase B):**
+- Jump table decoded (87 cases): VALUE-TAKERS {3,4,7 AuxBuffers,8
+  ColorSize,9,10,51 MinPolicy,52 MaxPolicy — consume next int};
+  FLAGS {0→r8=1 (THE BUILD GATE), 1 AllRenderers→local74|=8,
+  49→r12|=4 + si, 54 FullScreen→r10=1, 55 SampleBuffers→r14=2,
+  56 Samples→r14=1, 76 BackingStore→r12|=1, 86→r12|=0x2000};
+  NO-OP PASS {47,48,72 NoRecovery}; MASK {80 Window→r13 &= attr
+  value}; IMMEDIATE-RETURN-0-NO-OBJECT {2,50,53 OffScreen};
+  DEFAULT-TRUNCATE {the remaining 63 codes — incl. DoubleBuffer,
+  Stereo, Alpha/Depth/Stencil/AccumSize, RendererID, **ACCELERATED,
+  Robust**, MPSafe, Compliant, DisplayMask: `addq $0xc0,%rdx` skips
+  the rest; build from accumulated}; attr-walk overflow → 0x2710
+  (10000); post-loop: mask==0 → return-0-no-object; and **the object
+  builds ONLY when attribute code 0 is present** (r8 gate at 0x17c06).
+- **The accelerated npix=0 mechanism is NOT this parser** — Robust
+  shares the identical truncate path yet yields npix=1 historically:
+  the accelerated filter lives ABOVE the GLD (renderer/record level;
+  11b's accelerated=0 record produced the same npix=0).
+- **Micro-question folded into phase B instrumentation:** does the
+  loader PREPEND attribute 0 (the build gate)? Our entry logs the raw
+  array; predictions branch on the observation.
+- **Predictions (probe_r7 mode p sets):** (a) accelerated → NO GLD
+  call at all (renderer filter; stub log silent for that set);
+  (b) offscreen → immediate return-0-no-object → **npix=0 — a
+  deliberate divergence-from-history prediction** (the float's
+  shortcut, invisible while it answered, now visible with us as the
+  consulted GLD); (c) robust / ALL_RENDERERS → truncate → npix=1
+  with OUR object if attr 0 present, npix=0 if not (the logged array
+  decides); (d) the built object survives CGLDescribePixelFormat
+  (mode d's walk) without crash; (e) destabilized → proven revert.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
