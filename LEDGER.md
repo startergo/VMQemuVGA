@@ -3997,6 +3997,31 @@ CALL gldAttachDrawable -> -1 (refusal; out zeroed) ×2
 
 ---
 
+## RUNG 33 PRE-REGISTERED — the float's gldAttachDrawable: the
+contract, the honest mirror, and the InitDispatch firing
+(committed before the read)
+
+**Predictions (registered before reading):**
+- (i) The entry receives a drawable descriptor (the engine's
+  resolution of the CGS surface into render-target terms),
+  stores target state in the ctx at float offsets, returns 0.
+  The honest mirror: store the args, return 0 — then
+  gldInitDispatch fires and the sequence continues.
+- (ii) The attach touches the SURFACE machinery (IOSurface/
+  IOAccelSurface-class args) — as a SOFTWARE renderer the float
+  attaches the descriptor without hardware mapping; the mirror
+  does the same, and the surface work's structures (the GA-era
+  findings) become the arg shapes to recognize.
+- (iii) A validation gate refuses (shape/flags/mask) — the read
+  names it and the mirror honors it.
+**Verification:** probe_cgs_requester rerun — AttachDrawable
+answers 0; CGLSetSurface's return changes; gldInitDispatch
+fires (the first time); whatever the engine does with an
+installed-but-refused dispatch table is the next datum.
+**Exposure:** live-swap, probe-only, no boot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
