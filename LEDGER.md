@@ -1237,6 +1237,34 @@ new mechanism for a claim whose bundle-plist form is dead;
 (c) if no grounded candidate emerges from (a), the rung falls back to
 the STATIC cache carve — budget rule applies, no guess enumeration.
 
+**RUNG 9 RESOLVED BY THE INVENTORY (same night): the worked example
+contains NO renderer-id property — route (a) terminates EMPTY.**
+Complete sweep of every setProperty across AC/ + FB/
+(VMsvga2Accel, VMsvga2, SVGADevice, UC/VMsvga2Surface) + the
+GL/discovery-path diff: the only unpublished worked-example property
+is IODVDBundleName="AppleVADriver" — its own comment marks it an
+AppleVA NULL-release bug workaround (video path, 10.9-era), NOT
+enumeration. Everything else is driver-private (options/log levels,
+SVGA capabilities, refresh quantum) or the surface path
+(CGSSurfaceID per surface — our registry's parallel, already live).
+Option (b) has no worked-example counterpart — the budget rule bars
+it. **RUNG 9 = THE CACHE CARVE**, with the question list sharpened by
+the whole arc:
+1. The selection condition — when does the cached loader call
+   table[gldGetRendererInfo] for a registry-named GLD (the float
+   renderer's path shows the consult works on this OS).
+2. What the loader does with the VERSION TUPLE, especially a2 (the
+   bundle-header pointer): GLRendererFloat passes ITS OWN header; the
+   loader may dereference/validate it — our minimal stub's header
+   could fail such a check silently, dropping the candidate before
+   the consult. (Marked INFERENCE; the carve reads it directly.)
+3. The 0x1000400→0x1020400 id transform (+0x20000).
+Carve method (next session's first move): the dyld cache .map gives
+module address ranges; the name-table string address in the cache is
+findable by grep; a small host-side extractor (or manual otool on
+carved segments) yields the dispatch code. No boot risk; entirely
+static.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
