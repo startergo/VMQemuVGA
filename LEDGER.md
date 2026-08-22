@@ -4372,6 +4372,39 @@ kernel:  createVirglContextEx selector=0x6000 → ok ctx=0x100 resp=0x1100
 
 ---
 
+## RUNG 38 PRE-REGISTERED — the ReadPixels slot: THE READBACK
+PROOF (committed before implementation)
+
+**The design:** the proof requires the clear to land somewhere
+readable — a bare CLEAR with no bound framebuffer may be a
+host-side no-op (rung 37's prediction-(iii) territory). The
+minimal chain, all through the stub's own transport (the
+Increment-C shape, hand-built): create a 2D resource (0x6002) →
+attach backing (0x6003) → batch: SET_FRAMEBUFFER_STATE (CCMD 5)
+binding it + CLEAR (CCMD 7, a DISTINCTIVE color — 0.25/0.5/0.75/
+1.0, so zeros are never ambiguous) → submit (0x6008) →
+TRANSFER_FROM_HOST_3D (0x3009) → byte-compare. The ReadPixels
+slot (+0x10) implements the engine-side contract (the float's
+signature read first); the probe calls glReadPixels after
+glClear and prints the first pixels.
+
+**Predictions:**
+- (i) ROUND TRIP PROVEN: readback bytes match the distinctive
+  clear color byte-exact — the first HOST-ACCEPTED rendering
+  through the GLD bridge; the 0x1100 boundary crossed with
+  pixels.
+- (ii) The clear is a no-op without full Mesa context state
+  (virglrenderer may require more than a bound cbuf) — readback
+  ≠ clear color; the gap (what virglrenderer needs) is named by
+  the UTM debug log; the ReadPixels slot's plumbing still lands.
+- (iii) A transport/protocol error (resource create, backing,
+  transfer shapes) — the kernel/return codes name it; fix in
+  place from the winsys source.
+**Exposure:** live-swap via the guard; probe-only; no boot;
+kernel unchanged.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
