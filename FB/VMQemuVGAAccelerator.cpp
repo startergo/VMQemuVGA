@@ -283,6 +283,17 @@ bool CLASS::start(IOService* provider)
         setProperty("IOGLBundleName", "VMVirtIOGLEngine");
         IOLog("VMQemuVGAAccelerator: vm-cap3d gate=1 -> "
               "IOGLBundleName=VMVirtIOGLEngine published (rung 3)\n");
+        /* RUNG 8 (LEDGER 2026-08-21): the worked example's QE claim,
+         * published beside IOGLBundleName (VMsvga2Accel.cpp:604).
+         * Milestone 1 deferred this with "returns when the surface
+         * path works" — that condition matured 2026-08-21 (milestone
+         * 2 rung 2: surface binding probe-verified). Still gated:
+         * the original deferral's loop risk (QE claim inviting
+         * accelerated compositing) is pre-registered as rung 8's
+         * outcome 4, not assumed gone. */
+        setProperty("AccelCaps", 3ULL, 32);
+        IOLog("VMQemuVGAAccelerator: vm-cap3d gate=1 -> AccelCaps=3 "
+              "published (rung 8 — matured deferral)\n");
     }
     /* AccelCaps (QE claim) DEFERRED to milestone 2: published with only
      * stub surface slots, it invited WindowServer into the accelerated

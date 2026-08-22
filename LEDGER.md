@@ -1191,6 +1191,52 @@ verify AccelCaps in ioreg + log → desktop watch → probe_r7 all modes
 → score → restore baseline.
 (Committed before implementation — commit-before-build rule.)
 
+**RUNG 8 RESULT (20:44–20:52; baseline 20:52:08 gate=0) — WINDOWSERVER
+IS THE CONSUMER NOW:**
+- Publication verified (AccelCaps=3 beside IOGLBundleName in ioreg;
+  both log lines at 20:44:53). Boot + desktop normal AND STABLE —
+  the milestone-1 loop risk did NOT revive with the GA surface
+  working. Kext cf3eeda9c71068d972fd789ca36e3d0c deployed (gated).
+- **HEADLINE: WindowServer (pid 95, user _windowserver) LOADED our
+  GLD at boot (20:45:02) and ran the full cycle** — Initialize →
+  Version(true) → Terminate — the first WindowServer-side engagement
+  of the accelerator arc. The trio → plugin → flip chain all aimed at
+  this consumer; the flip could not reach it because the booleans are
+  not on the path WindowServer takes — **AccelCaps is.**
+- WindowServer's cycle vs the probes': arguments STRUCTURALLY
+  IDENTICAL (mask=0x1, arg5=0x0, arg3/arg4 the same shared
+  addresses); differences only per-process pointers (its
+  psvc=0x1003117e0 vs the probes' 0x7fff70b72004) and *psvc value
+  (0x3127). **The selection condition is NOT in the handshake
+  arguments.**
+- **psvc question SETTLED-AND-BORING:** WindowServer's slot sits at a
+  different address — per-process globals with per-process values;
+  the mach-port-name hypothesis loses its main support. Closed, not
+  open.
+- Probe surface unchanged (no gldGetRendererInfo in any mode; census
+  frozen; AllRenderers npix=1). Kernel side ordinary on this boot.
+- Score: a NEW outcome between the registered ones — the claim
+  changed WHO loads the GLD (WindowServer) while the consult remains
+  uncalled. Frontier advanced: "no consumer" → "the consumer cycles
+  the GLD and still doesn't consult."
+- Instrument notes: WindowServer's root-owned /tmp log broke the
+  probes' stub logging (append denied) — the constant-CALL-count
+  artifact was a logging failure, diagnosed and cleared (sudo rm);
+  future multi-user runs must clear the log with sudo or
+  chmod it. The milestone-1 GA log line still prints "AccelCaps
+  deferred" — stale string, fix at the next kext touch.
+
+**RUNG 9 PRE-REGISTERED — the renderer-claim property, observable =
+WindowServer's own behaviour** (its cycle in the stub log + any new
+kernel/ioreg lines + census), one live-swap boot. PROPERTY SOURCE
+QUESTION OPEN, grounded options ordered: (a) worked-example inventory
+diff — what VMsvga2 publishes that we still do not (thin:
+IODVDBundleName bug-workaround; options keys); (b) the GLPlugin-era
+GLRendererID=0x24600 as a REGISTRY property on the accelerator — a
+new mechanism for a claim whose bundle-plist form is dead;
+(c) if no grounded candidate emerges from (a), the rung falls back to
+the STATIC cache carve — budget rule applies, no guess enumeration.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
