@@ -1477,6 +1477,48 @@ EXCLUSIVITY IS STRUCTURAL (22:20–22:30; baseline 22:30:44 gate=0):**
 - Field-packing fix made pre-run: the float's word/byte fields at
   +0x28..+0x2e are two dwords (0x00010004, 0x01000010).
 
+**TOOL-FAILURE HABIT (named, 2026-08-21 — four instances, one class):**
+uniq -c hiding stderr errors; ~/Info.plist supplying a name nobody
+configured; otool's symbol displacement inventing &hdr; `clang | grep
+-c` eating a build failure's exit status. Each presented a plausible
+result that was never there; each cost real time; each was caught by
+looking at something OTHER than the tool's output. THE RULE: when a
+tool's output drives a decision, check the tool's own failure mode
+first — exit status read directly (no pipes over build commands),
+positive controls on greps, opened-file enumerations over
+where-could-it-come-from reasoning.
+
+**RUNG 11b PRE-REGISTERED — ENUMERATE-FIRST (claim the real display;
+revert-before-context is the boundary; committed before the run):**
+- ONE value changes: RUNG11_CLAIM 0x2 → 0x1. Everything else
+  identical to 11a (record fields, software-class caps, our id
+  0x1AF40100 at +8, kCGLBadMatch outside claim).
+- **The risk shape is new (registered):** the moment the census
+  returns a real renderer, every downstream refusal becomes
+  load-bearing AT ONCE (gldChoosePixelFormat, gldCreateShared,
+  gldCreateContext) — the first rung where the honest answers cannot
+  all stay "no." The probes create NO contexts (revert-before-context
+  honored by instrument design); the desktop watch is the WindowServer
+  exposure check; revert path proven (arg + reboot; live-swap is
+  probe-only).
+- **Predictions for the census (main display, q=0x1):**
+  (1a) nrend=1 with OUR record's id 0x1AF40100, accelerated=0 —
+  the record is respected;
+  (1b) nrend=1 with rid=0x1020400, accelerated=0 — the loader-composed
+  id wins (rung 9 decode: _gfx_float_device_id = 0x1020000 |
+  (version_a3 & 0xFF00) — composed from OUR a3=0x400 at registration;
+  the record's +8 may be a secondary field). Either way, ONE renderer
+  enumerated and it is US — the float renderer absent (11a's
+  exclusivity);
+  (2) census errors or empty — the record failed validation
+  downstream (the loader re-checks fields it consumed from +0x3c..
+  — our modest 256s insufficient; the unread-fields problem lands);
+  (3) desktop destabilized at boot (WindowServer consumes the real
+  record) → proven revert path.
+- Procedure: build (exit status read DIRECTLY — the habit's first
+  application), bundle + gate + reboot, desktop watch, census probes
+  only, score, restore baseline.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
