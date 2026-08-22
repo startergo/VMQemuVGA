@@ -576,10 +576,24 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
                        void* a4, void* a5, void* a6)
 {
     (void)a3; (void)a4; (void)a5; (void)a6;
-    char buf[80];
+    char buf[96];
     snprintf(buf, sizeof(buf),
-             "CALL gldAttachDrawable type=0x%x (rung 33)", type);
+             "CALL gldAttachDrawable type=0x%x a3=%p a4=%p (rung 35)",
+             type, a3, a4);
     ep_log(buf);
+    /* RUNG 35: the float's offscreen path reads arg3 (rdx) as a
+     * DESCRIPTOR: +0 width, +4 height, +8 bytes-per-row, +0x10
+     * backing. Dump the window-class (0x50) descriptor's first
+     * words — field separation: dims are engine-relevant; backing/
+     * stride are float-internal and will NOT be mirrored. */
+    if (a3 && (unsigned long)a3 > 0x1000) {
+        unsigned* d = (unsigned*)a3;
+        char b2[128];
+        snprintf(b2, sizeof(b2),
+                 "  desc: +0=0x%x +4=0x%x +8=0x%x +c=0x%x +10=0x%x +14=0x%x",
+                 d[0], d[1], d[2], d[3], d[4], d[5]);
+        ep_log(b2);
+    }
     if (!ctx) {
         ep_log("  gldAttachDrawable -> -1 (no ctx)");
         return -1;
@@ -637,8 +651,15 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
     if (limits) {
         for (int i = 0; i < 6; i++)          /* +0..+0x14, the float's zeros */
             limits[i] = 0;
+        /* RUNG 35 (prediction (i) test): the limits are CAPABILITY
+         * MAXES (the float clamps drawable-derived values to 0x4000);
+         * hypothesis: the engine's 0x506 dispatch gate is nonzero
+         * limits. The float's own cap is honest for a noop table
+         * (vacuously satisfiable — nothing is ever touched). */
+        limits[0] = 0x4000;
+        limits[1] = 0x4000;
     }
-    ep_log("  gldInitDispatch -> 0 (22 noop slots installed; limits zeroed)");
+    ep_log("  gldInitDispatch -> 0 (22 noop slots; limits maxes=0x4000)");
     return 0;
 }
 EPR(gldUpdateDispatch)

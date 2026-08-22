@@ -4181,6 +4181,51 @@ wherever they arrive), InitDispatch derives REAL limits;
 guard: refuses failed builds, unchanged binaries, digest
 mismatches — the stale-deploy class closed); probe-only.
 
+**RUNG 35 RESULT (2026-08-22) — the deploy guard LANDED AND
+PROVEN; the window descriptor dumped (ID-SHAPED, not dims); the
+limits hypothesis TESTED AND KILLED (honest negative); the 0x506
+mechanism traced to the engine's FALLBACK-DISPATCH path, with
+the real dispatcher (gleDoSelectiveDispatchCore) named as the
+last layer:**
+- **The deploy guard (probe/deploy_gld.sh + the bundle's
+  Info.plist moved into the repo):** refuses failed builds,
+  unchanged binaries (hash vs last deploy), and guest-digest
+  mismatches. PROVEN: fresh deploy verified
+  (`ec0e1020…`, 94 exports); immediate re-run REFUSED. Used for
+  every deploy since. The stale-binary class is closed.
+- **The window-class descriptor (type 0x50 attach, args now
+  logged):** `a3 = +0=0xa913 +4=0x17 +8=0xe144a08 +0x10=0x40` —
+  ID-SHAPED (the +8 word is surface-id class; NOT the offscreen
+  path's dims-at-+0/+4). The dims source for window drawables
+  remains unnamed.
+- **The limits hypothesis KILLED (prediction (i) negative):**
+  limits maxes 0x4000/0x4000 (the float's clamp) changed
+  NOTHING — 0x506 persists, zero noop dispatches. The limits
+  block is not the gate.
+- **The 0x506 mechanism, traced (read):**
+  - `[ctx+0x798e]` is the dispatch-ready byte: set 1 by the
+    engine-ctx initializer (0x4906), cleared by
+    `gleUpdateDispatchCodeChange` (0xf8b5: `!(flags & 0x10)`
+    under a 0x4000000 mode) — 0x506 fires when it is 0
+    (0x46177-0x4618e).
+  - The flags come from the dispatch-update call at 0xf72a:
+    **plugin slot 9 = gldAttachDrawable, called AGAIN with
+    type 0x5c** (a dispatch-class query, rdi = the per-driver
+    slot object); return ≤ 3 routes into gleFallbackBegin.
+  - **gleFallbackBegin (0xe7633) is the SOFTWARE path — CORRECT
+    for the float** (the software renderer's table serves it):
+    mallocs 0x108 fallback state at [ctx+0x6560], keys on
+    `[[ctx+0x65c0]+0x5a]`, sets [ctx+0x6d0]=-1, and calls
+    **gleDoSelectiveDispatchCore(0xc000000, 0x20000)** — the
+    REAL dispatcher. Our context dies inside this layer.
+  - The field separation held throughout: nothing of the
+    float's rasterizer internals was mirrored; the limits test
+    used only the float's clamp constant.
+- **NEXT (rung 36): gleDoSelectiveDispatchCore** — what it
+  reads from the driver (our dispatch table? the per-driver
+  block? which fields) and what makes it succeed for the float.
+  The last layer between here and GL calls flowing.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
