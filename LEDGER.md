@@ -2307,6 +2307,69 @@ IOAccelFindAccelerator(masterPort, displayService, &accel, &id):
   `IOService:/AppleACPIPlatformExpert/...` (findable from
   ioreg's output). This is a one-property kext change, gated
   alongside the rest.
+
+**MILESTONE-1 DIVERGENCE — the reconciliation question (recorded
+before the property lands):**
+- If `IOAccelFindAccelerator` was never successfully called by
+  anything here (check 4), the probe's milestone-1 success went
+  through `IOCreatePlugInInterfaceForService` — a CLASS-based
+  search, not a PATH-based one. Two functions, two lookup
+  strategies; the trio's `IOAccelTypes` satisfied the
+  class-based search while `IOAccelerator` (the path-based one)
+  was never present. **No divergence to reconcile — the two
+  callers used different functions.** The property lands clean.
+- **HEADER-AS-HYPOTHESIS — promoted to rule, fourth failure
+  banked:** on this contract, the header is a hypothesis and the
+  disassembly is the source of truth. Four failures, all the
+  same kind: Initialize (6 args not 5), ChoosePixelFormat (2
+  meaningful, 3rd is noise), name count (92 vs 78), and now
+  IOAccelTypes vs IOAccelerator (the header describes an
+  interface the callers don't implement).
+
+**RUNG 17 PRE-REGISTERED — the one-property fix, with the FULL
+prediction ladder (committed before implementation):**
+- **The change:** publish `IOAccelerator` on the framebuffer
+  under the vm-cap3d gate, alongside the existing IOAccelTypes.
+  The value is the accelerator's IOService-plane path — the
+  same string the trio already computes via getPath with
+  gIOServicePlane for IOAccelTypes. **Logged at publication**
+  (the boot log shows the exact string written — a path that's
+  subtly wrong fails identically to one that's absent).
+- **The prediction ladder — SIX observables, each independently
+  checkable; any rung failing is informative, not a null:**
+```
+1. IOAccelerator appears in ioreg on the FB (with the logged path)
+2. IOAccelFindAccelerator resolves the path → returns kIOReturnSuccess
+3. The discovery function at 0x4c40 counts ≥1 accelerator
+4. glcGetIOAccelService returns non-zero
+5. The check at 0x96dd passes → the helper enters display matching
+6. Accelerated pf sets stop returning 10006 and REACH THE GLD
+```
+- **Instrumentation (more than the endpoint):** the probe
+  reports the ladder position, not just the final result:
+  ioreg check for property presence, probe_cgs_requester for
+  the pf behavior, stub log for whether accelerated sets
+  reached the GLD. A partial advance reads as LOCATED, not
+  failed — the difference between costing a boot and costing a
+  session.
+- **Revert:** gate off (arg removal); the property is one
+  setProperty line, ungated boots byte-identical.
+- **Outcomes:**
+  (a) full ladder → the accelerated wall is down; the GLD's pf
+  entry receives accelerated attribute sets for the first time
+  → rung 18 is the honest answer (software caps refuse, or a
+  hardware claim is made and backed);
+  (b) ladder stops at 2-3 (path resolves but conformance or
+  count fails) → the IORegistryEntryFromPath path format is
+  wrong or the accelerator isn't visible at the expected
+  location — check the logged string against ioreg;
+  (c) ladder stops at 4-5 (count > 0 but glcGetIOAccelService
+  still returns 0) → a caching issue or the CGL-side code
+  doesn't re-discover after boot;
+  (d) ladder stops at 5-6 (display matching runs but
+  accelerated pf still 10006) → the accelerated filter is
+  elsewhere in the chain (the popcount site, or below);
+  (e) destabilized → proven revert.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
