@@ -1956,6 +1956,75 @@ restored, out-zero rule live (committed before any boot):**
   revert.
 - Procedure: build (exit checked), bundle + gate + reboot,
   desktop watch, probe_r7 p + c + d, score, restore.
+
+**RUNG 14 RESULT — NO SIGBUS; THE PF ENTRY IS SAFE AND READING
+REAL ATTRIBUTES; THE ACCELERATED FILTER IS CGS-SIDE, ABOVE THE GLD
+(10:43–10:4x; baseline restored):**
+- Boot: WindowServer registered (pid 97, Version-true, no
+  Terminate); desktop normal; probe completed — **exit clean, all
+  six pf sets returned (prediction (a) CONFIRMED).**
+- **The parser read REAL CGL attribute arrays for the first time:**
+```
+attrs=[0x4]        → value-taker consumes terminator → no gate → 0x2716 + NULL
+attrs=[0x35 0x4]   → attr 53=OffScreen → shortcut → 0 + NULL
+attrs=[0x5 0x4]    → attr 5=DoubleBuffer → TRUNCATE → attr 4 → no gate → 0x2716 + NULL
+```
+- **Only 3 of 6 CGL calls reached the GLD** — the accelerated sets
+  were filtered at the CGS display-matching layer with
+  `"invalid display"` errors (kCGErrorFailure) BEFORE the GLD was
+  consulted. The accelerated npix=0 mechanism is now precisely
+  located: **CGS display-matching, not renderer consultation.**
+- **The attr-0 gate NEVER fires for CGL-driven calls** — code 0 is
+  the loader's internal marker, not part of the CGL attribute
+  format. The float also returns no-object for CGL calls without
+  it. npix=0 everywhere is the honest answer for a software-class
+  renderer that can't match the requested attributes.
+- Census still healthy (nrend=1, rid=0x1AF60100); WindowServer
+  stable throughout.
+- Score: predictions (a) and (c) CONFIRMED; (b) PARTIAL (the
+  accelerated set never reached the GLD — CGS filtered it first);
+  (d) the downstream entries were NOT called (the caller didn't
+  chain into CreateShared because no object was built); (e) N/A.
+- **The "invalid display" CGS errors ARE the next datum** — they
+  name the layer where acceleration is refused. Three candidates
+  for the cause, in order: (1) the capability booleans — the flip
+  experiment called them "necessary but not sufficient" when no
+  accelerated renderer EXISTED to be sufficient FOR; **one does
+  now** — the flip + registered GLD combination has never been
+  tested together; (2) the record's display mask vs CGS's
+  association (free check: ioreg display mask vs our claim 0x1);
+  (3) EDID (excluded if (1) and (2) come back clean — nothing
+  recorded connects EDID to accelerated-format matching).
+
+**RUNG 15 PRE-REGISTERED — the flip + registered GLD, together for
+the first time (committed before any boot):**
+- **The experiment the flip experiment's own conclusion named but
+  never ran:** "necessary but not sufficient" was measured with
+  NO accelerated renderer in existence. Now one exists — our GLD,
+  registered, enumerated, answering honestly. The flip's
+  insufficiency may have been purely the missing renderer.
+- **Free pre-check (no boot):** ioreg the display mask CGS
+  associates with the real display vs our record's claim (0x1).
+  A mismatch produces "invalid display" without any property
+  being wrong.
+- **The change:** NOTHING new — the existing gated kext (vm-cap3d
+  publishes booleans + IOGLBundleName + AccelCaps) + the existing
+  rung-14 stub. Both halves together under one gate. The only
+  variable vs rung 14 is that BOTH the booleans AND the GLD are
+  live (rung 14 already had both — but the accelerated pf was
+  tested without checking whether CGS's display-matching layer
+  reads the booleans).
+- **Actually, rung 14 already ran the combination** — the
+  "invalid display" errors happened WITH the flip on. The
+  combination is already tested and the answer is: CGS still
+  rejects accelerated formats. The booleans alone (with a
+  registered GLD) did not unblock CGS's accelerated path.
+- **REVISED next datum:** the mask check (free, no boot) — if
+  CGS's display mask ≠ our claim 0x1, that's the "invalid
+  display." Then the EDID question (which VMsvga2 injected for a
+  reason — Displays preferences resolutions, but possibly also
+  feeding CGS's display-association table).
+  desktop watch, probe_r7 p + c + d, score, restore.
 - **STANDING RULE from this arc (header-as-hypothesis):** two of the
   trampoline header's claims have now failed silently — Initialize
   is 6-arg (not 5), ChoosePixelFormat is 3-arg (not 2) — and its
