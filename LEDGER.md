@@ -3374,6 +3374,63 @@ obj+0x24..0x2a = 0; +0x2c/+0x30 = walk counters; +0x34 = claim
   the float's builder and switch are the source; the stub's
   parser now carries the provenance warning.
 
+**RUNG 26 RESULT (2026-08-22) — THE BISECT CLOSED: FLAGS BIT 0
+(the float's own conditional, never transcribed); THE FIRST
+HONEST npix=1 ON THE CANONICAL APP REQUEST {5,84,1}; THE
+REFUSAL STRUCTURE LANDS EXACTLY ON THE HONESTY BOUNDARY:**
+- Bisect (env-driven instrument, one build; {53} control run at
+  EVERY point, stable 0/npix=0 throughout):
+```
+T0 0x4C8|0x100 (hardware bit alone)  -> npix=0  (candidate DEAD)
+T1 0xFFFF                            -> npix=1  (low word suffices)
+T2 0xFBC8 (high byte of low word)    -> npix=0
+T3 0x4CF  (low byte all)             -> npix=1  (bits 0/1/2 class)
+T4 0x4C9  (bit 0)                    -> npix=1  ← THE BIT
+T5 0x4CA  (bit 1)                    -> npix=0
+T6 0x4CC  (bit 2)                    -> npix=0
+endpoint 0x4C9 re-run ×2             -> npix=1, npix=1 (closed)
+```
+- **The mechanism, found in the float's build tail AFTER the
+  bisect pointed at it (grf.t 0x17ca6):** `orl $1; testb $4;
+  cmovel` — **the float ORs bit 0x1 into its flags when bit 0x4
+  is absent.** Its software objects carry bit 0 conditionally;
+  the rung-12 table never transcribed the conditional. A fourth
+  table error, located by measurement then confirmed in source.
+- **Standing value (mirrored conditional, env override dormant):**
+  `if (!(flags & 0x4)) flags |= 0x1;` → 0x4C9 for plain walks.
+  NOT a hardware claim — the float's own software bit.
+- **FULL EIGHT SETS with the standing value (no env):**
+```
+{73} accelerated      npix=0 (honest refuse — requires 0x100)
+{53} offscreen        npix=0 (shortcut, expected)
+{73,5} accel+double   npix=0 (honest refuse)
+{75} robust           npix=1
+{1}  ALL_RENDERERS    npix=1
+{1,73} ALL+accelerated npix=0 (honest refuse — note: passed in
+                              rung 23's over-claim; refuses now)
+{73,5,84,1}           npix=0 (honest refuse)
+{5,84,1} double+mask  npix=1  ← THE CANONICAL APP REQUEST
+```
+- **{5,84,1} — kCGLPFADoubleBuffer + kCGLPFADisplayMask(0x1),
+  the request shape real applications make — returns npix=1
+  HONESTLY:** the +0x10 mode echo passes the exact match, the
+  claim passes the mask gate, the scorer accepts the float's
+  own conditional flags. The honest pixel format exists.
+- **The refusal structure is the designed boundary, now
+  empirical:** every set demanding the hardware bit (0x100)
+  refuses; every software-capable set counts. The next npix=1
+  on an accelerated set requires the Mesa-backed claim — the
+  original endgame, and now the ONLY remaining door.
+- **NEXT (rung 27 candidates, in the order the evidence
+  favors):** (a) the watched boot — the stub now provides an
+  honest software pixel format; WindowServer's boot-time
+  consumption of it is the real-consumer test, with the
+  registered outcomes and revert from rung 19; (b) a real
+  context: CGLCreateContext on the {5,84,1} format — the first
+  downstream entry (gldCreateShared/gldCreateContext refusals
+  become load-bearing); (c) the destroy-absence residual
+  (secondary).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

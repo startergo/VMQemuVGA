@@ -336,6 +336,13 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
         }
     }
     complete = 1;                            /* terminator: walk complete — 18a */
+    /* RUNG 26 — the float's OWN conditional, mirrored from its build
+     * tail (grf.t 0x17ca6: orl $1 / testb $4 / cmovel): the float
+     * ORs bit 0x1 into its flags when bit 0x4 is ABSENT. Bisect
+     * result (T0-T6 + endpoint x2, {53} control stable throughout):
+     * flags bit 0 is the scorer's positive requirement — 0x4C8
+     * never passes, 0x4C9 always does. Not a hardware claim: the
+     * float's software objects carry it. */
 build:
     unsigned* obj = (unsigned*)calloc(1, 0x38);
     if (!obj) {
@@ -364,8 +371,21 @@ build:
                                        : 0x1AF40100;
     *(unsigned long*)&obj[0] = 0;    /* chain terminator: single slot */
     obj[2] = use_id;       /* +8  (engine ORs 0x20000 — idempotent in-plane) */
-    obj[3] = flags;        /* +0xc — the rung-24 HONEST subset (0x4C8,
-                            * every bit read-justified; no hardware bit) */
+    /* RUNG 26 bisect instrument: GLD_PF_FLAGS overrides +0xc per run
+     * (env reaches the stub — same process). Registered protocol:
+     * every point runs {75} (test) and {53} (control, expected
+     * 0/npix=0 always); deviations invalidate the point; the passing
+     * endpoint re-runs to close. A 0x100 positive is a PROBE RESULT
+     * — "the scorer requires a claim we cannot yet back" — and
+     * reverts after the bisect (LEDGER, registered). */
+    if (!(flags & 0x4))
+        flags |= 0x1;          /* the float's conditional (0x17ca6) */
+    {
+        const char* e = getenv("GLD_PF_FLAGS");
+        if (e) flags = (unsigned)strtoul(e, 0, 0);   /* bisect override */
+    }
+    obj[3] = flags;        /* +0xc — rung-24 honest subset 0x4C8 unless
+                            * GLD_PF_FLAGS overrides (bisect only) */
     obj[4] = mode10;       /* +0x10 — the buffer-modes ECHO of the walked
                             * attrs (5->0x8, 6->0x2), matching the request's
                             * own +0x10 composition for the exact test */
