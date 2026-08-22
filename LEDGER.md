@@ -3791,6 +3791,73 @@ run-exit 0
 
 ---
 
+## PRE-BRIDGE DESIGN DECISIONS (recorded 2026-08-22, before any
+bridge code; the fork is taken: THE BRIDGE, with gldGetString
+landed on the way as the first return-something-real entry)
+
+**DECISION 1 — the concurrency model.** The substitute and the
+GLD are two front ends onto one Mesa, and the substitute's
+hard-won lessons are FRONT-END-SPECIFIC: the handoff mutex exists
+because CGL contexts are server-side on real macOS; the
+pthread-TSD current-context exists because two Gecko threads
+share one process. A GLD serving arbitrary apps — WindowServer
+included — has more concurrency than that, not less.
+**Preliminary position (to be settled in the bridge design
+rung):** the GLD entry API is CONTEXT-EXPLICIT — the engine
+passes the ctx pointer as arg0 on every entry — so the
+current-context problem (a CGL-layer concept) does not exist at
+the GLD layer. The bridge therefore REUSES the front-end-
+independent layers (the winsys, the kernel transport, the
+per-context virgl plumbing from the fence era) and implements
+its OWN context layer: GLD ctx pointer → virgl context id, with
+per-ctx serialization (virgl executes a context's stream
+serially — the fence-era contract) and cross-ctx concurrency.
+The substitute's TSD/mutex code is NOT reused; its LESSONS are.
+
+**DECISION 2 — exclusivity has teeth.** Once the GLD renders, it
+is the renderer for its display; there is no software fallback
+behind it. Every entry that currently refuses becomes something
+an app depends on, and the first real consumer is WindowServer
+at boot — not a launched probe. **The observed bounds (from the
+watched boot):** WindowServer's boot-time GLD use was FOUR
+ENTRIES (load, initialize, version, stop) — the desktop
+composites through the IOAccel surface path, not GL, on this
+system. The boot exposure is therefore bounded by observation —
+but app-side GL rides entirely on the driver the moment the
+formats are offered. **The staging that already exists (the
+honesty boundary, now structural):** the hardware bit (0x100)
+stays unset until the bridge backs it — accelerated-format
+requesters receive nothing (npix=0) and the engine's fallback
+path fields them; only software-format requesters reach the
+stub/bridge. The first bridge consumers are bounded by that
+gate, and the gate lifts only when the claim is true.
+
+---
+
+## RUNG 31 PRE-REGISTERED — gldGetString: the first
+return-something-real entry (committed before implementation)
+
+**The shape:** the probe's existing glGetString(GL_VERSION) call
+is the instrument — already in place, already printing. The
+float's gldGetString read first (the established pattern); the
+honest string set follows: strings that describe the stub
+TRUTHFULLY (vendor/renderer = our identity; version = what the
+stub actually is, claiming no GL capability it refuses to
+implement).
+
+**Predictions:**
+- (i) glGetString(GL_VERSION) returns our honest identity string
+  (non-NULL, probe-printable) — the first real data an app
+  receives from this driver; the other string enums likewise or
+  cleanly refused (NULL for unsupported names, per the float's
+  shape).
+- (ii) The entry's signature/contract mismatches (arg shapes for
+  name-vs-buffer) — a wrong string or crash names it; the float
+  read settles the shape.
+**Exposure:** live-swap, probe-only, no boot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
