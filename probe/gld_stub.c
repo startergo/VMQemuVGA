@@ -118,6 +118,7 @@ void gldTerminateLibrary(void)
 #define GLD_BAD_MATCH 0x2716
 #define RUNG11_CLAIM  0x1   /* 11b: the real display — enumerate-first */
 #include <string.h>
+#include <stdlib.h>
 #include <mach-o/loader.h>
 extern struct mach_header_64 _mh_bundle_header;
 long gldGetRendererInfo(void* rec, int query_mask)
@@ -183,7 +184,78 @@ long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
     return 1;
 }
 
-EPR(gldChoosePixelFormat)
+/* RUNG 12 (phase-B, per the phase-A addendum's fixed map): the honest
+ * pixel-format mirror of the float's parser @0x17892. Truncate-default,
+ * attr-0 build gate, offscreen shortcut, 0x2710 overflow — all decoded.
+ * Logs the raw attribute array (the prepend datum). */
+long gldChoosePixelFormat(void** out, int* attrs)
+{
+    FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
+    time_t t = time(NULL);
+    char ts[32];
+    strftime(ts, sizeof(ts), "%H:%M:%S", localtime(&t));
+    if (f) {
+        fprintf(f, "[%s pid=%d] CALL gldChoosePixelFormat raw16=[", ts, (int)getpid());
+        for (int i = 0; i < 16; i++)
+            fprintf(f, "%s0x%x", i ? " " : "", attrs[i]);
+        fprintf(f, "]\n");
+        fclose(f);
+    }
+    unsigned mask = (unsigned)RUNG11_CLAIM;   /* our "all displays" */
+    unsigned flags = 0x4C8;
+    int gate = 0, si = 0;
+    int* p = attrs;
+    int walked = 0;
+    while (*p) {
+        int code = *p;
+        walked += 4;
+        switch (code) {
+        case 0:  gate = 1; break;
+        case 1:  break;                       /* AllRenderers: local74|=8 (word we keep modest) */
+        case 2: case 50: case 53:
+            ep_log("  gldChoosePixelFormat -> 0 (shortcut, no object)");
+            return 0;                        /* float's immediate success: *out untouched */
+        case 3: case 4: case 7: case 8: case 9: case 10: case 51: case 52: case 57:
+            p++; walked += 4; break;          /* value attrs: consumed, no stored effect */
+        case 47: case 48: case 72: break;     /* no-op pass */
+        case 54: break;                       /* FullScreen: r10 flag, no object field */
+        case 49: flags |= 4; si = 1; break;
+        case 55: break;                       /* r14=2 (word kept modest) */
+        case 56: break;                       /* r14=1 */
+        case 76: flags |= 1; break;           /* BackingStore */
+        case 86: flags |= 0x2000; break;
+        case 80: mask &= (unsigned)p[1]; p++; walked += 4; break; /* Window */
+        default:
+            goto build;                      /* TRUNCATE — the 63-code default */
+        }
+        p++;
+        if (walked > 0xc3) {
+            ep_log("  gldChoosePixelFormat -> 0x2710 (attr overflow)");
+            return 0x2710;
+        }
+    }
+build:
+    if (!si && mask == 0) {
+        ep_log("  gldChoosePixelFormat -> 0 (mask empty, no object)");
+        return 0;
+    }
+    if (!gate) {
+        ep_log("  gldChoosePixelFormat -> 0 (no attr-0 gate, no object)");
+        return 0;
+    }
+    unsigned* obj = (unsigned*)calloc(1, 0x38);
+    if (!obj) return 0x2718;
+    *(unsigned long*)&obj[0] = (unsigned long)&_mh_bundle_header;
+    obj[2] = 0x1AF40100;   /* +8  our renderer id */
+    obj[3] = flags;        /* +0xc */
+    obj[5] = 0x8000;       /* +0x14 constant */
+    obj[7] = 0x1;          /* +0x1c */
+    obj[8] = 0x1;          /* +0x20 */
+    obj[13] = mask;        /* +0x34 display mask */
+    *out = obj;
+    ep_log("  gldChoosePixelFormat -> 0 (object built, id=0x1AF40100, mask in obj)");
+    return 0;
+}
 EPR(gldDestroyPixelFormat)
 EPR(gldCreateShared)
 EPR(gldDestroyShared)

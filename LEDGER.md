@@ -1642,6 +1642,43 @@ before phase B):**
   decides); (d) the built object survives CGLDescribePixelFormat
   (mode d's walk) without crash; (e) destabilized → proven revert.
 
+**RUNG 12 PHASE-B RESULT — CONSUMER BUS ERROR, CONTAINED; TWO
+PREDICTIONS FALSIFIED; THE NEXT GATE IS THE RECORD→REQUEST MAPPING
+(23:38–23:50; baseline 23:50:04 gate=0):**
+- Boot: WindowServer registered (pid 97, no Terminate); desktop
+  normal throughout — the crash that followed was PROBE-CONTAINED
+  (the registered risk class firing exactly as written: a consumed
+  response crashed the caller; WindowServer never asked).
+- Census + describe-walk (mode d): our record enumerated and its 25
+  properties consumed WITHOUT crash (prediction (d) held for the
+  record path).
+- **Mode p: SIGBUS (exit 138) at the FIRST set — `pf(accelerated)`.**
+  Per-set flush markers (added after the first crash swallowed all
+  buffered output — the stdout-buffering instrument lesson)
+  attributed it exactly. The stub log shows the sequence:
+  `gldChoosePixelFormat(raw16=[0x4 0x0 0x0 0x0 <stack garbage>])`
+  → our mirror returned 0-no-object → the caller dereferenced the
+  unset out → bus error.
+- **Falsified predictions:** (a) accelerated DOES reach the GLD
+  (no renderer-level pruning at this layer — or the consult happens
+  regardless); the loader REWRITES the attribute list — the caller's
+  set is not what arrives; the array passed is **`{4, 0}`** — an
+  internal two-int request, not CGL attributes.
+- **The decisive inference (marked):** success-without-object is an
+  INVALID return from our position — the caller dereferences *out on
+  success. The float's identical no-object paths therefore never fire
+  in practice — implying the loader CONSTRUCTS its `{4, 0}` request
+  FROM THE RENDERER RECORD, and OUR record (modest fields, 256
+  limits) yields the degenerate request. The record→request mapping
+  is the next unread gate: read it in the libGFXShared disasm (what
+  builds the request array from the record before the pf call) BEFORE
+  the mirror changes again. Iteration stopped at the gate per the
+  unread-gate rule.
+- Phase-B scope discipline held: formats only, no contexts, probe
+  contained, desktop watch clean, live-swap used twice (the second
+  after the instrumentation fix), revert unneeded (baseline restored
+  routinely).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

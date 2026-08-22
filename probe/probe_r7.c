@@ -73,8 +73,11 @@ static void pixfmt(const char *tag, CGLPixelFormatAttribute *attrs,
 {
     CGLPixelFormatObj pf = NULL;
     GLint npix = 0;
+    printf("[%s] about-to-call pf(%s)\n", tag, name);
+    fflush(stdout);
     CGLError e = CGLChoosePixelFormat(attrs, &pf, &npix);
     printf("[%s] pf(%s) -> %d npix=%d\n", tag, name, e, npix);
+    fflush(stdout);
     if (pf) CGLDestroyPixelFormat(pf);
 }
 
