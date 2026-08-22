@@ -26,7 +26,8 @@ cp "$REPO_ROOT/probe/VMVirtIOGLEngine.Info.plist" "$STAGE/../Info.plist"
 
 # 1. Build — a failure aborts BEFORE anything ships (set -e).
 xcrun clang -arch x86_64 -mmacosx-version-min=10.6 \
-  -isysroot "$SDK" -bundle "$SRC" -o "$OUT" 2>/dev/null
+  -isysroot "$SDK" -bundle "$SRC" \
+  -framework IOKit -framework CoreFoundation -o "$OUT" 2>/dev/null
 [ -x "$OUT" ] || { echo "DEPLOY ABORT: no executable produced"; exit 1; }
 
 # 2. Positive control: the export table.

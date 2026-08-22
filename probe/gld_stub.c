@@ -68,12 +68,101 @@ static void gld_stub_loaded(void)
  * forward — never claims what the VM hasn't backed. */
 #include <dlfcn.h>
 #include <pthread.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
 static int g_vm_ok = 0;    /* rung 6b: mask-store guard — the working GLD's actual structure */
 static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
 
 /* RUNG 29: the shared object's processor block stand-in — writable,
  * zeroed (the float uses its own glg_processor_default_data). */
 static unsigned long g_proc_stand_in[64];
+
+/* RUNG 37 — THE FIRST BRIDGE SLOT: gldClear through the virgl
+ * transport, direct (no Mesa yet — the plumbing proof: a GLD
+ * dispatch call reaching the device). The call sequence mirrors
+ * the iokit winsys (Mesa-VirGL, cross-10.6): matching
+ * VMQemuVGAAccelerator → IOServiceOpen type=4 → 0x6000 ctx
+ * create → 0x6008 submit with the FCE1 fence frame
+ * (['FCE1'][cres=0][blob]). The blob is VIRGL_CCMD_CLEAR (=7),
+ * VIRGL_OBJ_CLEAR_SIZE=8: header 7|(0<<8)|(8<<16)=0x00080007,
+ * then pipe-mask, 4 color dwords, depth qword, stencil. Color
+ * (0,0,0,0) for this rung — the plumbing is the point; the
+ * color path is a later slot's business. */
+static io_connect_t g_virgl_conn = MACH_PORT_NULL;
+static uint32_t g_virgl_ctx = 0;
+static int g_virgl_state = 0;   /* 0=untried, 1=ok, -1=failed */
+
+static int virgl_transport_init(void)
+{
+    if (g_virgl_state) return g_virgl_state;
+    g_virgl_state = -1;
+    CFMutableDictionaryRef matching =
+        IOServiceMatching("VMQemuVGAAccelerator");
+    if (!matching) { ep_log("rung37: IOServiceMatching FAILED"); return -1; }
+    io_service_t service =
+        IOServiceGetMatchingService(kIOMasterPortDefault, matching);
+    if (!service) { ep_log("rung37: no VMQemuVGAAccelerator service"); return -1; }
+    kern_return_t kr = IOServiceOpen(service, mach_task_self(), 4,
+                                     &g_virgl_conn);
+    IOObjectRelease(service);
+    if (kr != KERN_SUCCESS) {
+        char b[64]; snprintf(b, sizeof(b), "rung37: IOServiceOpen type=4 FAIL 0x%x", kr);
+        ep_log(b); return -1;
+    }
+    uint64_t out[1] = { 0 };
+    uint32_t out_cnt = 1;
+    kr = IOConnectCallMethod(g_virgl_conn, 0x6000,
+                             NULL, 0, NULL, 0,
+                             out, &out_cnt, NULL, NULL);
+    if (kr != KERN_SUCCESS) {
+        char b[64]; snprintf(b, sizeof(b), "rung37: 0x6000 createVirglContextEx FAIL 0x%x", kr);
+        ep_log(b); IOServiceClose(g_virgl_conn); g_virgl_conn = MACH_PORT_NULL; return -1;
+    }
+    g_virgl_ctx = (uint32_t)out[0];
+    g_virgl_state = 1;
+    char b[64]; snprintf(b, sizeof(b), "rung37: virgl ctx %u OPEN (transport live)", g_virgl_ctx);
+    ep_log(b);
+    return 1;
+}
+
+static long g_clear_count = 0;
+static void gld_clear_real(void* ctx, unsigned mask,
+                           void* a2, void* a3, void* a4, void* a5)
+{
+    (void)ctx; (void)a2; (void)a3; (void)a4; (void)a5;
+    if (++g_clear_count <= 5 || (g_clear_count % 500) == 0) {
+        char b[80];
+        snprintf(b, sizeof(b), "CLEAR-REAL #%ld mask=0x%x (rung 37)",
+                 g_clear_count, mask);
+        ep_log(b);
+    }
+    if (virgl_transport_init() < 0)
+        return;                      /* transport dead: silent vacuous clear */
+    /* GL mask bits -> PIPE bits: COLOR 0x4000->1, DEPTH 0x100->0x10,
+     * STENCIL 0x400->0x20 */
+    uint32_t pipe_mask = ((mask & 0x4000u) ? 0x1u : 0u)
+                       | ((mask & 0x0100u) ? 0x10u : 0u)
+                       | ((mask & 0x0400u) ? 0x20u : 0u);
+    uint32_t blob[9] = {
+        0x00080007u,                  /* CLEAR | len 8 */
+        pipe_mask,
+        0, 0, 0, 0,                   /* color RGBA (run g 1: black) */
+        0, 0x3FF00000u,               /* depth = 1.0 (double bits) */
+        0                              /* stencil */
+    };
+    uint32_t frame[11] = { 0x31454346u, 0 };   /* 'FCE1', cres=0 */
+    for (int i = 0; i < 9; i++) frame[2 + i] = blob[i];
+    uint64_t scalar = g_virgl_ctx;
+    kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6008,
+                                           &scalar, 1,
+                                           frame, sizeof(frame),
+                                           NULL, NULL, NULL, NULL);
+    if (g_clear_count <= 5) {
+        char b[80];
+        snprintf(b, sizeof(b), "  0x6008 submit -> 0x%x (ctx %u)", kr, g_virgl_ctx);
+        ep_log(b);
+    }
+}
 
 /* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
  * registered device id, don't guess it. libGFXShared's
@@ -648,6 +737,7 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
     };
     for (unsigned i = 0; i < sizeof(kSlots)/sizeof(kSlots[0]); i++)
         *(void**)((char*)dispatch + kSlots[i]) = (void*)&gld_noop;
+    *(void**)((char*)dispatch + 0x8) = (void*)&gld_clear_real;  /* RUNG 37 */
     if (limits) {
         for (int i = 0; i < 6; i++)          /* +0..+0x14, the float's zeros */
             limits[i] = 0;

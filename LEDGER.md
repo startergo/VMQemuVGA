@@ -4324,6 +4324,52 @@ sequence for context-create + batch-submit.
 kernel side is unchanged (the existing user client and fence
 machinery).
 
+**RUNG 37 RESULT (2026-08-22) — THE FIRST BRIDGE SLOT IS REAL:
+a GLD dispatch call reached the device. The probe's glClear →
+the real slot → the stub's own kernel virgl context → a
+correctly-formed CLEAR batch, accepted and queued. PREDICTION
+(i) CONFIRMED IN FULL:**
+```
+stub:    CLEAR-REAL #1 mask=0x4000
+         rung37: virgl ctx 256 OPEN (transport live)
+         0x6008 submit -> 0x0
+kernel:  createVirglContextEx selector=0x6000 → ok ctx=0x100 resp=0x1100
+         submitVirglCommandsEx: ctx=0x100 size=36
+           [0]=0x00080007 [1]=0x00000001 [7]=0x3ff00000
+         v3d async submit worker running — QUEUED
+```
+- **The plumbing, proven end to end:** the engine's glClear
+  dispatched through OUR table's clear slot (not the noop); the
+  slot opened the transport itself (matching
+  VMQemuVGAAccelerator → IOServiceOpen type=4 → 0x6000 ctx
+  create → ctx 0x100, the stub's OWN kernel context, separate
+  from the substitute's); built the FCE1 frame with the CLEAR
+  blob (VIRGL_CCMD_CLEAR=7, size 8, header 0x00080007); and
+  submitted — the kernel's dump shows the batch EXACTLY as
+  built, with the mask correctly mapped from the engine's
+  GL_COLOR_BUFFER_BIT (0x4000) to the pipe bit (1). No crash;
+  CGLFlushDrawable still 0.
+- **The float's contract honored:** gldClear(ctx, mask) — the
+  engine passes the mask; color is driver-side state (black for
+  this rung, documented; the color path is a later slot's
+  business).
+- **The 0x1100 rule stands (honest boundary):** resp=0x1100
+  means QEMU PARSED the batch — host ACCEPTANCE is unproven
+  without readback. A bare CLEAR with no Mesa-side context
+  initialization (no bound framebuffer/surface state in the
+  virgl context) may be ignored or rejected host-side — the UTM
+  debug log is the settling artifact, and the first READBACK
+  slot (ReadPixels) is the proof instrument. This rung's
+  registered goal was the PLUMBING; it is achieved.
+- **THE BRIDGE IS BORN: one slot of twenty-two is real.** The
+  pattern scales: each slot that goes real follows the same
+  shape — the float's contract for the args, the virgl protocol
+  for the command, the winsys call sequence for the transport,
+  the kernel log for verification. Next slots in evidence
+  order: ReadPixels (+0x10 — the readback proof for acceptance),
+  then the surface-binding slots (the drawable object's real
+  machinery, where the GA-era surface work plugs in).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
