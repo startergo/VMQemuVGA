@@ -285,13 +285,18 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
         ep_log("  gldChoosePixelFormat -> 0x2716 (no attrs)");
         return GLD_BAD_MATCH;
     }
-    /* The 87-case float parser — restored (rung-12 phase-A map,
-     * now aimed at the correct caller). RUNG 24: the request-struct
-     * constructor read (0xb55d) gives the attr→field mapping —
-     * attrs 5 (DoubleBuffer) and 6 (Stereo) OR bits into the
-     * REQUEST's +0x10 buffer-modes word, which the scorer compares
-     * for EXACT equality against node+0x10 — so the node ECHOES the
-     * walked modes into its own +0x10. */
+    /* The 87-case float parser — SUPERSEDED PROVENANCE WARNING
+     * (LEDGER, 2026-08-22): this case table is the LAST thing
+     * carried from the rung-12 transcription. That transcription
+     * produced three errors found by reading the float's own
+     * builder (the unreachable case-0 gate; obj+0 read as a bundle
+     * header where it is the chain link; +0x14 read as 0x8000
+     * where the float writes 0x8000000). No case here is trusted
+     * by default: the shortcut (2/50/53) is confirmed behaviorally
+     * by stub-log observation; the rest is UNVALIDATED against the
+     * float's own switch (grf.t jump table at 0x17920 — the
+     * replacement source). Cases verified since: 5 and 6 (rung 24,
+     * from the request-constructor read, not this table). */
     unsigned flags = 0x4C8;   /* rung 24, read-justified: 0x480 baseline
                                * (required by EVERY request — the constructor
                                * defaults [request+0xc]=0x480) | 0x40 robust

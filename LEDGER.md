@@ -3335,6 +3335,44 @@ obj+0x24..0x2a = 0; +0x2c/+0x30 = walk counters; +0x34 = claim
   hardware bit; claiming it unbacked violates the boundary —
   the resolution would be the Mesa-backed claim, i.e. the
   original endgame, arriving via the scoring path).
+- **THE HONEST READING OF A 0x100 POSITIVE — pre-registered
+  BEFORE the bisect:** a single hardware bit producing npix=1
+  will look exactly like success. It is not. It is the
+  self-inflicted-result shape this arc has twice mistaken for a
+  system verdict (the phantom wall; the flip experiment's
+  accelerated=1). REGISTERED INTERPRETATION: "the scorer requires
+  a claim we cannot yet back" — a probe result, not a fix; the
+  bit REVERTS after the bisect concludes; the honest way through
+  is the claim being TRUE (the Mesa-backed renderer). The bisect
+  NAMES the requirement; it does not satisfy it.
+- **CONTROL DISCIPLINE (registered):** every bisect point runs
+  {75} AND the control {53} (the shortcut set — expected
+  0/npix=0 at EVERY point regardless of +0xc, verified stable
+  across rungs 19-25); any control deviation invalidates the
+  point (something other than +0xc changed). The passing
+  endpoint (0xFFFF) is re-run at the end — a bisect conclusion
+  carried by a single observation is not a conclusion.
+
+**THE RUNG-12 TABLE — SUPERSEDED, NOT PATCHED (2026-08-22):**
+- Three errors from one transcription, all found by reading the
+  float's builder instead of the map: the unreachable case-0
+  gate (dead gate, rung 18a), obj+0 read as &_mh_bundle_header
+  where it is the chain link (rung 19), +0x14 read as 0x8000
+  where the float writes 0x8000000 (rung 25; +0x18's 1 was
+  never transcribed at all). A fourth is more likely in what
+  remains than in what has been replaced.
+- VALIDATED by the float's builder read: flags base 0x4C8,
+  +0x1c/+0x20 = 1, the walk-default shape, single-node +0.
+- STILL CARRIED FROM IT, UNVALIDATED: the parser case semantics
+  — which attrs consume values, the no-op cases, the 0x2710
+  overflow. (The 2/50/53 shortcut is behaviorally confirmed by
+  stub-log observation; cases 5/6 were re-derived in rung 24
+  from the request-constructor read, not the table.) The
+  replacement source: the float's OWN switch, grf.t jump table
+  at 0x17920.
+- RULE: nothing from the rung-12 table is trusted by default;
+  the float's builder and switch are the source; the stub's
+  parser now carries the provenance warning.
 
 ---
 
