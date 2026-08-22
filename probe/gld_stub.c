@@ -592,7 +592,55 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
     ep_log("  gldAttachDrawable -> 0 (type stored; surface machinery = bridge)");
     return 0;
 }
-EPR(gldInitDispatch)
+/* RUNG 34 — the honest gldInitDispatch: NOOPS IN EVERY SLOT (the
+ * float's own pattern for unsupported capability, grf.t 0x14d3b).
+ * Signature (ctx(rdi), dispatch_block(rsi), limits_out(rdx)); the
+ * float fills exactly the offsets below and zeroes the limits block
+ * (no-drawable branch: maxes [0]/[4] = 0 without ctx+0x218). NO
+ * slots beyond the float's writes — the block's upper extent is
+ * engine-owned. Every rendering call through this table succeeds
+ * vacuously and renders nothing — consistent with the driver's
+ * stated identity. The bridge replaces noops with Mesa calls,
+ * slot by slot. */
+static long g_noop_count = 0;
+static void gld_noop(void* a0, void* a1, void* a2, void* a3,
+                     void* a4, void* a5)
+{
+    (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    if (++g_noop_count <= 10 || (g_noop_count % 1000) == 0) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "NOOP dispatch #%ld", g_noop_count);
+        ep_log(buf);
+    }
+}
+long gldInitDispatch(void* ctx, unsigned long* dispatch,
+                     unsigned* limits, void* a3, void* a4, void* a5)
+{
+    (void)ctx; (void)a3; (void)a4; (void)a5;
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "CALL gldInitDispatch ctx=%p dispatch=%p limits=%p (rung 34)",
+             ctx, (void*)dispatch, (void*)limits);
+    ep_log(buf);
+    if (!dispatch) {
+        ep_log("  gldInitDispatch -> -1 (no dispatch block)");
+        return -1;
+    }
+    /* Every offset the float writes (grf.t 0x14da0-0x14f73): */
+    static const unsigned kSlots[] = {
+        0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38,
+        0x40, 0x48, 0x80, 0x88, 0x90, 0x98, 0xa0, 0xb8,
+        0xc0, 0xc8, 0xd0, 0xf0, 0xf8, 0x100
+    };
+    for (unsigned i = 0; i < sizeof(kSlots)/sizeof(kSlots[0]); i++)
+        *(void**)((char*)dispatch + kSlots[i]) = (void*)&gld_noop;
+    if (limits) {
+        for (int i = 0; i < 6; i++)          /* +0..+0x14, the float's zeros */
+            limits[i] = 0;
+    }
+    ep_log("  gldInitDispatch -> 0 (22 noop slots installed; limits zeroed)");
+    return 0;
+}
 EPR(gldUpdateDispatch)
 /* RUNG 31 — the first return-something-real entry. The float's
  * shape (grf.t 0x1dafc): switch on (name - 0x1F00), six names,

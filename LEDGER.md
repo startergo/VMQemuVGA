@@ -4094,6 +4094,47 @@ call — the first flush through our driver).
   another refusal convention exercise.
 **Exposure:** live-swap, probe-only, no boot.
 
+**RUNG 34 RESULT (2026-08-22) — THE DISPATCH TABLE INSTALLED AND
+ACCEPTED (22 noop slots, no crash); THE FULL APP DRAW CYCLE RAN
+GREEN — current, clear, SWAP; the honest negative: zero
+dispatches through the table — the engine requires a render
+target, and the attach stored only the TYPE. The missing piece
+is the drawable object at ctx+0x218:**
+```
+CGLSetSurface -> 0 (OK)              (the coupling)
+CGLSetCurrentContext -> 0
+glClear done, glGetError = 0x506     (engine-side code — likely "no render target")
+CGLFlushDrawable -> 0                THE SWAP — succeeded
+gldInitDispatch -> 0 (22 noop slots installed; limits zeroed) — ACCEPTED
+52 CALL entries, clean teardown, no crash.
+```
+- **Prediction (i) confirmed except one clause:** the table
+  accepted, the cycle green, the swap returned 0 — but NO noop
+  dispatches logged: glClear stayed ENGINE-side. The 0x506 error
+  (deterministic this run; the earlier 0xeea896e4 was the
+  pre-dispatch state) is the engine's "no render target"-class
+  refusal to dispatch.
+- **The mechanism named by the float's own code:** the float's
+  attach (glsAssignDrawable) creates a DRAWABLE OBJECT at
+  ctx+0x218 — the field the float's InitDispatch limits read
+  derives maxes from ([draw+8]/[draw+0xc], [draw+0x76]). Our
+  mirror stored only the type at +0x210 and left +0x218 NULL —
+  the engine's render path checks the driver's drawable before
+  dispatching.
+- **Instrument notes:** probe_cgs_requester builds as
+  objective-c++ (-x objective-c++; the 10.6 Security headers
+  require it; one pre-existing int→CGLError cast fixed); the
+  first two build failures shipped the AUG-14 BINARY silently —
+  caught by the missing draw-cycle lines (the exit-status
+  lesson, applied).
+- **NEXT (rung 35): the minimal drawable object at ctx+0x218** —
+  read the float's glsAssignDrawable for the object shape (dims
+  at +8/+0xc, the +0x76 word, whatever else the engine reads),
+  mirror it in gldAttachDrawable, and the noop dispatches begin
+  — the first GL calls flowing through the driver's own table.
+  From there, each slot that replaces a noop with a Mesa call
+  is one GL function live: the bridge, slot by slot.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
