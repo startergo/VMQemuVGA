@@ -3683,6 +3683,44 @@ log; either is progress; a crash names a field (crash-report
 instrument standing).
 **Exposure:** live-swap, no boot; probe-only.
 
+**RUNG 29 RESULT (2026-08-22) — gldCreateShared ANSWERED AND
+ACCEPTED (the float's shape, mirrored); gldCreateContext FIRED
+(the next creator); gldDestroyShared freed on the refusal path —
+THE CREATOR CHAIN WALKS END-TO-END:**
+- **The float's gldCreateShared read first (grf.t 0x13ed9,
+  ground truth):** mask gate (request ⊆ gld_io_data's stored
+  mask, nonempty — else 0x2716), `malloc(0x70)`, pthread mutex
+  at +0, arg3 at +0x40, refcount dword at +0x48 (gldDestroy-
+  Context decrements it), NULL list heads +0x50/58/60, processor
+  block pointer at +0x68 (the float's glg_processor_default_data).
+- **Implemented as the mirror:** g_vm_mask (rung 6b) plays
+  gld_io_data's role in the gate; a writable zeroed stand-in for
+  the processor block; gldDestroyShared frees (ownership).
+- **RESULT (mode k, fresh process):**
+```
+CALL gldCreateShared mask=0x1 arg3=0x4
+  gldCreateShared -> 0 (object 0x70 built)     ← ACCEPTED, kept
+CALL gldCreateContext -> -1 (refusal)          ← the next creator
+CALL gldDestroyShared -> 0 (freed)             ← CLEAN teardown
+CGLCreateContext -> -1, ctx NULL, exit 0       ← the refusal propagated verbatim
+```
+  The shared state was accepted and retained; the engine tore it
+  down through OUR destroy only when the next creator refused.
+  **The create → accept → refuse → destroy → free cycle ran
+  end-to-end with no crash.** The -1 error is rung 18's law
+  (verbatim propagation) — recognized, not mistaken for a system
+  verdict.
+- **THE FRONTIER: gldCreateContext** — the last creator before a
+  context exists. Its refusal is now the only thing between the
+  probe and a live CGLContextObj. **NEXT (rung 30):** read the
+  float's gldCreateContext (grf.t — likely the largest object
+  yet; its context feeds the processor init and the dispatch
+  paths the engine later calls through) and implement the honest
+  mirror — the same pattern, one more creator deep. The honesty
+  question arrives WITH it: a real context object means real GL
+  entry calls (gldFlush/gldFinish/gldGetString-class) — the
+  refusals there are the next convention test.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

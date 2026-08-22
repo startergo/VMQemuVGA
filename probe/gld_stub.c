@@ -67,8 +67,13 @@ static void gld_stub_loaded(void)
  * working GLD's own honesty: version-true only after a successful VM
  * forward — never claims what the VM hasn't backed. */
 #include <dlfcn.h>
+#include <pthread.h>
 static int g_vm_ok = 0;    /* rung 6b: mask-store guard — the working GLD's actual structure */
 static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
+
+/* RUNG 29: the shared object's processor block stand-in — writable,
+ * zeroed (the float uses its own glg_processor_default_data). */
+static unsigned long g_proc_stand_in[64];
 
 /* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
  * registered device id, don't guess it. libGFXShared's
@@ -461,8 +466,49 @@ long gldDestroyPixelFormat(void* obj, void* a1, void* a2, void* a3, void* a4, vo
     free(obj);
     return 0;
 }
-EPR(gldCreateShared)
-EPR(gldDestroyShared)
+/* RUNG 29 — the honest gldCreateShared, mirrored from the float's
+ * own implementation (grf.t 0x13ed9): mask gate (request ⊆ the
+ * Initialize-stored mask, nonempty — the rung-6b g_vm_mask playing
+ * gld_io_data's role), malloc(0x70), pthread mutex at +0, arg3 at
+ * +0x40, refcount dword at +0x48 (0 — gldDestroyContext decrements
+ * it), NULL list heads +0x50/58/60, processor block pointer at
+ * +0x68. Writability contract: heap, persistent, freed at the
+ * matching destroy. */
+long gldCreateShared(void** out, unsigned mask, void* arg3,
+                     void* a3, void* a4, void* a5)
+{
+    (void)a3; (void)a4; (void)a5;
+    if (out) *out = (void*)0;               /* THE RULE — always, first */
+    char buf[96];
+    snprintf(buf, sizeof(buf),
+             "CALL gldCreateShared mask=0x%x arg3=%p (vm_mask=0x%x)",
+             mask, arg3, g_vm_mask);
+    ep_log(buf);
+    if (!(mask & g_vm_mask) || (mask & ~g_vm_mask)) {
+        ep_log("  gldCreateShared -> 0x2716 (mask gate, per the float)");
+        return GLD_BAD_MATCH;
+    }
+    unsigned long* obj = (unsigned long*)calloc(1, 0x70);
+    if (!obj) {
+        ep_log("  gldCreateShared -> 0x2716 (alloc fail)");
+        return GLD_BAD_MATCH;
+    }
+    pthread_mutex_init((pthread_mutex_t*)obj, NULL);   /* +0 mutex */
+    obj[8]  = (unsigned long)arg3;          /* +0x40 */
+    /* +0x48 refcount = 0 (calloc) */
+    /* +0x50/58/60 = NULL (calloc) */
+    obj[13] = (unsigned long)&g_proc_stand_in; /* +0x68 */
+    *out = obj;
+    ep_log("  gldCreateShared -> 0 (object 0x70 built, rung 29)");
+    return 0;
+}
+long gldDestroyShared(void* obj, void* a1, void* a2, void* a3, void* a4, void* a5)
+{
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    ep_log("CALL gldDestroyShared -> 0 (freed; rung 29 ownership)");
+    free(obj);
+    return 0;
+}
 EPR(gldCreateContext)
 EPR(gldReclaimContext)
 EPR(gldDestroyContext)
