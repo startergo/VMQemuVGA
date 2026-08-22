@@ -3889,6 +3889,45 @@ installed. THE BRIDGE'S FIRST ACT IS NOW A NAMED ENTRY:**
 
 ---
 
+## RUNG 32 PRE-REGISTERED — THE BRIDGE RUNG, FIRST READ:
+gldInitDispatch, both sides (committed before the read)
+
+**The registered hypothesis (before any reading):** the probe
+never calls CGLSetCurrentContext. glGetString on a NON-CURRENT
+context may dead-end at the CGL/OpenGL-framework layer with no
+driver consultation — making the rung-31 "dispatch gate" reading
+premature. The gate may be CURRENT-CONTEXT (CGL-layer), with
+dispatch installation happening AT make-current (which would
+also explain why gldInitDispatch never fired: the probe never
+made anything current).
+
+**The reads (in order):**
+1. The float's _gldInitDispatch (grf.t) — the contract: what
+   the driver installs, where, with what arg shape.
+2. The engine's call site (gle.t) — WHO calls it, WHEN (create
+   vs first-make-current), and what gates it.
+3. The probe extension: CGLSetCurrentContext(ctx) before the
+   glGetString calls — the cheap discriminator between the
+   current-context gate and the dispatch gate.
+
+**Predictions:**
+- (i) CURRENT-CONTEXT GATE: with the context made current, the
+  engine calls gldInitDispatch at make-current; our refusal
+  surfaces there (CGLSetCurrentContext errors, or the string
+  calls still NULL); the float's contract read names what a real
+  answer installs.
+- (ii) DISPATCH GATE (as rung 31 read it): make-current
+  succeeds with no InitDispatch call; the dispatch installation
+  is deferred to first GL use and dies earlier for another
+  reason the engine read names.
+- (iii) The engine serves strings engine-side once ANY context
+  is current (no driver call at all) — then the strings observed
+  are the ENGINE's, and the driver's string path opens only
+  with dispatch (bridge territory proper).
+**Exposure:** probe-side only; live-swap; no boot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
