@@ -989,10 +989,18 @@ CALL gldTerminateLibrary -> glvmPostTerm forwarded
   Initialize per the disasm), NOT the VM return; my rc==0 guard
   threshold was the wrong structure — honest in direction, wrong in
   shape. The settle-it test is rung 6b below.
-- Residual recorded: post-boot ssh/mDNS loss ~19:41-19:53 with the
-  desktop VISIBLE AND NORMAL (user-observed) — network-stack flake,
-  NOT outcome 4; recovered unattended. Unexplained; third such
-  episode after reboots this session.
+- Residual CORRECTED (same night, from the backgrounded wait's
+  output): the ~19:41-19:53 ssh/mDNS death was NOT a network flake —
+  at 19:56 the guest showed `up 1 min`: **a SPONTANEOUS REBOOT at
+  ~19:55 ended the outage.** The desktop the user saw "normal" was
+  the freshly-rebooted guest; the rung-6 probe (19:56:24, pid 184)
+  ran on the POST-CRASH boot — which still had gate=1 and the bundle
+  (config.plist + /S/L/E persisted), so the rung-6/6b data stands.
+  The stub NEVER loaded in the death window (no constructor line
+  between the 19:40 verify and the probe), so the acting-forward stub
+  is not the carrier; the crash class is UNEXPLAINED and joins the
+  residuals (candidate context: this session's third reboot-adjacent
+  network loss, first confirmed to be a reboot).
 
 **RUNG 6b PRE-REGISTERED (one line; NO REBOOT — the probe dlopens the
 /S/L/E bundle per-process, so the binary swaps on the live gated
@@ -1024,8 +1032,13 @@ rungs: binary swaps on a live gated boot). **STANDING MODEL (earned
 across rungs 4-6b): the loader's cycle is load → Initialize (rc
 ignored) → Version (recorded) → Terminate — a CAPABILITY
 REGISTRATION pass over every candidate GLD; selection/enumeration
-consult something else.** *psvc moved again this boot (0x3a03 after
-0x3903): boot-scoped handle class supported; still open.
+consult something else.** *psvc CORRECTED (same night): rungs 6
+(0x3903, pid 184) and 6b (0x3a03, pid 235) sampled WITHIN ONE BOOT —
+the boot-scoped reading recorded above is FALSIFIED. Full sample:
+rung4 boot {0x3a03, 0x3903}, rung5 boot {0x3903 ×3}, post-crash boot
+{0x3903, 0x3a03} — two adjacent values alternating across processes
+with no clean per-boot or per-ordinal pattern; mach-port-name
+allocation/recycling class; question open.
 - NEXT LOCI (named, not run): (a) gldGetRendererInfo's real contract
   by disassembling GLRendererFloat's implementation — the
   acceptance-path reference for the struct it must fill, preparatory
