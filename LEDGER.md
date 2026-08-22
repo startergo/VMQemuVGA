@@ -4137,6 +4137,52 @@ gldInitDispatch -> 0 (22 noop slots installed; limits zeroed) — ACCEPTED
 
 ---
 
+## RUNG 35 PRE-REGISTERED — the drawable, FIELD-SEPARATED: mirror
+only what the engine consumes; the limits block IS the engine's
+view (committed before the read)
+
+**The refinement rung 34's inference needs (correction of its
+own reading):** the engine CANNOT read the driver's ctx+0x218 —
+the GLD context is driver-opaque. The engine's only view of the
+drawable is the LIMITS BLOCK gldInitDispatch returns — and our
+zeros were the float's own NO-DRAWABLE values (its limits read
+derives real maxes from ctx+0x218 only when a drawable exists).
+**HYPOTHESIS: the 0x506 dispatch gate is the limits block —
+zeros told the engine "no render target."** The generalization
+(recorded as a contract fact): dispatch and likely other engine
+paths are gated on DRIVER-RETURNED STATE, not just entry
+success — preconditions are discoverable by error-class, cheaper
+than by crash.
+
+**The field separation (the rung-12 lesson, applied up front):**
+the float's drawable object mixes (i) ENGINE-relevant products —
+the dims at +8/+0xc and the +0x76 word that feed the limits —
+with (ii) FLOAT-INTERNAL rasterizer state (backing pointers,
+strides, formats the float itself allocates and reads back).
+Mirror ONLY group (i). A wholesale copy risks the rung-12 shape
+of error: a faithful structure whose semantics differ.
+
+**Steps:** (a) log gldAttachDrawable's FULL args (a3/a4 unlogged
+so far — likely dims or a descriptor); (b) read the float's
+glsAssignDrawable minimally — the object's field map, separated
+into the two groups; (c) implement: attach stores the dims (from
+wherever they arrive), InitDispatch derives REAL limits;
+(d) verify: glClear dispatches through the noop table (the
+"NOOP dispatch #1" line) and/or 0x506 clears.
+
+**Predictions:**
+- (i) Real limits → glClear dispatches (first NOOP line), 0x506
+  clears; the app draw cycle is then fully driver-routed.
+- (ii) The dims arrive in the attach args; if not,
+  glsAssignDrawable's read names their source.
+- (iii) The float's drawable carries group-(ii) internals the
+  mirror must NOT copy — recorded field by field.
+**Exposure:** live-swap via probe/deploy_gld.sh (the deploy
+guard: refuses failed builds, unchanged binaries, digest
+mismatches — the stale-deploy class closed); probe-only.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
