@@ -1112,6 +1112,42 @@ fixed in an addendum BEFORE 7b runs — no outcomes guessed past an
 unread gate.
 (Committed before any 7a run — commit-before-experiment rule.)
 
+**RUNG 7a RESULT — ELIMINATION (20:24–20:32; baseline restored
+20:29:58 gate=0):**
+- Statics first: NEITHER the on-disk GLEngine NOR the main
+  OpenGL.framework binary contains a single gld string — the
+  92-name table and the dispatch live ONLY in the dyld shared
+  cache (direct-grep hit). Static extraction from a 10.6 cache
+  needs carving tooling; the behavioral route ran instead.
+- Behavioral (probe/probe_r7.c, four modes, own process each, on a
+  live-swap gated boot with the logging stub):
+  c = control census (main-display mask); m =
+  CGLQueryRendererInfo(0xFFFFFFFF); d = census + 26-property
+  CGLDescribeRenderer walk; p = census + six pixel-format sets
+  (accelerated / offscreen / accel+double / robust / ALL_RENDERERS /
+  ALL+accelerated). **ALL modes: identical cycle
+  Initialize→Version(true)→Terminate; ZERO gldGetRendererInfo
+  calls.** Census unchanged everywhere (nrend=1, rid=0x1020400;
+  ALL_RENDERERS npix=1 — software only).
+- Score vs the registered candidates: (ii) lazy-at-ChoosePixelFormat
+  WEAKENED (every attribute set incl. AllRenderers; contexts were
+  already covered — every rung's requester does
+  CreateContext+SetSurface); (iii) mask mismatch WEAKENED (0xFFFFFFFF
+  was asked; no call occurred at all, so no refusal was possible);
+  (i) display-side claim required — STRENGTHENED BY ELIMINATION.
+- **7b DEFERRED, per the registration's own rule** ("no outcomes
+  guessed past an unread gate"): the gate is not in the CGL API
+  surface, so implementing the contract now would be inert. The true
+  next datum is the cached loader's selection condition. Two routes
+  named: (A) static — carve the dispatch from the shared cache
+  (.map address ranges + the name-table string address); (B) the
+  IOKit-side claim experiment — the kext publishes a
+  renderer-id-class property under the gate (the rung-3 mechanism
+  generalized), converging with npix=0 and the flip experiment.
+- Instrument notes: kCGLRPVendorID does not exist in the 10.6
+  headers; live-swap used again (bundle installed on an
+  already-gated booted system, no reboot needed mid-rung).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
