@@ -3069,6 +3069,60 @@ that fits every observation:**
 - The 2-node diagnostic shape reverts to single-node (the
   discriminator served its purpose; one honest object).
 
+**RUNG 21 RESULT (2026-08-22) — the registered id MEASURED:
+plugin+0x110 = 0x20400, mask 0x1, ONE plugin. The id mismatch is
+FIXED (0x20500, resolving) and EXONERATED in the same run — npix
+still 0. The worker's count machinery fully located: TWO gates —
+a mask-AND on the node's +0x34 and a zero-score-loses ranking:**
+- **Instrument:** `_gfx_plugin_head` is NOT exported (nm -g
+  positive control; the first dlsym attempt failed) —
+  `_gfxGetPlugins` IS exported (T) and returns the head; the
+  engine's own gliChoosePixelFormat uses it exactly that way.
+  The stub calls it once per process (run from
+  gldChoosePixelFormat; first dlopen attempt log: UNRESOLVED →
+  corrected).
+- **The measurement (fresh process, pid 1018):**
+  `rung21: plugin[0] 0x10030cd90 +0x110(id)=0x20400
+  +0x118(mask)=0x1` — ONE plugin. The registered id is
+  **0x20400** — NOT the rung-9 decode's 0x1020400 (off by the
+  0x1000000 bit) and NOT our 0x1AF4-plane. The accumulated
+  display mask is 0x1 (matches the Initialize mask).
+- **The id fix (in the same build, derived at runtime):** the pf
+  object's +8 = measured_plane | 0x0100 = **0x20500**; the
+  engine's 0x20000 decoration is idempotent in-plane; the
+  lookup (id & 0xffff00 = 0x20400 == plugin+0x110) RESOLVES.
+  **RESULT: npix STILL 0** (set 1, exit 0, consult logged,
+  object built with id=0x20500). The id mismatch was real and
+  is now fixed — and was NOT the npix blocker.
+- **Residual (secondary, unexplained):** gldDestroyPixelFormat
+  still never logs. With the id resolving, gliDestroyPixelFormat's
+  per-node plugin lookup would succeed — so the dispatcher's
+  destroy step itself did not execute on our path. Deferred; not
+  load-bearing for npix.
+- **The worker's count machinery (read 0x9660–0xa6d4):** args
+  (attrs, &pf_out, &npix, flag); `*npix = 0` at entry (0x96a5);
+  per online display the CGS mask accumulates (0x9ee1–0x9ef7);
+  then a per-driver, per-node loop with TWO gates:
+  (1) `r14d & node+0x34` — the request's mask ANDed against the
+  node's CLAIM field — zero overlap skips the node (0x9f3f,
+  0xa0fe);
+  (2) a score via 0xba0a per node, `if (max >= score) skip`
+  (0x9f75, 0xa131) with max initialized 0 — **a zero-scoring
+  node never wins even unopposed**;
+  the per-driver winner increments the count local (-0x250 at
+  0xa1bb); exit stores `*pf_out = winner-array`, `*npix = count`
+  (0xa6a4–0xa6bb).
+- **RUNG 22 PRE-REGISTERED — the two-gate discriminator (committed
+  before running):** set the pf object's +0x34 (claim) to
+  0xFFFFFFFF (claim every display) — ONE variable, live-swap.
+  PREDICTION: if gate (1) is the drop, npix ≥ 1 on the {5}-class
+  sets; if npix stays 0, gate (1) passes and gate (2) (the
+  0xba0a score) is the drop — its inputs ([-0x280]/[-0x278]
+  context + node fields read by 0xba0a) become the named next
+  read. The 0xFFFFFFFF claim is a DIAGNOSTIC value only — an
+  honest multi-display claim is a separate decision after the
+  gate is identified.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

@@ -70,6 +70,51 @@ static void gld_stub_loaded(void)
 static int g_vm_ok = 0;    /* rung 6b: mask-store guard — the working GLD's actual structure */
 static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
 
+/* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
+ * registered device id, don't guess it. libGFXShared's
+ * _gfx_plugin_head is an exported global; the stub shares its
+ * process. Walk the plugin list ONCE per process, log +0x110
+ * (deviceID — the id-plane lookup key) and +0x118 (accumulated
+ * display mask) per plugin. The pf object's +8 id is then derived
+ * from the MEASURED plane | our low bits, so the decoration and
+ * the id-keyed lookups stay inside the registered plane. */
+static int g_plugins_dumped = 0;
+static unsigned g_measured_plane = 0;
+
+static void dump_plugins_once(void)
+{
+    if (g_plugins_dumped) return;
+    g_plugins_dumped = 1;
+    void* h = dlopen("/System/Library/Frameworks/OpenGL.framework/"
+                     "Versions/A/Libraries/libGFXShared.dylib", RTLD_LAZY);
+    if (!h) {
+        ep_log("rung21: libGFXShared dlopen FAILED");
+        return;
+    }
+    /* _gfx_plugin_head is internal (not exported); _gfxGetPlugins IS
+     * exported (T) and returns the list head — the engine's own
+     * gliChoosePixelFormat uses it exactly this way (rax = head). */
+    void* (*getplugins)(void) = (void* (*)(void))dlsym(h, "gfxGetPlugins");
+    if (!getplugins) {
+        ep_log("rung21: gfxGetPlugins UNRESOLVED");
+        return;
+    }
+    int n = 0;
+    for (void* p = getplugins(); p && n < 8; p = *(void**)p, n++) {
+        unsigned id   = *(unsigned*)((char*)p + 0x110);
+        unsigned mask = *(unsigned*)((char*)p + 0x118);
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "rung21: plugin[%d] %p +0x110(id)=0x%x +0x118(mask)=0x%x",
+                 n, p, id, mask);
+        ep_log(buf);
+        if (n == 0)
+            g_measured_plane = id & 0xffff00;
+    }
+    if (!n)
+        ep_log("rung21: plugin list EMPTY");
+}
+
 int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
                          void* arg3, void* arg4, int arg5)
 {
@@ -224,6 +269,7 @@ long gldGetVersion(int* a0, int* a1, int* a2, int* a3)
 long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
 {
     if (out) *out = (void*)0;               /* THE RULE — always, first */
+    dump_plugins_once();                    /* rung 21: measure, then derive */
     FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
     if (f) {
         time_t t = time(NULL);
@@ -293,17 +339,26 @@ build:
      *     node, not by filtering. Both were misreads of rax's
      *     provenance: 0x8(%rax) is the OBJECT's own +8, not a
      *     pointed-to driver's. */
+    /* RUNG 21: the +8 id is DERIVED from the measured plugin-plane
+     * so the id-keyed lookups (plugin+0x110 == id & 0xffff00, exact)
+     * resolve. Fallback to the record id if the measurement failed. */
+    unsigned use_id = g_measured_plane ? (g_measured_plane | 0x0100)
+                                       : 0x1AF40100;
     *(unsigned long*)&obj[0] = 0;    /* chain terminator: single slot */
-    obj[2] = 0x1AF40100;   /* +8  our renderer id (engine ORs 0x20000 -> 0x1AF60100) */
+    obj[2] = use_id;       /* +8  (engine ORs 0x20000 — idempotent in-plane) */
     obj[3] = flags;        /* +0xc */
     obj[5] = 0x8000;       /* +0x14 constant */
     obj[7] = 0x1;          /* +0x1c */
     obj[8] = 0x1;          /* +0x20 */
     obj[13] = RUNG11_CLAIM; /* +0x34 our display claim */
     *out = obj;
-    ep_log(complete
-           ? "  gldChoosePixelFormat -> 0 (object BUILT, +0=NULL chain end, walk complete; id=0x1AF40100)"
-           : "  gldChoosePixelFormat -> 0 (object BUILT, +0=NULL chain end, after truncation; id=0x1AF40100)");
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "  gldChoosePixelFormat -> 0 (object BUILT, +0=NULL, "
+                 "id=0x%x from plane 0x%x)", use_id, g_measured_plane);
+        ep_log(buf);
+    }
     return 0;
 }
 /* RUNG 19 — the ownership contract's other half. gliDestroyPixelFormat
