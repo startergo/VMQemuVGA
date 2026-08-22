@@ -1277,6 +1277,11 @@ MISREAD VALUE (2026-08-21 late night):**
   the corrected address 0x7fff84625d2b → libGFXShared __TEXT
   0x7fff84621000-0x7fff84627000). My earlier on-disk grep of this
   file ("0/MISSING") was the silent-tool-failure class AGAIN.
+  Independently confirmed by the (slow, TCG) exhaustive on-disk
+  sweep finishing later: the ONLY system files containing
+  "gldGetRendererInfo" are libGFXShared.dylib and GLRendererFloat —
+  triple-confirmed ownership (cache map, direct disassembly,
+  sweep).
 - Path template confirmed in its cstrings: "/System/Library/"
   "Extensions/" + ".bundle/Contents/MacOS/" + IOGLBundleName +
   GL_RESOURCES + GLRendererFloat + the name table.
