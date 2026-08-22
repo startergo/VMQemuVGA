@@ -4288,6 +4288,44 @@ CGLFlushDrawable -> 0
 
 ---
 
+## RUNG 37 PRE-REGISTERED — THE FIRST BRIDGE RUNG: one real slot
+(gldClear) through the virgl transport (committed before
+implementation)
+
+**The design (the light end of the bridge first):** the clear
+slot (+0x8 in the dispatch table) goes REAL by DIRECT TRANSPORT
+— the stub builds a VIRGL_CCMD_CLEAR batch and submits it
+through the kernel's virgl user client itself, NO Mesa linkage
+yet. Increment C proved this exact command path byte-exact; the
+kernel logs every batch (verification without readback). Later
+slots bring Mesa in for real GL state; the first slot proves
+the PLUMBING: a GLD dispatch call reaching the device.
+
+**The reads that shape it:** (a) the float's gldClear (grf.t) —
+the slot's arg shape (does the engine pass color/mask, or does
+the driver read its ctx?); (b) the iokit winsys source
+(Mesa-VirGL, branch cross-10.6) — the minimal user-client call
+sequence for context-create + batch-submit.
+
+**Predictions:**
+- (i) The clear slot fires on the probe's glClear (replacing
+  the noop); the stub submits a virgl clear batch; kernel.log
+  shows the batch on a NEW kernel ctx (the stub-created one);
+  no crash; CGLFlushDrawable still 0.
+- (ii) The transport open fails from the stub's process (the
+  user client's matching/gate) — the error names the missing
+  step (e.g. the accel-surface gate, or the client requires the
+  GA path).
+- (iii) The batch is rejected by the device (command malformed
+  without Mesa's context setup — virgl may need ctx
+  initialization beyond create) — the fence/response code names
+  it.
+**Exposure:** live-swap via the guard; probe-only; no boot. The
+kernel side is unchanged (the existing user client and fence
+machinery).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
