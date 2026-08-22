@@ -3723,6 +3723,30 @@ CGLCreateContext -> -1, ctx NULL, exit 0       ← the refusal propagated verbat
 
 ---
 
+## RUNG 30 PRE-REGISTERED — the float's gldCreateContext and the
+honest mirror (committed before the read)
+
+**Method (established):** the float's implementation first
+(grf.t `_gldCreateContext`), then the mirror; verify by mode k.
+
+**Predictions (registered before reading):**
+- (i) The float's context is a large object (its malloc size is
+  the first datum), storing the shared pointer and initializing
+  a processor/dispatch block it later calls through. The honest
+  mirror: same size, shared stored, writable zeros, the stand-in
+  where the float uses its processor.
+- (ii) With CreateContext answered, CGLCreateContext returns 0
+  with a REAL ctx and the first GL call fires the next entry
+  (gldGetString-class) — the convention's meeting with actual
+  rendering calls.
+- (iii) The engine calls through a context field immediately and
+  crashes — the crash names the field; the float's values fix it
+  (the crash-report instrument standing).
+**Exposure:** live-swap, no boot; probe-only. The desktop is
+untouched (probe process only).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
