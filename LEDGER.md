@@ -4855,6 +4855,74 @@ kernel:  transferFromHost3D: Resource 257 pixels copied from host to guest
 
 ---
 
+## RUNG 44 PRE-REGISTERED — THE PRESENTATION WRITE: the proof
+color ON SCREEN (committed before implementation)
+
+**The read that changed the design:** the presentation door
+already EXISTS in the kernel — `0x600C hostRelayBlit`
+(`./FB/VMVirtIOGPU.cpp:8037`, the relay era's proven present,
+2026-08-20). Its GA branch does the whole presentation kernel-
+side: synchronous transferFromHost3D of the resource →
+row-copy into the GA-BOUND SURFACE's backing (stride =
+bytes_per_row = 2080 — the extent-stride rule already
+honored there) → `vmSurfaceFlushToFramebuffer` (surface →
+desktop backing at the surface's LIVE shape rect) →
+transferToHost2D + flushResource (the rect to the host
+scanout). A userspace copy into the mapped view would be a
+second, parallel presentation path — NOT taken; the kernel
+door is the single path, already built and exercised by the
+Mesa winsys era.
+
+**The gates 0x600C checks (all per the CALLING client —
+`m_user_geom` recorded at 0x6002, backing at 0x6003; all
+satisfied by the rung-43 chain on g_virgl_conn):**
+userResourceFmt/Dims (geometry table), userResourceCtx
+(`ctx=0 silently does the wrong thing — recorded law`),
+findUserBacking. The GA-bound id is GLOBAL
+(vmSurfaceRegistrySetGABound at SetSurface — ours set at the
+0x901 bind). Contract: the caller fence-waits first — the
+proof's 0x600B wait stands right before the call.
+
+**The change (one call):** in gld_readpixels_real, after the
+proof verdict — 0x600C with scalars {res, 0, 0, w, h} (the
+GA branch uses w,h for the row copy; x,y are the fallback
+path's). Additive; the proof's own lines unchanged.
+
+**Predictions:**
+- (i) **THE ON-SCREEN PROOF, in-window:** uniform medium
+  blue ≈ RGB(64,128,191) — the clear color (R,G,B)=(.25,.5,
+  .75); the readback bytes are BGRA-ordered (B=.75=BF first,
+  rung 38's observation) into kIO32BGRAPixelFormat, so the
+  displayed color equals the clear color either way the
+  byte-labels read. Kernel logs `hostRelayBlit: GA path —
+  surface ... flush rect 320x262@200,588`. WindowServer's
+  title bar stays drawn over the top 22px (the surface spans
+  the full window).
+- (ii) **ON-SCREEN BUT MISPLACED:** the blue rect appears on
+  the desktop OUTSIDE the window — the CGS-origin artifact
+  (CGSGetWindowBounds y=588 read as top-left when CGS counts
+  bottom-up; window truly at top-left y≈230 on 1080). The
+  GA-path kernel line still logs. STILL the presentation
+  write proven (pixels through the whole chain); the fix is
+  named by which corner the rect lands in: a y-flip at
+  SetShape (y_tl = display_h − y_cgs − h).
+- (iii) **NOTHING VISIBLE:** 0x600C nonzero — the codes
+  discriminate: Unsupported = not in geometry table / no
+  recorded ctx; NotReady = no attached backing / desktop
+  backing missing. Or Success with no rect — the shape
+  off-FB branch (cannot fire: 200+320≤1920, 588+262≤1080).
+- (iv) The proof lines fire exactly as rung 43 (window-size
+  round trip stands; the relay is additive after).
+
+**Instruments:** the stub log (the 0x600C return), the
+kernel log (the GA-path line, capped at 8), the SCREEN
+(user visual — the first pixels-on-screen class since the
+readfb baseline; screenshot optional corroboration).
+
+---
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
