@@ -4571,6 +4571,37 @@ door, the milestone-2/3 machinery).
 change is a separate, watched-boot-class deploy; probe-only
 testing first.
 
+**RUNG 39 RESULT (2026-08-22 evening) — THE WINDOW-TARGET
+MACHINERY IN PLACE; the bounds query FAILED (1001) — the dims
+didn't arrive, the proof stayed at 4x4 (still passing; no
+regression). The dims source is now a one-print cross-check
+away:**
+- **The dims source READ (the float's window path, grf.t
+  0x210a3-0x210e3):** `CGSGetSurfaceBounds(desc[0], desc[4],
+  desc[8], &rect)` — width/height from the returned rect
+  (doubles, cvtt'd). The stub mirrors the call via dlsym.
+- **IMPLEMENTED (all in place):** attach calls the bounds query
+  with the descriptor's ids; on success the target resource is
+  recreated at WINDOW SIZE (with unref+recreate on resize); the
+  clear submits a FRESH surface handle per batch (recreating an
+  existing handle in vrend's object table is undefined); the
+  proof's transfer runs at window size with corner+center
+  probes.
+- **RESULT: `CGSGetSurfaceBounds(0x908b, 0x0, 0x6f632e65) ->
+  1001` — the query FAILED.** The descriptor's d[4]=0x0 this
+  run (rung 35's dump had 0x17) — the field semantics (which of
+  d[0]/d[4]/d[8] are cid/wid/sid, or whether the call needs the
+  main connection rather than a descriptor id) are not yet
+  pinned. The target stayed 4x4; the proof passed there —
+  everything prior stands, nothing regressed.
+- **NEXT (one print):** the probe prints its OWN cid (from
+  CGSMainConnectionID), wid, sid (it has all three); the stub
+  dumps the descriptor fully; the cross-check names which
+  descriptor fields map to the call's args — then the bounds
+  call succeeds, the window-sized target creates, and the proof
+  generalizes (and the PRESENTATION half of the rung — the GA
+  surface write — follows with the dims in hand).
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

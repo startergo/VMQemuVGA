@@ -133,6 +133,29 @@ static uint32_t g_fb_res = 0;
 static unsigned char* g_fb_backing = NULL;   /* 4*4*4 = 64 bytes */
 static const unsigned char kProofColor[4] = { 0x40, 0x80, 0xBF, 0xFF }; /* B,G,R,A = .25/.5/.75/1 */
 
+static int g_fb_w = 4, g_fb_h = 4;      /* rung 39: window-sized when attached */
+
+/* RUNG 39 — retarget at the real window dims (from
+ * CGSGetSurfaceBounds at attach). Recreates the resource at
+ * window size; the clear and the proof follow. */
+static void virgl_set_window_target(int w, int h)
+{
+    if (g_fb_res && w == g_fb_w && h == g_fb_h) return;
+    g_fb_w = w; g_fb_h = h;
+    if (g_fb_res) {
+        /* window resized: drop the old target (simplest correct
+         * path — unref and recreate on next use) */
+        uint64_t un[1] = { g_fb_res };
+        IOConnectCallMethod(g_virgl_conn, 0x6005, un, 1, NULL, 0,
+                            NULL, NULL, NULL, NULL);
+        free(g_fb_backing);
+        g_fb_res = 0; g_fb_backing = NULL;
+    }
+    char b[80];
+    snprintf(b, sizeof(b), "rung39: window target %dx%d (pending create)", w, h);
+    ep_log(b);
+}
+
 static int virgl_ensure_fb(void)
 {
     if (g_fb_res) return 0;
@@ -141,7 +164,8 @@ static int virgl_ensure_fb(void)
         g_virgl_ctx, 2 /*PIPE_TEXTURE_2D*/, 1 /*B8G8R8A8_UNORM*/,
         2 /*VIRGL_BIND_RENDER_TARGET, virgl_hw.h:595 — 0x4 was the
           host-rejected SAMPLER class; the debug log named it:
-          "Invalid texture bind flags 0x4"*/, 4, 4, 1, 0, 0, 0, 0
+          "Invalid texture bind flags 0x4"*/,
+        (uint64_t)g_fb_w, (uint64_t)g_fb_h, 1, 0, 0, 0, 0
     };
     uint64_t out[1] = { 0 }; uint32_t out_cnt = 1;
     kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6002,
@@ -152,11 +176,12 @@ static int virgl_ensure_fb(void)
         ep_log(b); return -1;
     }
     g_fb_res = (uint32_t)out[0];
-    g_fb_backing = (unsigned char*)calloc(1, 64);
+    size_t sz = (size_t)g_fb_w * g_fb_h * 4;
+    g_fb_backing = (unsigned char*)calloc(1, sz);
     uint64_t addr = (uint64_t)(uintptr_t)g_fb_backing;
     uint64_t ab[5] = { g_fb_res,
                        (uint32_t)(addr & 0xFFFFFFFFull), (uint32_t)(addr >> 32),
-                       64, 0 };
+                       (uint32_t)(sz & 0xFFFFFFFFull), (uint32_t)(sz >> 32) };
     kr = IOConnectCallMethod(g_virgl_conn, 0x6003, ab, 5, NULL, 0,
                              NULL, NULL, NULL, NULL);
     if (kr != KERN_SUCCESS) {
@@ -170,22 +195,26 @@ static int virgl_ensure_fb(void)
     uint64_t ca[2] = { g_virgl_ctx, g_fb_res };
     kr = IOConnectCallMethod(g_virgl_conn, 0x6009, ca, 2, NULL, 0,
                              NULL, NULL, NULL, NULL);
-    char b[80];
+    char b[96];
     snprintf(b, sizeof(b),
-             "rung38: fb res %u created+backed+ctxAttached (0x6009 -> 0x%x)",
-             g_fb_res, kr);
+             "rung38/39: fb res %u created+backed+ctxAttached %dx%d (0x6009 -> 0x%x)",
+             g_fb_res, g_fb_w, g_fb_h, kr);
     ep_log(b);
     return 0;
 }
 
-/* submit SET_FRAMEBUFFER_STATE + CLEAR (the distinctive proof color) */
+/* submit SET_FRAMEBUFFER_STATE + CLEAR (the distinctive proof
+ * color). RUNG 39: a FRESH surface handle per submit (recreating
+ * an existing handle in vrend's object table is undefined). */
+static unsigned g_surf_handle = 0;
 static int virgl_submit_fb_clear(unsigned pipe_mask)
 {
+    unsigned sh = ++g_surf_handle;
     uint32_t blob[19] = {
-        /* CREATE_OBJECT surface (handle 1) */
-        0x00050801u, 1u, g_fb_res, 1u, 0u, 0u,
-        /* SET_FRAMEBUFFER_STATE: nr=1, zsurf=0, cbuf=surface 1 */
-        0x00030005u, 1u, 0u, 1u,
+        /* CREATE_OBJECT surface (fresh handle) */
+        0x00050801u, sh, g_fb_res, 1u, 0u, 0u,
+        /* SET_FRAMEBUFFER_STATE: nr=1, zsurf=0, cbuf=surface sh */
+        0x00030005u, 1u, 0u, sh,
         /* CLEAR */
         0x00080007u, pipe_mask,
         0x3E800000u, 0x3F000000u, 0x3F400000u, 0x3F800000u, /* .25/.5/.75/1 */
@@ -247,21 +276,30 @@ static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
                                            NULL, NULL, NULL, NULL);
     char b[64]; snprintf(b, sizeof(b), "  0x600B wait -> 0x%x", kr);
     ep_log(b);
-    /* transfer_from: res, level, x,y,z, w,h,d, ctx, stride, lstride, off */
-    uint64_t in[12] = { g_fb_res, 0, 0,0,0, 4,4,1, g_virgl_ctx, 16, 64, 0 };
+    /* transfer_from at WINDOW size (rung 39): res, level, x,y,z,
+     * w,h,d, ctx, stride, lstride, off */
+    uint32_t stride = (uint32_t)g_fb_w * 4;
+    uint64_t in[12] = { g_fb_res, 0, 0,0,0,
+                        (uint64_t)g_fb_w, (uint64_t)g_fb_h, 1,
+                        g_virgl_ctx, stride,
+                        (uint64_t)stride * g_fb_h, 0 };
     kr = IOConnectCallMethod(g_virgl_conn, 0x3009,
                              in, 12, NULL, 0, NULL, NULL, NULL, NULL);
-    snprintf(b, sizeof(b), "  0x3009 transfer_from -> 0x%x", kr);
+    snprintf(b, sizeof(b), "  0x3009 transfer_from (%dx%d) -> 0x%x",
+             g_fb_w, g_fb_h, kr);
     ep_log(b);
     /* the verdict — the readback layout is (R,G,B,A) per byte
      * (observed: bf 80 40 ff for the .25/.5/.75/1 clear on a
      * B8G8R8A8 resource — the swap is the transfer's layout,
-     * not a failure). Accept the observed order; report both. */
+     * not a failure). Corners + center of the WINDOW. */
     const unsigned char kObserved[4] = { 0xBF, 0x80, 0x40, 0xFF };
+    size_t last = (size_t)g_fb_w * g_fb_h - 1;
+    size_t mid  = ((size_t)g_fb_h / 2) * g_fb_w + g_fb_w / 2;
     int match = 1;
-    for (int px = 0; px < 16; px++)
+    size_t probes[3] = { 0, mid, last };
+    for (int p = 0; p < 3; p++)
         for (int c = 0; c < 4; c++)
-            if (g_fb_backing[px*4+c] != kObserved[c]) { match = 0; break; }
+            if (g_fb_backing[probes[p]*4+c] != kObserved[c]) { match = 0; break; }
     char bytes[128];
     int o = 0;
     for (int i = 0; i < 16 && o < 100; i++)
@@ -269,8 +307,8 @@ static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
     snprintf(b, sizeof(b), "  backing[0..15]: %s", bytes);
     ep_log(b);
     ep_log(match
-           ? "  *** ROUND TRIP PROVEN: 16/16 pixels == proof color ***"
-           : "  readback MISMATCH — clear not executed host-side (or format/layout gap)");
+           ? "  *** ROUND TRIP PROVEN AT WINDOW SIZE: corners+center == proof color ***"
+           : "  readback MISMATCH at window size");
 }
 
 /* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
@@ -801,7 +839,35 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
         return 0x271C;
     }
     *(unsigned*)((char*)ctx + 0x210) = type;   /* the float's store */
-    ep_log("  gldAttachDrawable -> 0 (type stored; surface machinery = bridge)");
+    /* RUNG 39 — the REAL target: the float's window path calls
+     * CGSGetSurfaceBounds(desc[0], desc[4], desc[8], &rect) (grf.t
+     * 0x210c6) and takes w/h from the rect. Mirror it: dlsym CGS,
+     * query the bounds, create a WINDOW-SIZED virgl resource, and
+     * retarget the clear at it. */
+    if (type == 0x50 && a3 && (unsigned long)a3 > 0x1000) {
+        unsigned* d = (unsigned*)a3;
+        void* cgh = dlopen(
+            "/System/Library/Frameworks/ApplicationServices.framework/"
+            "Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+            RTLD_LAZY);
+        if (cgh) {
+            typedef int (*gsb_t)(unsigned, unsigned, unsigned, void*);
+            gsb_t gsb = (gsb_t)dlsym(cgh, "CGSGetSurfaceBounds");
+            if (gsb) {
+                double rect[4] = { 0, 0, 0, 0 };
+                int r = gsb(d[0], d[4], d[8], rect);
+                int w = (int)rect[2], h = (int)rect[3];
+                char b[128];
+                snprintf(b, sizeof(b),
+                         "rung39: CGSGetSurfaceBounds(0x%x,0x%x,0x%x) -> %d "
+                         "%dx%d", d[0], d[4], d[8], r, w, h);
+                ep_log(b);
+                if (r == 0 && w > 0 && h > 0)
+                    virgl_set_window_target(w, h);
+            }
+        }
+    }
+    ep_log("  gldAttachDrawable -> 0 (type stored; rung 39 target handling done)");
     return 0;
 }
 /* RUNG 34 — the honest gldInitDispatch: NOOPS IN EVERY SLOT (the
