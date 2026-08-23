@@ -5123,6 +5123,71 @@ rung45: VIEW at shape_off (r588+800): bf8040ffbf8040ffbf8040ffbf8040ff
 
 ---
 
+## RUNG 46 PRE-REGISTERED — THE SWAP SLOT: present at
+CGLFlushDrawable (committed before implementation)
+
+**The reads (GLEngine disassembly, /tmp/gle.bin — the
+swap's whole path):**
+- **gliSwapBuffers (0x15dd09):** gates `[ctx+0x6540]==0 &&
+  [ctx+0x798c]!=0` → `jmp *[ctx+0x66b0]([ctx+0x65b8])` —
+  the DRIVER's swap, called with the DRIVER ctx. No table
+  slot, no dispatch core — a direct per-context entry.
+- **[0x798c]'s source (0x23bc):** a copy of the per-renderer
+  SUB-BLOCK's byte at +0x2d — a driver-declared capability.
+  The sub-block pointer is the 4th argument (rcx) of the
+  engine's SIX-arg gldCreateContext call (0x180c: `leaq
+  0x79b8(%rsi,%rax), %rcx`), stored by the engine as
+  [ctx+0x65c0]. The stub's 2-arg mirror ignored it → byte
+  0 → the swap call silently skipped → CGLFlushDrawable's
+  vacuous 0.
+- **The install entry (0x15d132):** the engine calls
+  DISPATCH TABLE SLOT +0x50 as `(driver_ctx, &engine
+  [0x65c8], &engine[0x66d0])` — the driver fills the first
+  block with its entries: +0xE0 = flush (0x66a8), +0xE8 =
+  swap (0x66b0); 0x66b8 (+0xF0) fence-class (0xe2b1c's
+  reader). The stub's kSlots NEVER included +0x50 (rung 34
+  mirrored the float's writes only to 0x14f73, before the
+  0x14f8a+ stores) — a rung-34 gap, corrected here.
+- Corroboration the float fills +0x50: grf's InitDispatch
+  stores at 0x14f8a-0x14f9e include `movq %rax, 0x50(%rsi)`
+  from the shared's +0x740 block.
+
+**The changes (stub only — live-swap, no kext, no boot):**
+1. gldCreateContext: write `[a4+0x2d] = 1` (a4 = rcx = the
+   sub-block), log the pointer and a readback.
+2. gldInitDispatch: fill slot +0x50 with the install entry
+   (gld_fill_engine_calls); everything else unchanged.
+3. gld_fill_engine_calls(dctx, block1, block2): write
+   block1+0xE0 = flush entry (log-only), block1+0xE8 = the
+   SWAP entry; log; return 0.
+4. THE SWAP ENTRY: log "rung46: SWAP", then run the
+   presentation exactly as the proof does — ensure_fb →
+   submit clear (mask 4) → 0x600B wait → 0x600C relay.
+
+**Predictions:**
+- (i) **THE SWAP FIRES AT CGLFlushDrawable:** the install
+  entry logs at attach time; "rung46: SWAP" logs BETWEEN
+  the probe's glReadPixels and teardown (timestamp order =
+  the discriminator); the kernel logs a second GA-path
+  line; the window re-blues at flush.
+- (ii) **The install entry never called:** the call site's
+  gates ([0x7988], [0x6540/0x6548]-derived) skip it in our
+  configuration → block1 never filled → swap never fires →
+  CGLFlushDrawable stays vacuous. The fallback wire then
+  named: find the engine-ctx pointer another way (the
+  attach path's stack) or satisfy the gate.
+- (iii) **Crash or wrong-block write:** the +0x2d write
+  lands somewhere unexpected (arg misread) — recovery is a
+  stub redeploy (live-swap, minutes); the a4 log line
+  adjudicates.
+- (iv) Everything else unchanged: the proof chain's lines
+  identical (the swap is additive).
+
+**Exposure:** stub live-swap via the deploy guard; probe
+rerun; no kext; no reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
