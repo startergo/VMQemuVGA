@@ -52,23 +52,24 @@ The substitute reaches only processes launched with `DYLD_FRAMEWORK_PATH`,
 never WindowServer. A registry-named renderer bundle (`VMVirtIOGLEngine`),
 loaded by the system's own CGL, reaches every process. It loads, passes the
 loader's validation handshake, enumerates as the display's renderer
-(`nrend=1`), and completes the full context lifecycle — pixel format, shared
-state, context creation, dispatch table, drawable attach, surface coupling,
-teardown. As of 2026-08-23 the bridge is real and **presented**: `glClear` and
-`glReadPixels` dispatch through the driver's own table to the host GPU over
-virgl, the readback is byte-exact at window size, and the rendered content
-reaches the **screen** through the kext's window-surface chain — a probe
-window visibly fills with the rendered color, kernel-verified end to end
-(surface backing write → desktop flush → scanout push); a coordinate-system
-bug in the relay's surface write was root-caused and fixed to get there.
-Presentation currently fires from the readback path: the app's own
-`CGLFlushDrawable` is decoded to its last gate — the engine installs driver
-flush/swap entries only for contexts whose renderer is claimed hardware, and
-that claim (the `0x100` bit, deliberately withheld until the transport could
-back it) is the named next change. The remaining GL entries still refuse
-honestly; each becomes a transport call, slot by slot. The contract was
-recovered by disassembling this guest's own `GLEngine` and `GLRendererFloat`;
-it is **10.6-specific and not portable** to later releases.
+(`nrend=1`, now reported **accelerated**), completes the full context
+lifecycle, and — as of 2026-08-23 — **presents at the app's own flush**:
+`glClear` and `glReadPixels` dispatch through the driver's table to the host
+GPU over virgl (byte-exact window-size readback), and `CGLFlushDrawable`
+tail-calls the driver's swap, which relays the rendered content through the
+kext's window-surface chain to the screen (surface write → desktop flush →
+scanout push). The renderer's `0x100` hardware claim — held back until the
+transport could back it — is now **set in the shipped configuration and
+backed**: accelerated pixel formats match, and the flush-triggered
+presentation is kernel- and stub-log verified end to end (the visible
+on-screen check was taken for the same relay chain at the readback
+trigger; the flush trigger itself is log-verified). Remaining honest
+refusals: the other ~20 GL entries are noops, the clear color is a fixed
+proof color rather than the app's, and the renderer limits/config block is
+unfilled. Each refusal becomes a transport call, slot by slot. The contract
+was recovered by disassembling this guest's own `GLEngine` and
+`GLRendererFloat`; it is **10.6-specific and not portable** to later
+releases.
 
 **Not yet verified:** sustained frame rates under real workloads, multiple
 concurrent contexts, and resize under load. Performance is unmeasured except
@@ -113,7 +114,7 @@ or the aperture is family-scoped.
 | `virgl_iokit_winsys` | Mesa-driven `glClear` + `glReadPixels` byte-exact through virgl; `GALLIUM_DRIVER=softpipe` in the same binary gives an identical result. |
 | 3D rendering | Triangle and textured triangle PASS on virgl, 3/3 pixels, matching the softpipe reference. Exercises GLSL compilation, shader objects, vertex buffers, vertex element state, textures, sampler state and `DRAW_VBO`. |
 | Substitute `OpenGL.framework` | **Working.** Re-exports Mesa for `gl*`, forwards unimplemented `CGL*` to a renamed copy of the real framework. Must be a *universal* driver — its export list is Apple's, not any app's imports, since QuartzCore binds 107 CGL symbols and CoreVideo 51, and a missing export makes those frameworks fail to load. Verified by PowerFox rendering web content and the WebGL Aquarium running full-screen. |
-| GLD (system-wide route) | **Two slots real and presented.** Registry-named bundle at `/S/L/E/<name>.bundle/Contents/MacOS/<name>`, named by `IOGLBundleName` on the accelerator node. Validation handshake passes, census returns `nrend=1`, full context lifecycle and clean teardown verified. `glClear`/`glReadPixels` dispatch through the driver's own table to the host GPU; readback byte-exact at window size; the rendered color **visible on screen** through the window-surface chain (kernel-verified end to end). The app's own `CGLFlushDrawable` presents once the renderer's `0x100` hardware claim flips — the engine only installs driver swap entries for hardware-claimed renderers. Remaining entries refuse honestly. Contract recovered by disassembly — 10.6-specific. |
+| GLD (system-wide route) | **Presents at the app's flush.** Registry-named bundle at `/S/L/E/<name>.bundle/Contents/MacOS/<name>`, named by `IOGLBundleName` on the accelerator node. Validation handshake passes, census returns `nrend=1` reported accelerated, full context lifecycle and clean teardown verified. `glClear`/`glReadPixels` dispatch through the driver's own table to the host GPU (readback byte-exact at window size); `CGLFlushDrawable` tail-calls the driver's swap, which relays to the screen — the same chain visually verified at the readback trigger. The `0x100` hardware claim is set in the shipped configuration and backed. Remaining ~20 entries noop; the clear color is a fixed proof color. Contract recovered by disassembly — 10.6-specific. |
 | Per-resource fences | DRM `virtgpu_ioctl` contract implemented end to end: fence handles per submit, `last_seq` per resource, a WAIT selector, transfers fencing themselves, global drain retired. ~400 batches/s at 0-3 ms each, zero timeouts. |
 
 ### Devices
@@ -174,8 +175,9 @@ or the aperture is family-scoped.
   statically, since two C++ runtimes in one process is unfixable by paths.
   PowerFox renders web content through this today.
 - **A GLD reaches processes the substitute cannot** — including WindowServer.
-  See [Status](#status). It loads, enumerates and holds contexts; it does not
-  render yet.
+  See [Status](#status). It loads, enumerates, holds contexts, and dispatches
+  `glClear`/`glReadPixels` through its own table to the host GPU with the
+  result visible on screen. Most entries still refuse honestly.
 - **Not yet covered:** sustained frame rates, multiple concurrent contexts,
   resize under load, and resource reuse across frames.
 
@@ -192,8 +194,9 @@ compiled inside virglrenderer and targets a Linux/Mesa guest.
 
 If you need 3D in a Snow Leopard VM today: launch the app with
 `DYLD_FRAMEWORK_PATH` pointing at the substitute framework. That path renders
-real web content and full-screen WebGL. The system-wide route needs no
-environment variable but does not render yet.
+real web content and full-screen WebGL. The system-wide GLD route needs no
+environment variable and its first two slots present real pixels, but most GL
+entries still refuse — it is not yet a general renderer.
 
 ---
 
@@ -322,6 +325,11 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
   in-kernel (no GL, no Mesa). The three routes share only the kext transport
   and the host device — the third being the GLD, whose ladder lives in
   [`LEDGER.md`](LEDGER.md).
+- [`docs/gld-contract.md`](docs/gld-contract.md) — the third route's contract:
+  how a guest driver becomes the system's OpenGL renderer, reachable by every
+  process including WindowServer. Split into the structural mechanism (likely
+  to hold across releases) and this build's measured values (hypotheses
+  anywhere else), plus the method and the failure modes.
 - [`.claude/CLAUDE.md`](.claude/CLAUDE.md) — environment facts and the ground
   rules this project works under.
 - [`.claude/rules/`](.claude/rules/) — topic-specific notes on the virtio
@@ -350,5 +358,7 @@ The CGL dispatch problem — apps binding `gl*` to Apple's OpenGL.framework
 under two-level namespace — was solved on 2026-08-20 by a substitute
 `OpenGL.framework`, and PowerFox now renders real web content and full-screen
 WebGL through it. A system-wide GLD route, needing no environment variable,
-loads and enumerates as of 2026-08-24 but does not render yet. See
-[3D status](#3d-status) above and [LEDGER.md](LEDGER.md).
+loads and enumerates and — as of 2026-08-23 — dispatches its first two GL
+entries through to the host GPU with the result visible on screen. Most
+entries still refuse. See [3D status](#3d-status) above and
+[LEDGER.md](LEDGER.md).
