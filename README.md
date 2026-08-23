@@ -61,11 +61,12 @@ kext's window-surface chain to the screen (surface write → desktop flush →
 scanout push). The renderer's `0x100` hardware claim — held back until the
 transport could back it — is now **set in the shipped configuration and
 backed**: accelerated pixel formats match, and the flush-triggered
-presentation is kernel- and stub-log verified end to end (the visible
-on-screen check was taken for the same relay chain at the readback
-trigger; the flush trigger itself is log-verified). Remaining honest
-refusals: the other ~20 GL entries are noops, the clear color is a fixed
-proof color rather than the app's, and the renderer limits/config block is
+presentation is kernel- and stub-log verified end to end. **The app's own
+clear color is on screen**: `glClearColor` flows through the engine's state
+mirror into the driver's clear, the host GPU renders it, and the swap
+presents it — a probe window visibly fills with the application's chosen
+color at its own flush (visually confirmed). Remaining honest refusals:
+the other ~20 GL entries are noops and the renderer limits/config block is
 unfilled. Each refusal becomes a transport call, slot by slot. The contract
 was recovered by disassembling this guest's own `GLEngine` and
 `GLRendererFloat`; it is **10.6-specific and not portable** to later
