@@ -5188,6 +5188,60 @@ rerun; no kext; no reboot.
 
 ---
 
+## RUNG 46 RESULT — PREDICTION (ii): the install entry
+never called; the ROOT decoded — the swap door requires
+the HARDWARE renderer claim (the 0x100 honesty gate, now
+unblocked). One piece of the door landed:
+
+- **LANDED: the capability byte.** `rung46: sub-block
+  0x1018211d8 [+0x2d]=1 (readback 0x1)` — the 4th-arg
+  identification was right; the byte the engine's 0x23bc
+  reads is now 1. (Also banked: 0x280e's reader derives a
+  GL error code from [0x798c] — 0x405/0x404,
+  swap-not-supported class — confirming the byte's role.)
+- **NOT FIRED: the +0x50 install entry — and the missing
+  writer FOUND.** `_gliUpdateDispatchState` (0x15d03c,
+  x86_64): with `[0x7987]==0` OR `[0x6570]==[0x6540]=
+  [0x6548]==0`, the context is SOFTWARE → `[0x7988]=1` →
+  the engine fills the ENTIRE [0x65c8..0x66c8] block with
+  **33 `gliDispatchNoop`s** (the 0x15d16f loop — the
+  writer every earlier grep missed) and SKIPS the
+  [0x6758] (+0x50) call. CGLFlushDrawable then noops
+  cleanly — exactly what we observe.
+- **WHY our context reads software: the renderer claim.**
+  gldGetRendererInfo fills SOFTWARE caps (the rung-17
+  honesty position); the probe's own census prints
+  `accelerated=0`. The hardware-class path (install entry
+  called, block filled from the driver, swap callable)
+  requires the renderer claimed HARDWARE — the **0x100
+  bit**, which the pre-bridge design decisions deliberately
+  held back "until Mesa backs it." The transport, the
+  readback, and the on-screen presentation now back it.
+- **THE NEXT WIRE (named, one change):** flip the renderer
+  claim to hardware (the flags/renderer-info 0x100 bit —
+  the rung-26/27 flags word and the renderer-info record)
+  → [0x7987]/[0x6570]-class gates take the hardware path →
+  gliUpdateDispatchState calls our +0x50 entry (already
+  installed in the table) → the block fills with our
+  flush/swap → [0x798c]=1 (already written) →
+  CGLFlushDrawable tail-calls OUR SWAP (already written).
+  All four pieces are in place; the claim is the trigger.
+  **Exclusivity caveat (the pre-bridge decision):** the
+  hardware claim makes the renderer eligible system-wide —
+  the flip must be watched for WindowServer adoption (the
+  rung-8/12-era risk); the probe-first, desktop-second
+  order stands.
+- **The disassembly-method correction (recorded):** the
+  earlier mixed-arch reads — `otool -tV` on the fat binary
+  dumps ALL archs sequentially; line-window reads straddled
+  them. All rung-46 facts re-verified with
+  `otool -arch x86_64` (gliSwapBuffers's tail-jmp, the
+  0x23bc setter, the 0x15d132 site inside
+  gliUpdateDispatchState). /tmp/gle64.t is the x86_64-only
+  artifact (dies with /tmp).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

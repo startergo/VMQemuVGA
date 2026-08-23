@@ -605,6 +605,75 @@ static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
     }
 }
 
+/* RUNG 46 — THE SWAP ENTRY: what CGLFlushDrawable tail-calls
+ * ([engine+0x66b0], driver ctx in rdi). The presentation, at the
+ * app's own flush: the same chain the proof runs — ensure_fb,
+ * submit the clear (color mask 4), fence-wait (0x600B, the relay's
+ * contract), relay present (0x600C). */
+static long g_swap_count = 0;
+long gld_swap_entry(void* dctx, void* a1, void* a2, void* a3,
+                    void* a4, void* a5)
+{
+    (void)dctx; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    if (++g_swap_count > 5 && (g_swap_count % 500) != 0) return 0;
+    ep_log("rung46: SWAP fired (engine [0x66b0]) — presenting");
+    if (virgl_ensure_fb() < 0) {
+        ep_log("rung46: swap — ensure_fb FAILED"); return 0;
+    }
+    if (virgl_submit_fb_clear(0x4) < 0) {
+        ep_log("rung46: swap — clear submit FAILED"); return 0;
+    }
+    uint64_t w_in[2] = { g_fb_res, 0 };
+    kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x600B,
+                                           w_in, 2, NULL, 0,
+                                           NULL, NULL, NULL, NULL);
+    uint64_t rb[5] = { g_fb_res, 0, 0,
+                       (uint64_t)g_fb_w, (uint64_t)g_fb_h };
+    kern_return_t kr2 = IOConnectCallMethod(g_virgl_conn, 0x600C,
+                                            rb, 5, NULL, 0,
+                                            NULL, NULL, NULL, NULL);
+    char b[96];
+    snprintf(b, sizeof(b),
+             "rung46: SWAP presented (wait 0x%x, relay 0x%x) %ux%u",
+             kr, kr2, g_fb_w, g_fb_h);
+    ep_log(b);
+    return 0;
+}
+
+/* The flush entry ([engine+0x66a8]) — log-only this rung; the
+ * probe's CGLFlushDrawable routes to the swap, not the flush. */
+long gld_flush_entry(void* dctx, void* a1, void* a2, void* a3,
+                     void* a4, void* a5)
+{
+    (void)dctx; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    ep_log("rung46: FLUSH fired (engine [0x66a8]) — log-only");
+    return 0;
+}
+
+/* RUNG 46 — THE INSTALL ENTRY (dispatch table slot +0x50): the
+ * engine calls it as (driver_ctx, &engine[0x65c8], &engine[0x66d0])
+ * (gle 0x15d132) and the driver writes its engine-call entries
+ * into the FIRST block: +0xE0 = flush ([engine+0x66a8]), +0xE8 =
+ * swap ([engine+0x66b0]). The rung-34 kSlots omitted +0x50 — the
+ * float's stores there (grf 0x14f8a-0x14f9e) were past the region
+ * rung 34 mirrored. */
+long gld_fill_engine_calls(void* dctx, void* block1, void* block2,
+                           void* a3, void* a4, void* a5)
+{
+    (void)dctx; (void)block2; (void)a3; (void)a4; (void)a5;
+    char b[96];
+    snprintf(b, sizeof(b),
+             "rung46: install entry +0x50 CALLED (dctx=%p block1=%p)",
+             dctx, block1);
+    ep_log(b);
+    if (block1) {
+        *(void**)((char*)block1 + 0xE0) = (void*)&gld_flush_entry;
+        *(void**)((char*)block1 + 0xE8) = (void*)&gld_swap_entry;
+        ep_log("rung46: block1 filled (+0xE0 flush, +0xE8 swap)");
+    }
+    return 0;
+}
+
 /* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
  * registered device id, don't guess it. libGFXShared's
  * _gfx_plugin_head is an exported global; the stub shares its
@@ -1050,13 +1119,27 @@ long gldDestroyShared(void* obj, void* a1, void* a2, void* a3, void* a4, void* a
 long gldCreateContext(void** out, void* pf, void* shared,
                       void* a4, void* a5, void* a6)
 {
-    (void)a4;
     if (out) *out = (void*)0;               /* THE RULE — always, first */
     char buf[96];
     snprintf(buf, sizeof(buf),
              "CALL gldCreateContext pf=%p shared=%p (rung 30)",
              pf, shared);
     ep_log(buf);
+    /* RUNG 46 — THE SWAP CAPABILITY: the engine's 6-arg call's 4th
+     * arg (rcx = this a4) is the per-renderer SUB-BLOCK (engine ctx
+     * +0x79b8 + idx*0x888, stored as [engine+0x65c0]). Its byte at
+     * +0x2d is the driver-declared "has swap" capability — the
+     * engine copies it to [engine+0x798c] (gle 0x23bc), and
+     * gliSwapBuffers SKIPS the driver call when it is zero. The
+     * rung-30 mirror ignored the arg; write the byte now. */
+    if (a4) {
+        unsigned char* sb = (unsigned char*)a4;
+        sb[0x2d] = 1;
+        snprintf(buf, sizeof(buf),
+                 "rung46: sub-block %p [+0x2d]=1 (readback 0x%x)",
+                 a4, sb[0x2d]);
+        ep_log(buf);
+    }
     if (!pf) {
         ep_log("  gldCreateContext -> 0x2712 (no pf, per the float's validate)");
         return 0x2712;
@@ -1209,6 +1292,12 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
         *(void**)((char*)dispatch + kSlots[i]) = (void*)&gld_noop;
     *(void**)((char*)dispatch + 0x8) = (void*)&gld_clear_real;   /* RUNG 37/38 */
     *(void**)((char*)dispatch + 0x10) = (void*)&gld_readpixels_real; /* RUNG 38 */
+    /* RUNG 46: the install entry — the engine calls this slot
+     * (via [engine+0x6758], gle 0x15d132) to have the driver fill
+     * its flush/swap entries into the engine's call block. NOT in
+     * kSlots (the rung-34 gap — the float stores here too, grf
+     * 0x14f9e). */
+    *(void**)((char*)dispatch + 0x50) = (void*)&gld_fill_engine_calls;
     if (limits) {
         for (int i = 0; i < 6; i++)          /* +0..+0x14, the float's zeros */
             limits[i] = 0;
