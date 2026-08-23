@@ -4535,6 +4535,44 @@ HOST-ACCEPTED, BYTE-VERIFIED RENDERING THROUGH THE GLD BRIDGE:**
 
 ---
 
+## RUNG 39 PRE-REGISTERED — the surface-binding slot: a REAL GL
+target (the window), rendered and PRESENTED (committed before
+implementation)
+
+**The goal:** rendering leaves the stub's private 4x4 texture
+and lands in the probe's actual window — visible pixels, the
+strongest verification class this project has. The pieces: a
+window-sized virgl resource as the render target (dims from a
+source the float's window path names), the clear targeting it,
+and a presentation path for CGLFlushDrawable.
+
+**The reads:** (a) the float's glsAssignDrawable WINDOW path
+(grf.t 0x210a3+, type 0x50) — where the window DIMS come from
+(the type-0x50 descriptor was id-shaped at +0..+0x14; the dims
+are further in, or from a CGS call with the ids); (b) the kext's
+0x600C hostBlit3D (the relay-era blit-to-scanout) and the GA
+surface path as the presentation candidates (0x600C = the
+desktop scanout; the GA surface client = the window-correct
+door, the milestone-2/3 machinery).
+
+**Predictions:**
+- (i) THE ON-SCREEN PROOF: the probe's window shows the clear
+  color (user-visible), with the stub log confirming the
+  window-sized target; the round trip generalized from the
+  private texture to a real drawable.
+- (ii) The dims require the descriptor's later fields or a CGS
+  query — the float's path names it; if the GA path is needed
+  for presentation, its machinery (SetIDMode/Lock/Flush) is
+  already proven and becomes the door.
+- (iii) The presentation needs kext-side additions (a
+  surface-aware blit) — named by what 0x600C accepts; kext
+  changes are boot-class and the standing rules apply.
+**Exposure:** stub changes live-swap via the guard; any kext
+change is a separate, watched-boot-class deploy; probe-only
+testing first.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
