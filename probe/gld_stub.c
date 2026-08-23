@@ -299,7 +299,7 @@ static long g_clear_count = 0;
  * dispatch needs link-time binding; the directly-linked ostest
  * proved it (create+makecur+clear+host batch, clean exit). The
  * gl* entries bind through the linked library's dispatch. */
-extern void* OSMesaCreateContextExt(unsigned, int, int, void*);
+extern void* OSMesaCreateContextExt(unsigned, int, int, int, void*);
 extern int OSMesaMakeCurrent(void*, void*, unsigned, int, int);
 extern void OSMesaDestroyContext(void*);
 extern void glClearColor(float, float, float, float);
@@ -321,7 +321,8 @@ static void osmesa_create_at_load(void)
     if (g_os_created) return;
     g_os_created = 1;
     setenv("GALLIUM_DRIVER", "virgl", 1);
-    g_os_ctx = OSMesaCreateContextExt(0x1908 /*GL_RGBA*/, 24, 8, NULL);
+    g_os_ctx = OSMesaCreateContextExt(0x1908 /*GL_RGBA*/, 24, 8,
+                                    0 /*accum*/, NULL /*share*/);
     char b[80];
     snprintf(b, sizeof(b), "rung55: load-time create -> ctx=%p",
              g_os_ctx);

@@ -6256,6 +6256,57 @@ B) CGLQueryRendererInfo → gliGetVersion → gfxPluginConnectAll
 
 ---
 
+## RUNG 56 — THE REBUILD RUNG THAT BECAME THE ARITY FIX:
+the wall was OUR declaration, not TLS, not the link mode.
+THE LINKAGE IS ALIVE:
+
+**The disassembly that settled it:** the crash at
+`OSMesaCreateContextAttribs+51` is `movq (%rsi),%r9` —
+dereferencing the SECOND parameter (the attribs list)
+after a NULL check. `OSMesaCreateContextExt` takes FIVE
+params (format, depth, stencil, ACCUM, sharelist); our
+stub's extern declared FOUR — with four passed, r8
+(sharelist) was never set: a GARBAGE REGISTER reached
+rsi — non-NULL garbage, the deref, the segfault. The
+standalone "linked works / dlopen crashes" pair was a
+COINCIDENCE — the linked test happened to pass five
+args, the dlopen tests four. Both theories dead: the
+link-mode mechanism AND the TLS-gate collision.
+
+**THE STALE-RECORD CORRECTION (the gate itself read):**
+u_thread.h's 10.6 branch already routes the GLAPI
+dispatch through MAPI_PTHREAD_TSD (pthread keys,
+per-thread by construction — landed 2026-08-19 for
+Gecko's two-thread GL). The ledger's "single static TLS
+slot" description was outdated; the rebuild was moot
+before it began.
+
+**THE LANDING (all classes green, no crash):**
+```
+rung55: load-time create -> ctx=0x103804ec0
+rung55: OSMesa LINKED (ctx + private buffer live)
+rung55: OSMesa clear DONE — private buffer[0..7]: 0000000000000000
+*** ROUND TRIP PROVEN *** / SWAP presented (our cycle intact, green at flush)
+```
+- **Mesa's full stack now lives inside the GLD
+  process**: context created at load time, made current,
+  its clear invoked — both GL implementations
+  coexisting in one process, the embedding PROVEN.
+- **BOUNDED OPEN — the buffer sync:** Mesa's private
+  buffer reads zeros after glFinish (its clear executes
+  host-side — the kernel saw the 148-byte batch — but
+  the readback into the OSMesa buffer needs the right
+  flush/unbind moment; the era's tests read bytes
+  successfully, so the model exists and is one read
+  away).
+- **The draw class's path is now OPEN:** with the
+  embedding alive, forwarding draws to Mesa is a call
+  away whenever the engine's routing sends them (rung
+  54's selection question remains the gate on the
+  ENGINE side).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
