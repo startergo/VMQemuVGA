@@ -6674,6 +6674,24 @@ recording error (corrected)
   A future guest-side fix has a named target: Mesa's
   format query mis-detection is the clamp's entire
   reason — fix that and the clamp's premise dies.
+- **PRECISION ON "DELIBERATE" (against a misfire
+  reading):** the clamp is NOT aimed at ANGLE and
+  catching Apple GL by accident — the patch's own
+  comment applies it to BOTH modes by design; it is
+  a blanket workaround for Mesa's format-query
+  mis-detection, applied everywhere, observable here
+  only because this path reads both blobs. Apple
+  Core OpenGL is the one backend where the honest
+  4.1/glsl-410 report AND the clamp are live
+  together — both arrive from the same host context
+  and its version string. **Do not treat the clamp
+  as a bug to route around; treat it as an
+  intentional under-report.** The guest-side remedy,
+  if MSAA ever matters, is fixing Mesa's format
+  query so the clamp stops being necessary — not
+  defeating the clamp; the host-side lever (a
+  virglrenderer patch) is off the table on stock
+  UTM.
 
 ---
 
