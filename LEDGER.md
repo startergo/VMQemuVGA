@@ -4446,6 +4446,50 @@ rung38: fb res 257 created+backed+ctxAttached (0x6009 -> 0x0)
   rung); HOST ACCEPTANCE still unproven — the 0x1100 boundary
   stands, now with two named instruments to cross it.
 
+**RUNG 38 CONTINUATION (2026-08-22 evening, post-restart with
+the debug log ENABLED) — THREE REAL FIXES; the host now accepts
+everything, the batch EXECUTES, the transfer COPIES PIXELS —
+and the content is STILL ZERO. The debug log earned its keep
+twice over:**
+- **The VM restarted with Debug Log enabled** (the user, at the
+  screen; desktop confirmed up; ssh via IP + legacy algorithms
+  after a full mDNS outage — the config's syntax, not my first
+  attempts' mangled options).
+- **The Increment-C control: INCONCLUSIVE as run** —
+  virgl_clear_test crashed GUEST-SIDE at glClearColor+14 (NULL
+  at 0x670; the substitute's runtime setup absent in a standalone
+  process; no transport calls reached the kernel). Not a host
+  signal; recorded.
+- **FIX 1 — the debug log's verdict on the first proof run:**
+```
+vrend_resource_create: Illegal resource parameters — Invalid texture bind flags 0x4
+vrend_decode_create_surface_common: Illegal resource 256
+vrend_decode_ctx_submit_cmd: Illegal command buffer
+```
+  **bind=0x4 was wrong in BOTH namespaces** — VIRGL_BIND_RENDER_
+  TARGET = 1<<1 = 2 (virgl_hw.h:595; PIPE's is also bit 1). The
+  whole zeros cascade began at resource creation. Fixed to 2.
+- **FIX 2 (already in): ctxAttachResource. FIX 3: the FCE1
+  frame now declares the resource** (cres=1) — the fence era's
+  own design; cres=0 left the 0x600B wait vacuous, racing the
+  async batch.
+- **After all three fixes — the deepest datum yet: NO host
+  errors at all; the kernel logs `v3d batch done ret=0x0 ms=3`
+  (EXECUTED) and `transferFromHost3D: Resource 258 pixels
+  copied from host to guest` (COPIED) — and the backing reads
+  zero.** The clear runs against a decoded-clean framebuffer;
+  the resource's content stays empty.
+- **NEXT (registered): THE MESA STREAM DIFF** — capture Mesa's
+  own working clear through the substitute with
+  VIRGL_IOKIT_DUMP=1 (the winsys's full dword dump, an
+  instrument this project built), diff against the stub's 19
+  dwords; the missing commands (Mesa's context init: viewport,
+  blend objects, whatever vrend requires before a clear lands
+  in the texture) name themselves. The control's standalone
+  failure means the dump runs under the substitute's env
+  (DYLD path to the substitute's OpenGL), the historical
+  configuration.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

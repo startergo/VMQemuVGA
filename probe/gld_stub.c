@@ -139,7 +139,9 @@ static int virgl_ensure_fb(void)
     if (virgl_transport_init() < 0) return -1;
     uint64_t in[11] = {
         g_virgl_ctx, 2 /*PIPE_TEXTURE_2D*/, 1 /*B8G8R8A8_UNORM*/,
-        4 /*PIPE_BIND_RENDER_TARGET*/, 4, 4, 1, 0, 0, 0, 0
+        2 /*VIRGL_BIND_RENDER_TARGET, virgl_hw.h:595 — 0x4 was the
+          host-rejected SAMPLER class; the debug log named it:
+          "Invalid texture bind flags 0x4"*/, 4, 4, 1, 0, 0, 0, 0
     };
     uint64_t out[1] = { 0 }; uint32_t out_cnt = 1;
     kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6002,
@@ -189,8 +191,12 @@ static int virgl_submit_fb_clear(unsigned pipe_mask)
         0x3E800000u, 0x3F000000u, 0x3F400000u, 0x3F800000u, /* .25/.5/.75/1 */
         0u, 0x3FF00000u, 0u
     };
-    uint32_t frame[21] = { 0x31454346u, 0 };
-    for (int i = 0; i < 19; i++) frame[2 + i] = blob[i];
+    /* RUNG 38 fix 3: the FCE1 frame must DECLARE the resource
+     * (cres=1) — the fence era's design: the kext tracks last_seq
+     * per listed resource, making the 0x600B wait real. cres=0 left
+     * the wait vacuous (nothing tracked), racing the async batch. */
+    uint32_t frame[3 + 19] = { 0x31454346u, 1, g_fb_res };
+    for (int i = 0; i < 19; i++) frame[3 + i] = blob[i];
     uint64_t scalar = g_virgl_ctx;
     kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6008,
                                            &scalar, 1, frame, sizeof(frame),
