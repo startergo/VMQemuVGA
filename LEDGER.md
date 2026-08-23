@@ -6621,20 +6621,47 @@ recording error (corrected)
   actual configuration).
 - **WHAT THE SPLIT IS NOT:** the samples v1/v2
   divergence (4 vs 1) is not an ES-vs-desktop artifact
-  — it exists under Core OpenGL. Its mechanism is
-  still open. Remaining candidate: the debug log's
-  own `Overriding max_samples 4 -> 1 for
-  fake_sw_msaa` — a virglrenderer-side clamp on the
-  v2 (VIRGL2) capset fill, not a backend property.
-  Read the virglrenderer source for fake_sw_msaa
-  before proposing another explanation.
-- **THE GL=ES→CORE TRANSITION IS MOOT** as an
-  experiment axis: there was never an es boot to
-  transition from. What remains testable is the
-  backend selector itself (Apple Core OpenGL vs the
-  ANGLE/Metal option in UTM's panel) — a different
-  rung, only if a reason to expect it matters
-  appears.
+  — it exists under Core OpenGL.
+- **THE SPLIT'S MECHANISM — VERIFIED FROM UTM'S OWN
+  SOURCE (utmapp/virglrenderer @ 71a67414,
+  `src/vrend/vrend_renderer.c`, read the same day):**
+  the clamp is a **UTM-fork patch, not upstream
+  virglrenderer**, and it lives only in the
+  capset-2 fill. `vrend_renderer_fill_caps()` serves
+  `VIRTGPU_DRM_CAPSET_VIRGL` (v1) via
+  `fill_caps_v1` then **returns** (line 13475:
+  `if (!fill_capset2) return;`) — the v1 blob carries
+  the honest `glGetIntegerv(GL_MAX_SAMPLES)` = 4
+  (line 12767). The VIRGL2 path continues into
+  `fill_caps_v2`, where the fork patch (lines
+  13059-13071) tests the HOST's
+  `glGetString(GL_VERSION)` for `"Metal"` or
+  `"ANGLE"` and, on match, clamps
+  `caps->v1.max_samples → 1` with the exact debug
+  line we captured: `[VREND CAPS] %s backend:
+  Overriding max_samples %u -> 1 for fake_sw_msaa`.
+  Apple's Core OpenGL on Apple Silicon reports a
+  version string CONTAINING "Metal" (Apple's GL is a
+  Metal-backed implementation there) — so the patch
+  fires under the "Apple Core OpenGL" selection too;
+  its own comment says "Apply to both desktop GL and
+  GLES (ANGLE) modes." Rationale in the patch
+  comment: real 4x MSAA works on the host, but
+  guest Mesa's format queries mis-detect multisample
+  support (MaxSamples=0); reporting 1 steers guest
+  Mesa onto its fake_sw_msaa emulation path.
+- **THE BACKEND-SWITCH EXPERIMENT ANSWERED FROM
+  SOURCE (no boot needed):** UTM's dropdown offers
+  four backends — Default, ANGLE (OpenGL),
+  ANGLE (Metal), Apple Core OpenGL. ANGLE's
+  GL_VERSION contains "ANGLE" in both flavors; Core
+  OpenGL's contains "Metal" — the override fires
+  under **every** selectable backend, so the v1/v2
+  split is invariant across the whole dropdown. The
+  only lever for a v2 max_samples of 4 is a host-side
+  patch, which is off the table (stock UTM). The
+  samples question is CLOSED unless guest-side Mesa
+  work makes real MSAA tenable.
 
 **Exposure:** host-config change + VM reboot; probe
 re-ship after the /tmp wipe; the stub/kext unchanged.
