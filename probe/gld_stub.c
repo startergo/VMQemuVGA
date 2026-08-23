@@ -292,64 +292,85 @@ static int virgl_transport_init(void)
 
 static long g_clear_count = 0;
 
-/* RUNG 55 — THE MESA LINKAGE, FINAL FORM: libOSMesa LINKED INTO
- * THE BUNDLE (deploy_gld.sh links the build-tree dylib; @rpath
- * resolves in the host process). The dlopen route CRASHED in
- * OSMesaCreateContextExt with ANY driver — the glapi bridge's
- * dispatch needs link-time binding; the directly-linked ostest
- * proved it (create+makecur+clear+host batch, clean exit). The
- * gl* entries bind through the linked library's dispatch. */
-extern void* OSMesaCreateContextExt(unsigned, int, int, int, void*);
-extern int OSMesaMakeCurrent(void*, void*, unsigned, int, int);
-extern void OSMesaDestroyContext(void*);
-extern void glClearColor(float, float, float, float);
-extern void glClear(unsigned);
-extern void glFinish(void);
-extern const unsigned char* glGetString(unsigned);
-extern void glReadPixels(int, int, int, int, unsigned, unsigned, void*);
-
+/* RUNG 55/59 — THE MESA LINKAGE, SELF-CONTAINED: the bundle must
+ * LOAD IN ANY PROCESS (GLMark, any app — no rpath requirements), so
+ * libOSMesa is dlopen'd at runtime, NOT hard-linked. The rung-55
+ * "dlopen crashes" was the ARITY BUG (a 4-param extern for a 5-param
+ * function), not the link mode — the linked ostest passed five args
+ * by coincidence. dlopen + the correct arity is the right shape. The
+ * gl* entries resolve through OSMesaGetProcAddress. */
+static void* g_os_lib = NULL;
 static void* g_os_ctx = NULL;
 static unsigned char* g_os_buffer = NULL;
 static int g_os_created = 0, g_os_made_current = 0;
+static void (*os_glClearColor)(float, float, float, float);
+static void (*os_glClear)(unsigned);
+static void (*os_glFinish)(void);
+static void (*os_glReadPixels)(int, int, int, int, unsigned, unsigned, void*);
+static const unsigned char* (*os_glGetString)(unsigned);
 
-/* The CREATE runs at LOAD TIME (gldInitializeLibrary) — before any
- * GL context exists, the glapi dispatch is uncontested. Creating
- * INSIDE glClear_Exec crashed at st_create_context+40: two GL
- * systems in one process, the dispatch contested (the crash frame:
- * glClear_Exec -> osmesa_link_init -> OSMesaCreateContextExt ->
- * st_api_create_context -> st_create_context). */
 static void osmesa_create_at_load(void)
 {
     if (g_os_created) return;
     g_os_created = 1;
     setenv("GALLIUM_DRIVER", "virgl", 1);
-    g_os_ctx = OSMesaCreateContextExt(0x1908 /*GL_RGBA*/,
-                                    0 /*depth — rung 58: the meta
-                                    read path stages the DEPTH surface
-                                    as a fmt-19 ARRAY resource whose
-                                    surface create vrend rejects (the
-                                    rung-51 class); no depth here, no
-                                    staging of it*/,
-                                    0 /*stencil*/,
-                                    0 /*accum*/, NULL /*share*/);
+    g_os_lib = dlopen("/Users/sl/osmesa/libOSMesa.8.dylib", RTLD_LAZY);
+    if (!g_os_lib) {
+        ep_log("rung59: OSMesa dlopen FAILED (bundle still self-contained)");
+        return;
+    }
+    void* (*create)(unsigned, int, int, int, void*) =
+        (void* (*)(unsigned, int, int, int, void*))dlsym(
+            g_os_lib, "OSMesaCreateContextExt");
+    int (*makecur)(void*, void*, unsigned, int, int) =
+        (int (*)(void*, void*, unsigned, int, int))dlsym(
+            g_os_lib, "OSMesaMakeCurrent");
+    void* (*getproc)(const char*) =
+        (void* (*)(const char*))dlsym(g_os_lib, "OSMesaGetProcAddress");
+    if (!create || !makecur || !getproc) {
+        ep_log("rung59: OSMesa symbols missing"); return;
+    }
+    /* RUNG 58: DEPTHLESS (0/0) — the read path stages the depth
+     * surface as a fmt-19 array vrend rejects. FIVE args — the
+     * arity bug that crashed two rungs lives here. */
+    g_os_ctx = create(0x1908 /*GL_RGBA*/, 0, 0, 0, NULL);
     char b[80];
-    snprintf(b, sizeof(b), "rung55: load-time create -> ctx=%p",
+    snprintf(b, sizeof(b), "rung59: load-time dlopen+create -> ctx=%p",
              g_os_ctx);
     ep_log(b);
+    (void)makecur; (void)getproc;
 }
 
 static int osmesa_link_init(int w, int h)
 {
-    if (!g_os_ctx) return -1;
+    if (!g_os_ctx || !g_os_lib) return -1;
     if (g_os_made_current) return 0;
     g_os_made_current = 1;
+    int (*makecur)(void*, void*, unsigned, int, int) =
+        (int (*)(void*, void*, unsigned, int, int))dlsym(
+            g_os_lib, "OSMesaMakeCurrent");
+    void* (*getproc)(const char*) =
+        (void* (*)(const char*))dlsym(g_os_lib, "OSMesaGetProcAddress");
     g_os_buffer = (unsigned char*)calloc(1, (size_t)w * h * 4);
-    if (!OSMesaMakeCurrent(g_os_ctx, g_os_buffer, 0x1401, w, h)) {
-        ep_log("rung55: OSMesaMakeCurrent FAILED"); return -1;
+    if (!makecur(g_os_ctx, g_os_buffer, 0x1401, w, h)) {
+        ep_log("rung59: OSMesaMakeCurrent FAILED"); return -1;
     }
-    ep_log("rung55: OSMesa LINKED (ctx + private buffer live)");
+    os_glClearColor = (void (*)(float, float, float, float))getproc("glClearColor");
+    os_glClear = (void (*)(unsigned))getproc("glClear");
+    os_glFinish = (void (*)(void))getproc("glFinish");
+    os_glReadPixels = (void (*)(int, int, int, int, unsigned, unsigned, void*))getproc("glReadPixels");
+    os_glGetString = (const unsigned char* (*)(unsigned))getproc("glGetString");
+    ep_log("rung59: OSMesa LINKED (dlopen route, ctx + buffer live)");
     return 0;
 }
+
+/* The gl-call shims the clear forward uses (bound to the dlopen'd
+ * lib's dispatch — resolved lazily above; direct declarations are
+ * gone with the hard link). */
+static void glClearColor_shim(float r, float g, float b, float a)
+{ if (os_glClearColor) os_glClearColor(r, g, b, a); }
+static void glClear_shim(unsigned m) { if (os_glClear) os_glClear(m); }
+static void glFinish_shim(void) { if (os_glFinish) os_glFinish(); }
 
 /* RUNG 39 — the saved window triple + the lazy bounds query */
 static unsigned g_sid_cid = 0, g_sid_wid = 0, g_sid_sid = 0;
@@ -807,15 +828,15 @@ static void gld_clear_real(void* ctx, unsigned mask,
      * private buffer reads the app's color — Mesa-rendered. */
     if (g_clear_count <= 3 &&
         osmesa_link_init(g_fb_w, g_fb_h) == 0) {
-        glClearColor(g_clear_rgba[0], g_clear_rgba[1],
-                        g_clear_rgba[2], g_clear_rgba[3]);
-        glClear(0x4000 /*GL_COLOR_BUFFER_BIT*/);
-        glFinish();
+        glClearColor_shim(g_clear_rgba[0], g_clear_rgba[1],
+                          g_clear_rgba[2], g_clear_rgba[3]);
+        glClear_shim(0x4000 /*GL_COLOR_BUFFER_BIT*/);
+        glFinish_shim();
         /* RUNG 57 — the routing probe: the linked lib's glGetString
          * answers Mesa's renderer iff our calls route through Mesa's
          * dispatch; anything else = the calls bypass Mesa. */
         {
-            const unsigned char* s2 = glGetString(0x1F01);
+            const unsigned char* s2 = os_glGetString ? os_glGetString(0x1F01) : NULL;
             char rb3[112];
             snprintf(rb3, sizeof(rb3),
                      "rung57: linked glGetString(GL_RENDERER) = \"%s\"",
@@ -826,8 +847,8 @@ static void gld_clear_real(void* ctx, unsigned mask,
          * glReadPixels (st read_pixels -> transfer_from_host -> these
          * bytes) — bypasses flush_front entirely. 2x2 from (0,0). */
         unsigned char rb_px[16];
-        glReadPixels(0, 0, 2, 2, 0x1908 /*GL_RGBA*/, 0x1401 /*UBYTE*/,
-                     rb_px);
+        if (os_glReadPixels)
+            os_glReadPixels(0, 0, 2, 2, 0x1908, 0x1401, rb_px);
         char ob[96]; int oo = 0;
         for (int i = 0; i < 8 && oo < 40; i++)
             oo += snprintf(ob + oo, sizeof(ob) - oo, "%02x",
@@ -1497,8 +1518,12 @@ build:
                             * every request. */
     obj[6] = 1;            /* +0x18 — the float's 0x17c56: movl $0x1
                             * (never set in our builds) */
-    obj[7] = 0x1;          /* +0x1c */
-    obj[8] = 0x1;          /* +0x20 */
+    obj[7] = 24;  /* +0x1c — RUNG 59: the DEPTH size. Was 1 (the
+                   * rung-19 mirror); a depth-24 request scores
+                   * npix=0 against it (GLMark's gate). 24 is the
+                   * honest number — the Z16/D24S8 depth surface is
+                   * real (rungs 51/58). */
+    obj[8] = 8;   /* +0x20 — the stencil size, same reasoning */
     obj[13] = RUNG11_CLAIM; /* +0x34 our display claim (rung 22 reverted:
                              * gate 1 exonerated; honest value stands) */
     *out = obj;
@@ -1954,7 +1979,43 @@ const char* gldGetString(void* ctx, unsigned name,
             s = rend[0] ? rend : "VirtIO GPU stub (software, no rendering)";
         }
         break;
-    case 0x1F02: s = "0.0 stub";                           break; /* GL_VERSION  */
+    case 0x1F02: {                                          /* GL_VERSION — RUNG 59 */
+        /* DERIVED FROM THE CAPSET (the device-truth principle, rung
+         * 52): glsl_level 410 = the host's GL 4.1-class capability —
+         * the same blob that names the renderer and the limits. The
+         * engine's complete software GL is the named fallback (and
+         * the rasterizer for what doesn't route to the host). */
+        static char vsn[80];
+        static int vsn_built = 0;
+        if (!vsn_built) {
+            vsn_built = 1;
+            if (g_caps_fetched && g_caps.v1.glsl_level >= 100) {
+                snprintf(vsn, sizeof(vsn), "%u.%u (virgl %s; engine software fallback)",
+                         g_caps.v1.glsl_level / 100, g_caps.v1.glsl_level % 100 / 10,
+                         g_caps.renderer);
+            } else {
+                snprintf(vsn, sizeof(vsn), "2.1 VMQemuVGA (engine software)");
+            }
+        }
+        s = vsn;
+        break;
+    }
+    case 0x8B8C:                                            /* GL_SHADING_LANGUAGE_VERSION */
+        /* RUNG 59 — glmark2's GL-state gate requires it; derived from
+         * the capset's glsl_level (410 -> "4.10"), the same
+         * device-truth source as the version and renderer. */
+        {
+            static char glsl[16];
+            static int glsl_built = 0;
+            if (!glsl_built) {
+                glsl_built = 1;
+                unsigned lv = (g_caps_fetched && g_caps.v1.glsl_level)
+                              ? g_caps.v1.glsl_level : 120;
+                snprintf(glsl, sizeof(glsl), "%u.%02u", lv / 100, lv % 100);
+            }
+            s = glsl;
+        }
+        break;
     default:     s = NULL;                                 break;
     }
     char buf[96];

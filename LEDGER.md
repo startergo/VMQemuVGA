@@ -6455,6 +6455,55 @@ shipped read-only to the guest; no kext; no reboot.
 
 ---
 
+## RUNG 59 RESULT — TWO REAL GATES CLEARED AND THE WALL
+LOCATED TO THE NS TRANSLATION LAYER. Substantial
+progress; GLMark not yet through:
+
+- **GATE 1 CLEARED — THE VERSION, capset-derived (the
+  review's correction applied):** GL_VERSION now
+  DERIVES from glsl_level: **"4.1 (virgl Apple M4
+  Pro; engine software fallback)"** — the host's real
+  level per the device-truth principle (the blob that
+  names the renderer and the limits), not the
+  conservative 2.1 first registered. GLSL version
+  added (0x8B8C → "4.10", same derivation) —
+  glmark's GL-state gate requires both.
+- **GATE 2 CLEARED — THE BUNDLE IS SELF-CONTAINED
+  AGAIN (a real fix):** the hard OSMesa link made the
+  bundle UNLOADABLE in any process without the rpath
+  — GLMark (and every normal app) got NO renderer at
+  all. The rung-55 "dlopen crashes" was the ARITY
+  bug; **dlopen + the five-arg create works** (ctx
+  created through the dlopen route, probe cycle
+  green) — the link-mode theory now fully dead. The
+  embed is inert without the rpath (the @rpath/
+  libglapi dep) — acceptable: apps need the DRIVER
+  shape, not the embed.
+- **GATE 3 — the pf sizes:** GLMark's DepthSize
+  request scored against our object's +0x1c=1;
+  raised to 24/8 (honest — the depth surface is
+  real). CGL passes GLMark's EXACT attr set
+  ({accel,db,color1,alpha1,depth1} → npix=1).
+- **THE WALL (precisely split):** GLMark fails at
+  **NSOpenGLPixelFormat** — AFTER our driver loads
+  (the full loader sequence in its log; the renderer
+  enumerates), BEFORE any pf request the driver sees
+  in today's runs (the engine forwards the same
+  [0x5 0x4] shape when CGL is called directly — the
+  probe proves the path works end-to-end). The NS
+  layer's translation/consultation is its own read:
+  what NSOpenGLPixelFormat initWithAttributes calls
+  and checks on 10.6 (its renderer matching may
+  consult a different enumeration or add attrs of
+  its own).
+- **BOUNDED NOTE:** GLMark's first-run context
+  lifecycle DID run through the driver once (the
+  17:29 window: pf → context → 7 s of life → clean
+  teardown) — the driver's shape held a real app's
+  context; the current failure is the NS entry path.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

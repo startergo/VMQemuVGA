@@ -154,7 +154,11 @@ int main(int argc, char *argv[])
     GLint npix = 0;
     CGLError e_pf;
     CGLPixelFormatAttribute acc_attrs[] = {
-        kCGLPFAAccelerated, kCGLPFADoubleBuffer, (CGLPixelFormatAttribute)0 };
+        kCGLPFAAccelerated, kCGLPFADoubleBuffer,
+        kCGLPFAColorSize, (CGLPixelFormatAttribute)1,
+        kCGLPFAAlphaSize, (CGLPixelFormatAttribute)1,
+        kCGLPFADepthSize, (CGLPixelFormatAttribute)1,
+        (CGLPixelFormatAttribute)0 };
     CGLPixelFormatAttribute plain_attrs[] = {
         kCGLPFADoubleBuffer, (CGLPixelFormatAttribute)0 };
     e_pf = CGLChoosePixelFormat(acc_attrs, &pf, &npix);
