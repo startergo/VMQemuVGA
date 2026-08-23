@@ -305,6 +305,8 @@ extern void OSMesaDestroyContext(void*);
 extern void glClearColor(float, float, float, float);
 extern void glClear(unsigned);
 extern void glFinish(void);
+extern const unsigned char* glGetString(unsigned);
+extern void glReadPixels(int, int, int, int, unsigned, unsigned, void*);
 
 static void* g_os_ctx = NULL;
 static unsigned char* g_os_buffer = NULL;
@@ -802,10 +804,27 @@ static void gld_clear_real(void* ctx, unsigned mask,
                         g_clear_rgba[2], g_clear_rgba[3]);
         glClear(0x4000 /*GL_COLOR_BUFFER_BIT*/);
         glFinish();
+        /* RUNG 57 — the routing probe: the linked lib's glGetString
+         * answers Mesa's renderer iff our calls route through Mesa's
+         * dispatch; anything else = the calls bypass Mesa. */
+        {
+            const unsigned char* s2 = glGetString(0x1F01);
+            char rb3[112];
+            snprintf(rb3, sizeof(rb3),
+                     "rung57: linked glGetString(GL_RENDERER) = \"%s\"",
+                     s2 ? (const char*)s2 : "(NULL)");
+            ep_log(rb3);
+        }
+        /* RUNG 57 — THE READBACK PATH apps actually use: linked-lib
+         * glReadPixels (st read_pixels -> transfer_from_host -> these
+         * bytes) — bypasses flush_front entirely. 2x2 from (0,0). */
+        unsigned char rb_px[16];
+        glReadPixels(0, 0, 2, 2, 0x1908 /*GL_RGBA*/, 0x1401 /*UBYTE*/,
+                     rb_px);
         char ob[96]; int oo = 0;
         for (int i = 0; i < 8 && oo < 40; i++)
             oo += snprintf(ob + oo, sizeof(ob) - oo, "%02x",
-                           g_os_buffer[i]);
+                           rb_px[i]);
         char b4[128];
         snprintf(b4, sizeof(b4),
                  "rung55: OSMesa clear DONE — private buffer[0..7]: %s",

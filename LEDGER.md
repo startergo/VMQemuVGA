@@ -6307,6 +6307,52 @@ rung55: OSMesa clear DONE — private buffer[0..7]: 0000000000000000
 
 ---
 
+## RUNG 57 — THE BUFFER SYNC, READ TO THE LAST MILE:
+Mesa renders our green host-side (PROVEN by its own
+stream); the bytes stop one transfer short:
+
+- **THE ROUTING PROBE (decisive):**
+```
+rung57: linked glGetString(GL_RENDERER) = "virgl (Apple M4 Pro)"
+```
+  The linked lib's glGetString answers MESA'S composed
+  string — our extern calls route through Mesa's
+  dispatch; the context is alive and answering as Mesa.
+- **THE STREAM (VIRGL_IOKIT_DUMP — the era's authority
+  instrument):**
+```
+cdw=37: [1d/1c DSA pre-commands] [surface h1 res fmt67]
+        [depth surface h2 fmt19] [surface h3]
+        SET_FB nr=1 zsurf=2 cbuf=3
+        CLEAR mask=4 color 0.0, 1.0, 0.0, 1.0  ← OUR GREEN
+cdw=146: a TGSI fragment shader ("FRAG...MOV OUT[0] CONST[0]...END")
+         — the readback pipeline's own shader, live
+```
+  The 148-byte batch mislabeled "context-init" in
+  rung-55 was THE CLEAR all along — carrying our green,
+  the DSA pre-commands (the rung-38 mystery objects),
+  and Mesa's D24S8 depth surface. Mesa's resource set:
+  color fmt 1, Z16 depth (fmt 16 — the format rung 51
+  proved), D24S8 array — the stream-diff era's shapes.
+- **THE LAST MILE, NAMED:** glReadPixels through the
+  linked lib drove the FULL readback pipeline (the
+  shader upload + a 584-byte staging-blit batch,
+  kernel-executed) — but **Mesa's connection NEVER
+  issues its synchronous post-clear half: no 0x600B
+  fence wait, no 0x3009 transfer-from-host** (20
+  transfers today, all ours). The staging read never
+  comes back; the zeros are the fresh backing's.
+- **THE NEXT READ:** the winsys's transfer_map branch
+  for read paths — which condition makes it skip the
+  host fetch (a cached/unmapped heuristic, a fence
+  dependency, or the map failing and read_pixels
+  zero-filling).
+- **FREE PROVENANCE:** flush_front's snapshot path
+  (st_glFinish → st_manager_flush_frontbuffer) also
+  never fires — same missing-mile class.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
