@@ -70,6 +70,8 @@ static void gld_stub_loaded(void)
 #include <pthread.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <IOKit/IOKitLib.h>
+#include <IOKit/IOCFPlugIn.h>
+#include <IOKit/graphics/IOGraphicsInterface.h>
 static int g_vm_ok = 0;    /* rung 6b: mask-store guard — the working GLD's actual structure */
 static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
 
@@ -133,9 +135,86 @@ static int g_bounds_locked = 0;
 static int g_fb_w = 4, g_fb_h = 4;      /* rung 39: window-sized when attached */
 static void virgl_set_window_target(int w, int h);   /* fwd (lazy bounds call) */
 
+/* RUNG 40 — THE GA BIND WIRE (the milestone-2 machinery, integrated):
+ * instantiate the GA CFPlugin from the framebuffer service, Start it
+ * (the env gate), AllocateSurface(kIOBlitHasCGSSurface, sid) — the
+ * bind that gives the raw CGS surface its geometry — and LockSurface
+ * for the dims (and, later, the presentation view). */
+static void* g_ga_obj = NULL;
+static IOGraphicsAcceleratorInterface* g_ga_vt = NULL;
+static IOBlitSurface g_ga_surf;
+static vm_address_t g_ga_view = 0;
+
+static int ga_bind_surface(unsigned sid)
+{
+    if (g_ga_vt) return 0;                    /* once per process */
+    setenv("VM_GA_PROBE", "1", 1);            /* the plugin's Start gate */
+    CFMutableDictionaryRef m = IOServiceMatching("VMVirtIOFramebuffer");
+    if (!m) { ep_log("rung40: FB matching FAILED"); return -1; }
+    io_service_t fb = IOServiceGetMatchingService(kIOMasterPortDefault, m);
+    if (fb == IO_OBJECT_NULL) { ep_log("rung40: no FB service"); return -1; }
+    IOCFPlugInInterface** plug = NULL;
+    SInt32 score = 0;
+    kern_return_t kr = IOCreatePlugInInterfaceForService(
+        fb, kIOGraphicsAcceleratorTypeID,
+        kIOGraphicsAcceleratorInterfaceID, &plug, &score);
+    IOObjectRelease(fb);
+    if (kr != KERN_SUCCESS || !plug) {
+        char b[80]; snprintf(b, sizeof(b), "rung40: plugin instantiate FAIL 0x%x", kr);
+        ep_log(b); return -1;
+    }
+    HRESULT q = (*plug)->QueryInterface(
+        plug, CFUUIDGetUUIDBytes(kIOGraphicsAcceleratorInterfaceID),
+        (LPVOID*)&g_ga_obj);
+    (*plug)->Release(plug);   /* per the probe's shape: the object holds itself */
+    if (q != S_OK || !g_ga_obj) {
+        ep_log("rung40: QueryInterface refused");
+        return -1;
+    }
+    g_ga_vt = *(IOGraphicsAcceleratorInterface***)g_ga_obj;
+    IOReturn r = g_ga_vt->Probe(g_ga_obj, NULL, fb, &score);
+    if (r == kIOReturnSuccess)
+        r = g_ga_vt->Start(g_ga_obj, NULL, fb);
+    if (r != kIOReturnSuccess) {
+        char b[80]; snprintf(b, sizeof(b), "rung40: GA Start FAIL 0x%x", r);
+        ep_log(b); return -1;
+    }
+    memset(&g_ga_surf, 0, sizeof(g_ga_surf));
+    g_ga_surf.pixelFormat = kIO32BGRAPixelFormat;
+    r = g_ga_vt->AllocateSurface(g_ga_obj, kIOBlitHasCGSSurface,
+                                 &g_ga_surf, (void*)(uintptr_t)sid);
+    if (r != kIOReturnSuccess) {
+        char b[96];
+        snprintf(b, sizeof(b), "rung40: AllocateSurface(sid=0x%x) FAIL 0x%x", sid, r);
+        ep_log(b); return -1;
+    }
+    r = g_ga_vt->LockSurface(g_ga_obj, 0, &g_ga_surf, &g_ga_view);
+    char b[128];
+    snprintf(b, sizeof(b),
+             "rung40: GA BOUND+LOCKED sid=0x%x -> 0x%x view=0x%lx %ux%u rowBytes=%u",
+             sid, r, (unsigned long)g_ga_view,
+             (unsigned)g_ga_surf.size.width, (unsigned)g_ga_surf.size.height,
+             g_ga_surf.rowBytes);
+    ep_log(b);
+    if (r != kIOReturnSuccess || !g_ga_view) return -1;
+    return 0;
+}
+
 static void virgl_query_window_bounds(void)
 {
     if (g_bounds_locked || !g_sid_cid) return;
+    /* RUNG 40: the GA bind FIRST — the geometry lives behind it
+     * (the raw CGS surface has no bounds until AllocateSurface binds
+     * it; LockSurface fills the dims). On success the CGS query is
+     * unnecessary. */
+    if (ga_bind_surface(g_sid_sid) == 0) {
+        int w = (int)g_ga_surf.size.width, h = (int)g_ga_surf.size.height;
+        if (w > 0 && h > 0) {
+            virgl_set_window_target(w, h);
+            g_bounds_locked = 1;
+            return;
+        }
+    }
     void* cgh = dlopen(
         "/System/Library/Frameworks/ApplicationServices.framework/"
         "Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",

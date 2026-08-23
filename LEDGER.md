@@ -4639,6 +4639,55 @@ rung39: CGSGetSurfaceBounds(cid,wid,sid) -> 0 rect=[0 0 0 0]
 
 ---
 
+## RUNG 40 — THE GA BIND WIRE (2026-08-22 night) — the chain
+BUILT and working to the last call; the refusal DECODED
+(unregistered surface); the registration door named at SELECTOR
+granularity:
+
+- **The GA plugin reinstalled** (the milestone-era bundle was
+  absent from the guest; GA/VMQemuVGAGA.plugin shipped, 6KB;
+  the FB's IOCFPlugInTypes property verified live — CFPlugins
+  load on demand, no reboot needed).
+- **THE WIRE, IMPLEMENTED IN THE STUB** (the milestone-2
+  sequence, verbatim): setenv(VM_GA_PROBE) → matching
+  VMVirtIOFramebuffer → IOCreatePlugInInterfaceForService(GA
+  type) → QueryInterface → vtable deref → Probe → Start →
+  AllocateSurface(kIOBlitHasCGSSurface, sid) → LockSurface.
+- **RESULT: every step SUCCEEDS through Start — and
+  AllocateSurface(sid) FAILS 0xe00002be** — kIOReturnUnsupported,
+  THE SAME CODE the milestone-2 negative control returned for
+  an unknown id. The kernel's cross-client surface registry
+  (the 16-entry array, add-at-SetIDMode) does not contain our
+  app-created surface: only WindowServer's surfaces enter it
+  (its own client calls SetIDMode during compositing —
+  confirmed: zero SetIDMode lines in the kernel log from the
+  probe's run; all surface-client activity is WindowServer's
+  boot-time compositing).
+- **THE REGISTRATION DOOR, NAMED AT SELECTOR GRANULARITY:**
+  the stub can register the surface ITSELF — open the surface
+  user client (IOServiceOpen on the accelerator, the type-2
+  class — VMAccelSurfaceClient), allocate its surface, then
+  call **kIOAccelSurfaceSetIDMode — USER-side selector 0x83,
+  two scalars (wID, modebits)** — which stores m_surface and
+  publishes to the cross-client registry
+  (VMAccelSurfaceClient.cpp:663-673). After that,
+  AllocateSurface(our sid) resolves, LockSurface yields the
+  view AND the dims, the target goes window-sized, and the
+  SAME view is the presentation door (write + flush = the GA
+  blit WindowServer composites).
+- **The full sequence for the next rung, pre-registered:**
+  type-2 open → surface allocate (the client's own row, enum
+  kIOAccelSurface*) → SetIDMode(0x83, sid, modebits=0xA
+  BGRA32) → GA AllocateSurface(sid) → LockSurface →
+  window-sized target → the proof at window size → (the
+  presentation write follows the same view).
+- **Session state at close:** rungs 17-40 committed; two slots
+  real and pixel-verified; the driver complete and honest end
+  to end; the window target one registered surface away, with
+  every door between here and visible pixels named.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
