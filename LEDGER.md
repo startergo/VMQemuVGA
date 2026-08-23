@@ -5520,6 +5520,38 @@ the blue proof).
 
 ---
 
+## RUNG 49 RESULT — *** GREEN — THE APP'S OWN COLOR ON
+SCREEN *** — prediction (i) complete, all verification
+classes green:
+
+```
+stub: CLEAR-REAL #1 mask=0x4000 color 0.000000 1.000000 0.000000 1.000000 (rung 49)
+stub: backing[0..15]: 00ff00ff00ff00ff00ff00ff00ff00ff
+stub: *** ROUND TRIP PROVEN *** (computed expected — the same floats the clear submitted)
+stub: rung46: SWAP fired ... presented (wait 0x0, relay 0x0) 320x262
+screen: GREEN (user visual, both runs — "green")
+```
+
+- **THE COLOR PATH, COMPLETE:** the app's glClearColor(0,1,0,1)
+  → the ENGINE's state mirror at shared+0x2ea0 (the float's
+  own read site, grf64 0x12b91) → the driver's clear reads
+  it → the virgl CLEAR blob carries the app's float bits →
+  the host GPU → byte-exact readback (00 ff 00 ff — green
+  in the B,G,R,A transfer layout) → the swap presents at
+  the app's flush → **the displayed color is the
+  APPLICATION'S CHOICE — the first time in the arc.**
+- The proof's expected bytes are now COMPUTED from the
+  same floats (clamped, rounded, B/G/R/A order) — the
+  fixed kObserved is retired; the proof generalizes to
+  any color.
+- **The honest-refusal list shrinks again:** the remaining
+  gaps are the ~20 noop GL entries and the unfilled
+  limits/config block (gldSetConfigData's map). The draw
+  cycle itself — clear color, clear, flush, presentation —
+  is the app's own, end to end.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

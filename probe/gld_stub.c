@@ -432,17 +432,37 @@ static int virgl_ensure_fb(void)
  * color). RUNG 39: a FRESH surface handle per submit (recreating
  * an existing handle in vrend's object table is undefined). */
 static unsigned g_surf_handle = 0;
+/* RUNG 49 — the app's own clear color: the ENGINE mirrors RGBA
+ * floats at [ctx+0x740]+0x2ea0 (the float's gldClear reads exactly
+ * there, grf64 0x12b91-0x12ba9). Read at each clear; the proof
+ * floats remain the fallback. */
+static float g_clear_rgba[4] = { 0.25f, 0.5f, 0.75f, 1.0f };
+static void virgl_read_app_clear_color(void* ctx)
+{
+    if (!ctx) return;
+    void* shared = *(void**)((char*)ctx + 0x740);
+    if (!shared) return;
+    float* c = (float*)((char*)shared + 0x2ea0);
+    g_clear_rgba[0] = c[0]; g_clear_rgba[1] = c[1];
+    g_clear_rgba[2] = c[2]; g_clear_rgba[3] = c[3];
+}
 static int virgl_submit_fb_clear(unsigned pipe_mask)
 {
     unsigned sh = ++g_surf_handle;
+    /* the app's color (rung 49) — raw float bits into the blob */
+    uint32_t cr, cg, cb, ca;
+    memcpy(&cr, &g_clear_rgba[0], 4);
+    memcpy(&cg, &g_clear_rgba[1], 4);
+    memcpy(&cb, &g_clear_rgba[2], 4);
+    memcpy(&ca, &g_clear_rgba[3], 4);
     uint32_t blob[19] = {
         /* CREATE_OBJECT surface (fresh handle) */
         0x00050801u, sh, g_fb_res, 1u, 0u, 0u,
         /* SET_FRAMEBUFFER_STATE: nr=1, zsurf=0, cbuf=surface sh */
         0x00030005u, 1u, 0u, sh,
-        /* CLEAR */
+        /* CLEAR — the APP's color (rung 49) */
         0x00080007u, pipe_mask,
-        0x3E800000u, 0x3F000000u, 0x3F400000u, 0x3F800000u, /* .25/.5/.75/1 */
+        cr, cg, cb, ca,
         0u, 0x3FF00000u, 0u
     };
     /* RUNG 38 fix 3: the FCE1 frame must DECLARE the resource
@@ -462,10 +482,14 @@ static void gld_clear_real(void* ctx, unsigned mask,
                            void* a2, void* a3, void* a4, void* a5)
 {
     (void)ctx; (void)a2; (void)a3; (void)a4; (void)a5;
+    virgl_read_app_clear_color(ctx);   /* RUNG 49: the app's color */
     if (++g_clear_count <= 5 || (g_clear_count % 500) == 0) {
-        char b[80];
-        snprintf(b, sizeof(b), "CLEAR-REAL #%ld mask=0x%x (rung 38)",
-                 g_clear_count, mask);
+        char b[112];
+        snprintf(b, sizeof(b),
+                 "CLEAR-REAL #%ld mask=0x%x color %f %f %f %f (rung 49)",
+                 g_clear_count, mask,
+                 g_clear_rgba[0], g_clear_rgba[1],
+                 g_clear_rgba[2], g_clear_rgba[3]);
         ep_log(b);
     }
     virgl_query_window_bounds();   /* lazy: the surface is ordered by now */
@@ -514,11 +538,23 @@ static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
     snprintf(b, sizeof(b), "  0x3009 transfer_from (%dx%d) -> 0x%x",
              g_fb_w, g_fb_h, kr);
     ep_log(b);
-    /* the verdict — the readback layout is (R,G,B,A) per byte
-     * (observed: bf 80 40 ff for the .25/.5/.75/1 clear on a
-     * B8G8R8A8 resource — the swap is the transfer's layout,
-     * not a failure). Corners + center of the WINDOW. */
-    const unsigned char kObserved[4] = { 0xBF, 0x80, 0x40, 0xFF };
+    /* the verdict — RUNG 49: the expected bytes are COMPUTED from
+     * the app's clear color (the same floats the clear submitted).
+     * Layout (rung 38's observation): B,G,R,A per byte on a
+     * B8G8R8A8 resource. Corners + center of the WINDOW. */
+    unsigned char kObserved[4];
+    {
+        float b_c = g_clear_rgba[2], g_c = g_clear_rgba[1],
+              r_c = g_clear_rgba[0], a_c = g_clear_rgba[3];
+        if (b_c < 0) b_c = 0; if (b_c > 1) b_c = 1;
+        if (g_c < 0) g_c = 0; if (g_c > 1) g_c = 1;
+        if (r_c < 0) r_c = 0; if (r_c > 1) r_c = 1;
+        if (a_c < 0) a_c = 0; if (a_c > 1) a_c = 1;
+        kObserved[0] = (unsigned char)(b_c * 255.0f + 0.5f);
+        kObserved[1] = (unsigned char)(g_c * 255.0f + 0.5f);
+        kObserved[2] = (unsigned char)(r_c * 255.0f + 0.5f);
+        kObserved[3] = (unsigned char)(a_c * 255.0f + 0.5f);
+    }
     size_t last = (size_t)g_fb_w * g_fb_h - 1;
     size_t mid  = ((size_t)g_fb_h / 2) * g_fb_w + g_fb_w / 2;
     int match = 1;
@@ -620,6 +656,7 @@ long gld_swap_entry(void* dctx, void* a1, void* a2, void* a3,
 {
     (void)dctx; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
     if (++g_swap_count > 5 && (g_swap_count % 500) != 0) return 0;
+    virgl_read_app_clear_color(dctx);   /* RUNG 49: the app's color */
     ep_log("rung46: SWAP fired (engine [0x66b0]) — presenting");
     if (virgl_ensure_fb() < 0) {
         ep_log("rung46: swap — ensure_fb FAILED"); return 0;
