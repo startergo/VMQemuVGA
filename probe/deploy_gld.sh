@@ -25,9 +25,17 @@ mkdir -p "$STAGE"
 cp "$REPO_ROOT/probe/VMVirtIOGLEngine.Info.plist" "$STAGE/../Info.plist"
 
 # 1. Build — a failure aborts BEFORE anything ships (set -e).
+# RUNG 55: the bundle LINKS the build-tree libOSMesa directly —
+# the dlopen route crashes in OSMesaCreateContextExt (the glapi
+# bridge's dispatch needs link-time binding; the linked ostest
+# proves it). The @rpath resolves in the HOST PROCESS (the probe
+# carries -rpath /Users/sl/osmesa). The library pair is shipped
+# on the guest at /Users/sl/osmesa/.
+OSMESA_LIB="$HOME/Mesa-VirGL/build-106/src/gallium/targets/osmesa/libOSMesa.8.dylib"
 xcrun clang -arch x86_64 -mmacosx-version-min=10.6 \
   -isysroot "$SDK" -bundle "$SRC" \
-  -framework IOKit -framework CoreFoundation -o "$OUT" 2>/dev/null
+  -framework IOKit -framework CoreFoundation \
+  "$OSMESA_LIB" -o "$OUT" 2>/dev/null
 [ -x "$OUT" ] || { echo "DEPLOY ABORT: no executable produced"; exit 1; }
 
 # 2. Positive control: the export table.

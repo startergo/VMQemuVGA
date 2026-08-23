@@ -6195,6 +6195,67 @@ kext; no reboot.
 
 ---
 
+## RUNG 55 RESULT — THE LINKAGE'S MECHANISM FOUND (the
+link mode), the HOST EXECUTION PROVEN, and the embedding
+wall located to two crash frames. The escape routes
+named:
+
+- **THE LINK MODE IS THE FIRST FIX (proved):** dlopen+
+  dlsym CRASHES in OSMesaCreateContextExt with ANY
+  driver (virgl, softpipe, default — standalone!);
+  the DIRECTLY-LINKED test WORKS — create, makecurrent,
+  clear, clean exit. The glapi bridge's dispatch needs
+  link-time binding. (The stale-subst-copy theory died:
+  the build-tree lib crashed identically; the shim era's
+  @rpath was never the issue — the dlopen was.)
+- **THE HOST EXECUTION PROVEN (the linked route):**
+```
+kernel: createVirglContextEx: ok ctx=0x113 (Mesa's)
+kernel: v3d batch done ctx=0x113 size=148 ms=1 ret=0x0
+```
+  Mesa's full context-init clear batch EXECUTED on the
+  host GPU through our kernel transport. The private
+  buffer read zeros (OSMesa's buffer-sync model — the
+  readback timing, a detail, not a failure).
+- **THE EMBEDDING WALL (two crash frames, both named):**
+```
+A) glClear_Exec → osmesa_link_init → OSMesaCreateContextExt
+   → st_api_create_context → st_create_context + 40
+B) CGLQueryRendererInfo → gliGetVersion → gfxPluginConnectAll
+   → gldInitializeLibrary → osmesa_create_at_load
+   → OSMesaCreateContextAttribs + 51
+```
+  Mesa's create dies ONLY in a process where the system
+  GL stack is loaded or mid-init — the standalone linked
+  process works perfectly. The strongest mechanism
+  candidate: **our Mesa build's u_thread TLS gate** (the
+  deliberate single-threaded compromise — a single static
+  TLS dispatch slot) colliding with GLEngine's dispatch
+  when both GLs live in one process.
+- **THE TWO ESCAPES, named:** (a) REBUILD MESA with the
+  TLS gate disabled (real per-thread TLS — the knob
+  exists in the cross-10.6 tree; the substitute never
+  needed it because it was the only GL in town);
+  (b) THE FORK HOST — a helper process owning Mesa,
+  IPC'd from the GLD (heavy, clean isolation).
+  The rebuild is the cheaper first try.
+- **FREE FINDING (the host's own explanation of the
+  samples divergence):** the debug log's caps fill —
+  `[VREND CAPS] After query_multisample_caps:
+  max_samples=4 … Metal backend: Overriding
+  max_samples 4 -> 1 for fake_sw_msaa … FINAL VALUES:
+  glsl_level=410, max_samples=1` — virglrenderer's
+  Metal backend DELIBERATELY caps samples for its
+  fake-software-MSAA path; v1's fill reports the raw 4,
+  v2's the overridden 1. The divergence is a policy,
+  not a measurement.
+- **ALSO BANKED:** the capset delivery size varies by
+  caller path (764 stub / 1384 Mesa's winsys / 1408
+  kernel-moved) — three sizes for one 1408-byte capset;
+  the truncation note in the kext stands.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

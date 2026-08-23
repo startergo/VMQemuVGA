@@ -292,6 +292,55 @@ static int virgl_transport_init(void)
 
 static long g_clear_count = 0;
 
+/* RUNG 55 — THE MESA LINKAGE, FINAL FORM: libOSMesa LINKED INTO
+ * THE BUNDLE (deploy_gld.sh links the build-tree dylib; @rpath
+ * resolves in the host process). The dlopen route CRASHED in
+ * OSMesaCreateContextExt with ANY driver — the glapi bridge's
+ * dispatch needs link-time binding; the directly-linked ostest
+ * proved it (create+makecur+clear+host batch, clean exit). The
+ * gl* entries bind through the linked library's dispatch. */
+extern void* OSMesaCreateContextExt(unsigned, int, int, void*);
+extern int OSMesaMakeCurrent(void*, void*, unsigned, int, int);
+extern void OSMesaDestroyContext(void*);
+extern void glClearColor(float, float, float, float);
+extern void glClear(unsigned);
+extern void glFinish(void);
+
+static void* g_os_ctx = NULL;
+static unsigned char* g_os_buffer = NULL;
+static int g_os_created = 0, g_os_made_current = 0;
+
+/* The CREATE runs at LOAD TIME (gldInitializeLibrary) — before any
+ * GL context exists, the glapi dispatch is uncontested. Creating
+ * INSIDE glClear_Exec crashed at st_create_context+40: two GL
+ * systems in one process, the dispatch contested (the crash frame:
+ * glClear_Exec -> osmesa_link_init -> OSMesaCreateContextExt ->
+ * st_api_create_context -> st_create_context). */
+static void osmesa_create_at_load(void)
+{
+    if (g_os_created) return;
+    g_os_created = 1;
+    setenv("GALLIUM_DRIVER", "virgl", 1);
+    g_os_ctx = OSMesaCreateContextExt(0x1908 /*GL_RGBA*/, 24, 8, NULL);
+    char b[80];
+    snprintf(b, sizeof(b), "rung55: load-time create -> ctx=%p",
+             g_os_ctx);
+    ep_log(b);
+}
+
+static int osmesa_link_init(int w, int h)
+{
+    if (!g_os_ctx) return -1;
+    if (g_os_made_current) return 0;
+    g_os_made_current = 1;
+    g_os_buffer = (unsigned char*)calloc(1, (size_t)w * h * 4);
+    if (!OSMesaMakeCurrent(g_os_ctx, g_os_buffer, 0x1401, w, h)) {
+        ep_log("rung55: OSMesaMakeCurrent FAILED"); return -1;
+    }
+    ep_log("rung55: OSMesa LINKED (ctx + private buffer live)");
+    return 0;
+}
+
 /* RUNG 39 — the saved window triple + the lazy bounds query */
 static unsigned g_sid_cid = 0, g_sid_wid = 0, g_sid_sid = 0;
 static int g_bounds_locked = 0;
@@ -742,6 +791,26 @@ static void gld_clear_real(void* ctx, unsigned mask,
                        | ((mask & 0x0400u) ? 0x1u : 0u);
     if (virgl_submit_fb_clear(pipe_mask) < 0 && g_clear_count <= 5)
         ep_log("  fb+clear submit FAILED");
+    /* RUNG 55 — THE MESA FORWARD: the same clear through OSMesa's
+     * full stack (state tracker → virgl → OUR transport → host →
+     * readback into the private buffer). The linkage proof: the
+     * private buffer reads the app's color — Mesa-rendered. */
+    if (g_clear_count <= 3 &&
+        osmesa_link_init(g_fb_w, g_fb_h) == 0) {
+        glClearColor(g_clear_rgba[0], g_clear_rgba[1],
+                        g_clear_rgba[2], g_clear_rgba[3]);
+        glClear(0x4000 /*GL_COLOR_BUFFER_BIT*/);
+        glFinish();
+        char ob[96]; int oo = 0;
+        for (int i = 0; i < 8 && oo < 40; i++)
+            oo += snprintf(ob + oo, sizeof(ob) - oo, "%02x",
+                           g_os_buffer[i]);
+        char b4[128];
+        snprintf(b4, sizeof(b4),
+                 "rung55: OSMesa clear DONE — private buffer[0..7]: %s",
+                 ob);
+        ep_log(b4);
+    }
 }
 
 /* THE READBACK SLOT (+0x10) — the proof instrument: wait the
@@ -1103,6 +1172,10 @@ int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
         int rc = preinit(arg5 & 1);
         g_vm_mask = GLDisplayMask;
         g_vm_ok = (g_vm_mask != 0);   /* rung 6b: the REAL guard structure */
+        /* RUNG 55: the OSMesa create at LOAD TIME — no GL current,
+         * the glapi dispatch uncontested (creating inside
+         * glClear_Exec crashed at st_create_context+40). */
+        if (g_vm_ok) osmesa_create_at_load();
         fprintf(f, "[%s pid=%d]   glvmPreInit(0x%x) -> %d (rc propagated; "
                  "guard=mask!=0 -> %d)\n",
                 ts, (int)getpid(), arg5 & 1, rc, g_vm_ok);
