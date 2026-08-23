@@ -6111,6 +6111,41 @@ stub:   ZERO NOOP/SLOT lines                        (no primitive slot called)
 
 ---
 
+## RUNG 54 CONTINUATION — THE DRAW DOOR READ: the
+float's gldUpdateDispatch (grf64 0x152da) is GLVM
+function-pointer machinery — the real draw contract:
+
+- **The selection mechanism:** dirty-block bits gate
+  state reloads (0xC0000000 →
+  glrLoadCurrentDraw/ReadFramebuffer; 0x11000000 → the
+  program-object path reading [shared+0x3c8], storing
+  [ctx+0x770]); and the block at **[ctx+0x748]**
+  (gldCreateContext's SIXTH arg — our a6) is the GLVM
+  function table.
+- **The actual draw routing:** the float INSTALLS
+  transform functions by patching function pointers —
+  `glvmCancelFunctionPointerWrite` /
+  `glvmReleaseFunction` manage [ctx+0x188/+0x190],
+  installing `gldSetFPTransformFunc`-class entries —
+  and the ENGINE's dispatch follows those patched
+  pointers. Draws reach a driver whose UpdateDispatch
+  engages this machinery; ours returns 4 and marks
+  nothing, so the engine keeps its own vertex path.
+- **THE FORK, named honestly:** real draws require the
+  GLVM contract, rung by rung — OR the MESA LINKAGE
+  for the draw class specifically (Mesa's virgl already
+  implements the entire vertex/shader/DRAW_VBO encoding
+  and submits through this same kernel transport,
+  byte-exact per the substitute era). The pre-bridge
+  design named Mesa as the bridge's far end from the
+  start; the clear/readpix/flush slots proved the
+  transport by hand, and the draw class is where the
+  hand-built approach meets a contract too deep to
+  mirror cheaply. **The next rung is a design decision,
+  not a wire: GLVM-rung-by-rung vs the Mesa linkage.**
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
