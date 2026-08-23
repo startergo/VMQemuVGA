@@ -12830,3 +12830,114 @@ states that no longer exist.**
   verified on per-process paths. Novel failures did materialize along the
   way (the `cmd_buf` 256-byte overflow found and fixed during Increment C)
   but the blanket expectation no longer describes the state.
+
+---
+
+## 2026-08-23 (late) — THE PANIC LEVERS EXECUTED: slto_us
+landed in config.plist (read-before-write honoured);
+kext spin audit complete (no IOSimpleLock; one hot
+poll, one SIMULATED delay); the 23:08 ESP panic file
+identified as a re-save of 19:09
+
+- **BOOT-ARGS — the live string, read from
+  /Volumes/efi-legacy/EFI/OC/config.plist (guest
+  automount), NOT from any document:**
+  `-v keepsyms=1 debug=0x12a vsmcgen=1
+  msgbuf=1048576 serial=5 vm-accel-surface=1
+  tlbto_us=0 vti=9 vm-cap3d=1`
+  Three project args beyond the rules-file reference
+  list (`vm-accel-surface=1`, `vti=9`, `vm-cap3d=1`)
+  — the read-before-write rule is why they survived.
+- **EDIT APPLIED (takes effect at next boot only):**
+  inserted `slto_us=10000000` (10 s) after
+  `tlbto_us=0`; backup at `config.plist.bak-slto`;
+  verified by re-read:
+  `… serial=5 vm-accel-surface=1 tlbto_us=0
+  slto_us=10000000 vti=9 vm-cap3d=1`. Value is a
+  deliberately explicit large number, not 0 — see the
+  tension below.
+- **TLB TENSION (recorded, unresolved):** the 08:09
+  panic is `TLB invalidation IPI timeout` (pmap.c:
+  2741) DESPITE `tlbto_us=0` live in the config —
+  so either 0 does not mean "disabled" on xnu
+  10.8, or the arg was added after that boot. Do
+  not treat `tlbto_us=0` as proven-disable; if TLB
+  panics continue post-slto_us, give tlbto_us an
+  explicit large value too.
+- **TRADE (accepted deliberately):** a genuine
+  deadlock now hangs instead of panicking —
+  acceptable while the cause is emulation
+  starvation; makes a real deadlock harder to
+  diagnose. Revisit if hangs replace panics.
+- **KEXT SPIN AUDIT (grep over FB/, complete):**
+  - **IOSimpleLock: ZERO uses.** The
+    interrupts-disabled-across-slow-work class is
+    absent by inspection; serialization is locks/
+    gates elsewhere.
+  - **IODelay sites, three classes:**
+    1. HOT — the submitCommand poll,
+       VMVirtIOGPU.cpp:2318 `IODelay(20)` × ≤10
+       (the 12:59 panic site; every 2D refresh and
+       3D batch submit passes through).
+    2. WARM/SIMULATED — VMQemuVGAAccelerator.cpp:
+       3717 `IODelay(flush_op.software_commands *
+       10)` under the comment "Simulate software
+       command processing time" — **a busy-wait for
+       work that does not exist**; proportional to
+       command count on the desktop-flush path.
+       Removal-class, not conversion-class.
+    3. COLD — device-init delays (VMVirtIOGPU.cpp:
+       1196-1209) and boot IOSleep(5000)s;
+       one-shot, harmless.
+  - IOSleep sites all yield — not spinlock-timeout
+    contributors.
+- **THE 23:08 ESP FILE (panic-2026-08-23-230855.txt
+  on the efi drive root, alongside opencore-*.txt
+  dumps):** byte-identical to the 19:09 report (same
+  lock 0xffffff800bfd0280, owner 0xffffff800f9506b8,
+  RIP AppleUSBEHCI+…) — a RE-SAVE of the 19:09
+  event, not a sixth panic. Census stands: five
+  today, 19:09 the last.
+
+---
+
+## RUNG 63 PRE-REGISTERED — STOP CONTRIBUTING: the
+hot poll converted to a gated sleep, the simulated
+accelerator delay deleted (committed before the code)
+
+**Principle:** the driver cannot fix an emulation
+artifact, but it can stop feeding it — a spinning
+vCPU under TCG consumes scheduler time the other
+vCPUs need; that consumption is the starvation
+mechanism itself.
+
+**The changes:**
+1. **VMVirtIOGPU.cpp:2313-2330 poll** — spin count
+   becomes boot-arg-gated (`vm-poll-spin=N`,
+   default 10 = today's behaviour; 0 = pure
+   IOSleep(1) fallback), so one binary runs
+   spin-fast on 1-vCPU and sleep-polite on SMP
+   without a rebuild.
+2. **VMQemuVGAAccelerator.cpp:3714-3718** — the
+   simulated `IODelay(n*10)` block DELETED (with its
+   IOLog); there is no real work it waits for.
+
+**Predictions:**
+- (i) `vm-poll-spin=0` on 4-vCPU: the spin
+  contribution vanishes; per-submit wall time
+  regresses toward the IOSleep floor (~10 ms TCG)
+  when the host exceeds the short budget — visible
+  in the existing EXIT-OK `spin_iter` field
+  (values ≥ SPIN_ITERATIONS);
+- (ii) default (`vm-poll-spin` unset): behavior
+  byte-identical to today (arg-gate dormant) —
+  the control for the gate itself;
+- (iii) the panic census does NOT change from the
+  code alone — `slto_us` is the class-killer; this
+  rung is hygiene so the driver is not the
+  starvation source when SMP is an accepted axis.
+
+**Exposure:** kext rebuild + install (boot risk:
+none new — no new KPI symbols, no new calls);
+verify on the next boot; GLD stub and config
+untouched.
