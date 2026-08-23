@@ -5627,6 +5627,60 @@ stub:   rung50: config block 0x10181b1d8 FILLED (limits+caps; +0x2d=1)
 
 ---
 
+## RUNG 51 PRE-REGISTERED — THE DEPTH SURFACE (committed
+before implementation)
+
+**The open question from rung 38's Mesa stream diff:**
+Mesa binds a DEPTH SURFACE (separate depth resource,
+zsurf in SET_FRAMEBUFFER_STATE) — noted then as "not
+required for the color-only proof; later slots". Later is
+now: without a depth buffer the context is a color-only
+GL (the census's `d0 s0` — consistent with the format,
+but the format REQUESTED no depth because none existed).
+
+**The protocol facts (virgl_hw.h):** D24S8 =
+VIRGL_FORMAT_Z24_UNORM_S8_UINT = **19**;
+**VIRGL_BIND_DEPTH_STENCIL = 1<<0 = 1** (the bind the
+color rung's 0x4 mistake taught — bit 0 IS depth). The
+SET_FB encoding gains zsurf: {nr=1, zsurf=zsh, cbuf=sh} —
+same length. A depth SURFACE object on the depth resource
+(handle, res, fmt 19) joins the batch (6 dwords).
+
+**The changes:**
+1. Probe: both pf attempts request depth 24 + stencil 8
+   (attrs 12=DepthSize, 13=StencilSize — value attrs).
+2. Stub pf parser: 12/13 consume their values.
+3. Stub fb chain: create the depth resource (fmt 19,
+   bind 1, window size) + backing + ctxAttach; the SET_FB
+   carries zsurf; the depth surface object in the batch;
+   the depth/stencil clear masks already map (0x100→2,
+   0x400→1).
+4. The config block's depth bytes stay as filled
+   (+0x19/+0x1A=8/8) — the census adjudicates whether
+   DEPTH_BITS reads them (then 24/8 needs them changed)
+   or another source.
+
+**Predictions:**
+- (i) **DEPTH-COMPLETE:** npix=1 with {73,5,12,24,13,8};
+  the kernel logs the depth resource created; the batch
+  executes (v3d done, no vrend error in the debug log);
+  census moves to d24 s8 (or names its source by moving
+  partially); green still presents.
+- (ii) **npix=0** (the scorer demands a depth-class flag
+  the object lacks): the float's case-12 read (grf's jump
+  table) is next.
+- (iii) **vrend rejects the depth encoding** (the debug
+  log names it — the Z16-vs-D24S8 format choice or the
+  bind): fix per the log.
+- (iv) **Census unchanged d0 s0:** the DEPTH_BITS source
+  is the config block's other fields or the drawable —
+  the +0x19/+0x1A=24/8 experiment follows.
+
+**Exposure:** stub live-swap; probe rebuild; no kext; no
+reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
