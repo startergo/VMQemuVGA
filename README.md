@@ -37,9 +37,42 @@ compositing destination to the surface. Display refresh now runs at a
 **measured 47-52 Hz** (17 ms timer period; a former re-arm-after-work bug had
 capped achieved rate at 19-26 Hz), and the cursor is visibly smoother for it.
 
-**Not yet verified: real applications.** Gecko and WebKit have not been run
-against the shim. Multiple concurrent contexts, resize under load, and sustained
-frame rates are untested, and performance under a real workload is unmeasured.
+**Working: real applications render.** As of 2026-08-20 the CGL dispatch
+problem is solved. A substitute `OpenGL.framework`, loaded via
+`DYLD_FRAMEWORK_PATH`, re-exports Mesa for every `gl*` entry and forwards
+unimplemented `CGL*` to a renamed copy of the real framework. PowerFox
+(Gecko 52) draws its browser UI and real web content — google.com legible,
+colours correct — and the WebGL Aquarium sample renders **full-screen and
+correctly**: hundreds of textured fish, water caustics, transparency, correct
+orientation. Chrome compositing still has open artifacts; the page and canvas
+paths do not.
+
+**In progress: a GLD — system-wide acceleration with no environment variable.**
+The substitute reaches only processes launched with `DYLD_FRAMEWORK_PATH`,
+never WindowServer. A registry-named renderer bundle (`VMVirtIOGLEngine`),
+loaded by the system's own CGL, reaches every process. It loads, passes the
+loader's validation handshake, enumerates as the display's renderer
+(`nrend=1`), and completes the full context lifecycle — pixel format, shared
+state, context creation, dispatch table, drawable attach, surface coupling,
+teardown. As of 2026-08-23 the bridge is real and **presented**: `glClear` and
+`glReadPixels` dispatch through the driver's own table to the host GPU over
+virgl, the readback is byte-exact at window size, and the rendered content
+reaches the **screen** through the kext's window-surface chain — a probe
+window visibly fills with the rendered color, kernel-verified end to end
+(surface backing write → desktop flush → scanout push); a coordinate-system
+bug in the relay's surface write was root-caused and fixed to get there.
+Presentation currently fires from the readback path: the app's own
+`CGLFlushDrawable` is decoded to its last gate — the engine installs driver
+flush/swap entries only for contexts whose renderer is claimed hardware, and
+that claim (the `0x100` bit, deliberately withheld until the transport could
+back it) is the named next change. The remaining GL entries still refuse
+honestly; each becomes a transport call, slot by slot. The contract was
+recovered by disassembling this guest's own `GLEngine` and `GLRendererFloat`;
+it is **10.6-specific and not portable** to later releases.
+
+**Not yet verified:** sustained frame rates under real workloads, multiple
+concurrent contexts, and resize under load. Performance is unmeasured except
+where stated.
 
 This README states only what has been verified by a live boot, a negative
 control, or a visual check. Claims that rest on a success log alone are marked
@@ -79,7 +112,9 @@ or the aperture is family-scoped.
 | Mesa on 10.6 | `libOSMesa.8.dylib` cross-built (913 targets, zero undefined symbols) and runtime-verified on the guest — softpipe renders byte-exact clears. |
 | `virgl_iokit_winsys` | Mesa-driven `glClear` + `glReadPixels` byte-exact through virgl; `GALLIUM_DRIVER=softpipe` in the same binary gives an identical result. |
 | 3D rendering | Triangle and textured triangle PASS on virgl, 3/3 pixels, matching the softpipe reference. Exercises GLSL compilation, shader objects, vertex buffers, vertex element state, textures, sampler state and `DRAW_VBO`. |
-| CGL shim | **Presentation path works; GL dispatch broken.** The `drawRect:` → OSMesa buffer → visible pixels path is verified. But the app's GL draw calls bind to Apple's OpenGL.framework under two-level namespace and do NOT reach Mesa. Confirmed by `nm -m`. Earlier "red window" was from test binaries linking `-lOSMesa` directly. Fix: `__DATA,__interpose` for gl* entry points, or substitute OpenGL.framework. See LEDGER.md. |
+| Substitute `OpenGL.framework` | **Working.** Re-exports Mesa for `gl*`, forwards unimplemented `CGL*` to a renamed copy of the real framework. Must be a *universal* driver — its export list is Apple's, not any app's imports, since QuartzCore binds 107 CGL symbols and CoreVideo 51, and a missing export makes those frameworks fail to load. Verified by PowerFox rendering web content and the WebGL Aquarium running full-screen. |
+| GLD (system-wide route) | **Loads, enumerates, holds contexts; renders nothing yet.** Registry-named bundle at `/S/L/E/<name>.bundle/Contents/MacOS/<name>`, named by `IOGLBundleName` on the accelerator node. Validation handshake passes, census returns `nrend=1`, full context lifecycle and clean teardown verified, `CGLFlushDrawable → 0`. Every GL entry refuses honestly. Contract recovered by disassembly — 10.6-specific. |
+| Per-resource fences | DRM `virtgpu_ioctl` contract implemented end to end: fence handles per submit, `last_seq` per resource, a WAIT selector, transfers fencing themselves, global drain retired. ~400 batches/s at 0-3 ms each, zero timeouts. |
 
 ### Devices
 
@@ -125,27 +160,40 @@ or the aperture is family-scoped.
   textures, sampler state and `DRAW_VBO` — including the three-hop shader
   translation chain (GLSL → TGSI in Mesa, TGSI → GLSL in virglrenderer,
   GLSL → Metal in ANGLE).
-- **A CGL shim connects applications to it — presentation path works, GL dispatch does not.** Nine `NSOpenGLContext` swizzles plus four `_CGL*` interposes, loaded via `DYLD_INSERT_LIBRARIES`, intercept context lifecycle and present through a swizzled `drawRect:`. But the app's GL draw calls bind to Apple's OpenGL.framework under two-level namespace — they do NOT reach Mesa. The shim's own `glFinish`/`glReadPixels` DO reach Mesa (via `-lOSMesa`). Split dispatch confirmed by `nm -m`: `_glClear (from OpenGL)`. All real apps (Flurry, Gecko, WebKit) link OpenGL.framework and are affected. Fix: `__DATA,__interpose` for gl* entry points (Phase 1), or substitute OpenGL.framework via `DYLD_FRAMEWORK_PATH` (Phase 2). See [LEDGER.md](LEDGER.md) for the full diagnosis.
-- **Not yet covered:** real applications (Gecko, WebKit), multiple concurrent
-  contexts, resize under load, sustained frame rates, and resource reuse across
-  frames. Performance under a real workload is unmeasured.
+- **Applications reach it through a substitute `OpenGL.framework`.** Nine
+  `NSOpenGLContext` swizzles plus `_CGL*` implementations handle context
+  lifecycle and present through a swizzled `drawRect:`; the substitute itself
+  re-exports Mesa for `gl*`, which is what solved the two-level-namespace
+  dispatch problem — `DYLD_INTERPOSE` cannot work here because AppKit imports
+  zero public `_CGL*` symbols and Gecko resolves most GL entry points
+  dynamically. Four correctness fixes were needed on top: `glu*` routed to Mesa
+  rather than forwarded (GLU is a *client* of GL, not a peer); pthread-TSD for
+  per-thread current-context, since Apple clang refuses TLS for this target
+  outright; a global mutex serialising context handoffs, which real CGL gets
+  free because its contexts live server-side in WindowServer; and libc++ linked
+  statically, since two C++ runtimes in one process is unfixable by paths.
+  PowerFox renders web content through this today.
+- **A GLD reaches processes the substitute cannot** — including WindowServer.
+  See [Status](#status). It loads, enumerates and holds contexts; it does not
+  render yet.
+- **Not yet covered:** sustained frame rates, multiple concurrent contexts,
+  resize under load, and resource reuse across frames.
 
 The `GLPlugin/` tree is **superseded 2026-08-09** (see
 [`GLPlugin/SUPERSEDED.md`](GLPlugin/SUPERSEDED.md)). It attempted to replace
-`GLEngine.bundle` directly; CGL never discovered the renderer on either 10.6 or
-10.15, and the remaining gap was the entire GL spec. Kept as reference for the
-GLI/CGL plumbing findings, which are still useful for a future CGL shim. The
-chosen direction is Mesa + virgl + a CGL shim — see
-[`.claude/rules/acceleration.md`](.claude/rules/acceleration.md) for the seam
-analysis. `virglrenderer-metal/` is a shelved host-side experiment that has
-never compiled inside virglrenderer and targets a Linux/Mesa guest.
+`GLEngine.bundle` directly, and CGL never discovered the renderer.
+**Correction 2026-08-23:** that non-discovery was an install artifact, not a
+verdict — the bundle directory name and the published `IOGLBundleName` did not
+match, and the loader requires them to be identical. Name-matched, a
+registry-named bundle loads. The supersession rationale is therefore weaker
+than it reads, though the current GLD route supersedes it on other grounds.
+`virglrenderer-metal/` is a shelved host-side experiment that has never
+compiled inside virglrenderer and targets a Linux/Mesa guest.
 
-If you need 3D in a Snow Leopard VM today, the Mesa build and winsys work
-end-to-end (verified via direct-OSMesa test programs that link `-lOSMesa`), but
-the CGL shim's GL dispatch is broken — apps linked against OpenGL.framework
-(which is all of them) route draw calls to Apple's GL, not Mesa. The
-presentation path works; the GL routing fix (`__DATA,__interpose` for gl*
-functions) is the next milestone.
+If you need 3D in a Snow Leopard VM today: launch the app with
+`DYLD_FRAMEWORK_PATH` pointing at the substitute framework. That path renders
+real web content and full-screen WebGL. The system-wide route needs no
+environment variable but does not render yet.
 
 ---
 
@@ -271,8 +319,9 @@ Full procedure and recovery steps: [`.claude/rules/build-install.md`](.claude/ru
   stack: app → substitute `OpenGL.framework` → Mesa → virgl → kext → host.
 - [`docs/accelerator-surface-path.md`](docs/accelerator-surface-path.md) — the
   second, independent stack: WindowServer's 2D `IOAccelSurface` loop served
-  in-kernel (no GL, no Mesa). These two stacks share only the kext transport
-  and the host device.
+  in-kernel (no GL, no Mesa). The three routes share only the kext transport
+  and the host device — the third being the GLD, whose ladder lives in
+  [`LEDGER.md`](LEDGER.md).
 - [`.claude/CLAUDE.md`](.claude/CLAUDE.md) — environment facts and the ground
   rules this project works under.
 - [`.claude/rules/`](.claude/rules/) — topic-specific notes on the virtio
@@ -296,9 +345,10 @@ and has been for several releases. On 2026-08-16 the 2D **surface
 acceleration** path landed on top of it: WindowServer's `IOAccelSurface` loop
 is served by the kext, the desktop composites through it, and display refresh
 runs at a measured 47-52 Hz. The 3D transport was verified end-to-end at
-the byte level on 2026-08-09, and 3D rendering through Mesa on 2026-08-10 —
-via direct-OSMesa test programs that link `-lOSMesa` directly. The CGL shim's
-presentation path works, but its GL dispatch is broken: apps linked against
-OpenGL.framework (which is all of them) route draw calls to Apple's GL, not
-Mesa. See [3D status](#3d-status) above and [LEDGER.md](LEDGER.md) for the
-diagnosis.
+the byte level on 2026-08-09, and 3D rendering through Mesa on 2026-08-10.
+The CGL dispatch problem — apps binding `gl*` to Apple's OpenGL.framework
+under two-level namespace — was solved on 2026-08-20 by a substitute
+`OpenGL.framework`, and PowerFox now renders real web content and full-screen
+WebGL through it. A system-wide GLD route, needing no environment variable,
+loads and enumerates as of 2026-08-24 but does not render yet. See
+[3D status](#3d-status) above and [LEDGER.md](LEDGER.md).
