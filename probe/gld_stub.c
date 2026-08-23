@@ -1404,8 +1404,15 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
         case 6:  mode10 |= 0x2; break;        /* Stereo — echo (0xb7db) */
         case 3: case 4: case 7: case 8: case 9: case 10:
         case 51: case 52: case 57:
+        case 11:                             /* RUNG 60: AlphaSize — the
+                                                 NS path forwards it RAW
+                                                 (observed in GLMark's
+                                                 [5,8,1,b,1,c,1,4]); the
+                                                 missing case truncated
+                                                 the walk BEFORE depth */
         case 12: case 13:                     /* RUNG 51: Depth/Stencil
                                                  sizes — value attrs */
+        case 14: case 15:                     /* Accum/Aux — same class */
             p++; walked += 4; break;          /* value attrs: consumed */
         case 47: case 48: case 72: case 54: break;  /* no-op pass */
         case 49: flags |= 4; si = 1; break;
@@ -1990,9 +1997,14 @@ const char* gldGetString(void* ctx, unsigned name,
         if (!vsn_built) {
             vsn_built = 1;
             if (g_caps_fetched && g_caps.v1.glsl_level >= 100) {
-                snprintf(vsn, sizeof(vsn), "%u.%u (virgl %s; engine software fallback)",
-                         g_caps.v1.glsl_level / 100, g_caps.v1.glsl_level % 100 / 10,
-                         g_caps.renderer);
+                /* RUNG 60 correction: the host backend is ANGLE/
+                 * Metal (the debug log's own env: NPT_BACKEND=dxmt,
+                 * ANGLE_*) — GLES underneath. The 4.1 is virgl's
+                 * ES->desktop TRANSLATION, not a desktop context;
+                 * the attribution says so while the leading number
+                 * passes version gates. */
+                snprintf(vsn, sizeof(vsn), "%u.%u (virgl, ANGLE/Metal ES backend; engine software fallback)",
+                         g_caps.v1.glsl_level / 100, g_caps.v1.glsl_level % 100 / 10);
             } else {
                 snprintf(vsn, sizeof(vsn), "2.1 VMQemuVGA (engine software)");
             }

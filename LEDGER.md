@@ -6504,6 +6504,59 @@ progress; GLMark not yet through:
 
 ---
 
+## RUNG 60 — THE NS TRANSLATION READ: the depth gate
+located in OUR parser (attr 11's missing case), the
+version claim's TRUE shape found (the host is
+ANGLE/GLES), and a standing rule born:
+
+- **THE NS PATH DOES REACH THE DRIVER — with the raw
+  attrs.** The minimal NSOpenGLPixelFormat harness
+  (built from scratch, its own bisect) split it
+  cleanly: every NO-depth set passes; EVERY depth
+  size (1/16/24/32) fails — while CGL-direct passes
+  the same sizes. The forwarded lists name why:
+  NS sends the sizes RAW (`[5, 8,1, 0xb,1, 0xc,1,
+  4]` for GLMark's set) where CGL-direct composes
+  and forwards minimal. Our parser's gap: **attr 11
+  (AlphaSize) had no case** — the walk truncated
+  before depth — plus a valueless trailing 4 that
+  over-reads the terminator. Attr 11/14/15 added;
+  the depth requests still fail the scorer (mode10
+  and flags bisects through the NS harness: all
+  fail) — **the NS scorer's depth check reads a
+  field we haven't found** (the float's build-tail
+  store sequence is the read in flight).
+- **THE VERSION CLAIM'S TRUE SHAPE (the review's
+  flag, verified against the host's own env):** the
+  debug log's boot lines — `NPT_BACKEND=dxmt`,
+  `ANGLE_METAL_DEBUG_BINDINGS=1`, `ANGLE_ENABLE_
+  DEBUG_TRACE=1` — **ANGLE-on-Metal IS the backend;
+  the guest is on the gl=es path.** The capset's
+  4.1/glsl-410 is virglrenderer's ES→desktop
+  TRANSLATION, not a desktop context. The version
+  string corrected to
+  `"4.1 (virgl, ANGLE/Metal ES backend; engine
+  software fallback)"` — the gate-passing number,
+  the honest attribution. The samples v1/v2 split
+  gets its mechanism: two fills asking the backend
+  different questions, one ES-shaped.
+- **THE OPEN CONFIG QUESTION (named, deliberate):**
+  is gl=es the right host path? gl=core would give
+  virglrenderer a real desktop 4.1 context — closer
+  to what the capset claims and what a GLD implies —
+  at the cost of whatever made es the choice. A
+  host-config experiment (its own rung; UTM's
+  display-device options).
+- **THE STANDING RULE (the hard-link class):** a GLD
+  that only loads under our rpath is not a driver —
+  it is a lab-only artifact reading as a working
+  one. **Load the bundle from a process that knows
+  nothing about this project before believing any
+  rung that says it loads.** The nstest harness IS
+  that process; it stays in the toolkit.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
