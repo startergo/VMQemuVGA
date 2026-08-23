@@ -323,7 +323,14 @@ static void osmesa_create_at_load(void)
     if (g_os_created) return;
     g_os_created = 1;
     setenv("GALLIUM_DRIVER", "virgl", 1);
-    g_os_ctx = OSMesaCreateContextExt(0x1908 /*GL_RGBA*/, 24, 8,
+    g_os_ctx = OSMesaCreateContextExt(0x1908 /*GL_RGBA*/,
+                                    0 /*depth — rung 58: the meta
+                                    read path stages the DEPTH surface
+                                    as a fmt-19 ARRAY resource whose
+                                    surface create vrend rejects (the
+                                    rung-51 class); no depth here, no
+                                    staging of it*/,
+                                    0 /*stencil*/,
                                     0 /*accum*/, NULL /*share*/);
     char b[80];
     snprintf(b, sizeof(b), "rung55: load-time create -> ctx=%p",

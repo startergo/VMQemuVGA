@@ -6353,6 +6353,62 @@ cdw=146: a TGSI fragment shader ("FRAG...MOV OUT[0] CONST[0]...END")
 
 ---
 
+## RUNG 58 — THE LAST MILE CLOSED: the transfer_map
+read traced to the actual blocker (the fmt-19-array
+staging, the rung-51 class) and avoided — **MESA'S
+BYTES CAME HOME**:
+
+- **THE READ (the whole branch):** the map's readback
+  gate is `virgl_res_needs_readback` → skipped when
+  `clean_mask` says clean (resources start ALL-CLEAN at
+  create; only `virgl_resource_dirty` — the SET_FB
+  bind path — clears). The port's `transfer_get` IS
+  implemented (the full 0x600B-wait + 0x3009 path,
+  virgl_iokit_winsys.c:375) and `supports_encoded_
+  transfers = 0` (staging off by the port's own
+  setting) — path (a) was ready and never reached.
+- **THE ACTUAL BLOCKER (the debug log's second
+  verdict):**
+```
+vrend_decode_create_surface_common: Illegal resource 313
+vrend_decode_ctx_submit_cmd: Illegal command buffer
+```
+  Resource 313 = **fmt 19 (D24S8) ARRAY (arr=1)** —
+  created, backed (335360), ctx-attached TWICE (all
+  resp=0x1100) — yet vrend's surface lookup refuses
+  it. THE RUNG-51 CLASS, with the array dimension the
+  apparent discriminator. The 584-byte batch was the
+  read's META/BLIT path creating its surfaces —
+  including the depth-staging on 313 — aborting at
+  that create, before any transfer.
+- **THE AVOIDANCE (one word):** the GLD's OSMesa
+  embed requested depth 24/stencil 8 it never used —
+  the depth surface is what the read path stages.
+  Created with **0/0**: no depth surface, no fmt-19
+  staging, nothing to abort.
+```
+rung55: OSMesa clear DONE — private buffer[0..7]: 00ff00ff00ff00ff
+```
+- **THE MESA LINKAGE IS END-TO-END:** the app's color →
+  our clear slot → Mesa's full stack (state tracker,
+  TGSI shaders, virgl encoding) → OUR kernel transport
+  → the host GPU → Mesa's readback → **the app's green
+  in the guest buffer**. Mesa renders AND reads back
+  inside the GLD, both GL implementations coexisting.
+- **BOUNDED OPEN (unchanged, now precise):** the
+  fmt-19-array surface rejection — vrend accepts the
+  clear's fmt-19 2D depth surface but refuses the
+  array shape; the kernel chain is flawless on both.
+  Any future depth-using Mesa workload in the embed
+  hits it; the host-side reason is one read away.
+- **NEXT INSTRUMENT RECEIVED:** GLMark2 built for
+  10.6 (~/glmark2/build-106) — the first REAL GL
+  workload for the system route: strings, limits,
+  draw routing, and the whole embedded stack under a
+  benchmark's full lifecycle.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
