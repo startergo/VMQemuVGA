@@ -5306,6 +5306,90 @@ reboot this rung.
 
 ---
 
+## RUNG 47 RESULT — TWO OF THREE LANDED: the renderer claim
+(census accelerated=1) and the FIRST ACCELERATED PIXEL
+FORMAT (npix=1); the classification still software — and
+its trigger found: a SUCCESSFUL ATTACH through dispatch
+slot +0x48. Rung 48 pre-registered:
+
+- **LANDED: the record claim.** `renderer[0]:
+  accelerated=1 rendererID=0x1af60100` — the census reports
+  the renderer accelerated (record class 0x17CD), the first
+  time in the arc.
+- **CORRECTION (banked): the engine STRIPS attr 73 before
+  forwarding.** The {73,5} request arrives at
+  gldChoosePixelFormat as `[0x5 0x4]` — the accelerated
+  criterion filters RENDERERS engine-side (via the census);
+  the driver never sees 73. The attr-conditional claim
+  never fired. **The claim is UNCONDITIONAL** (flags |=
+  0x100 on every object — the worked example's own shape,
+  VMsvga2GLDriver.c:169: p[1]=0x501, no conditional; and
+  the scorer is requirement-based, rung 26 — extra bits
+  harmless, confirmed: plain requests still match).
+  **Result: `CGLChoosePixelFormat(accelerated) -> npix=1` —
+  the first accelerated pixel format in the arc; the probe
+  uses it.**
+- **NOT LANDED: the classification — install entry still
+  uncalled, swap still noop.** Root decoded (below).
+- **gldSetConfigData DISCOVERED (the config-block map read
+  end to end):** the float fills the engine's per-renderer
+  config block (the sub-block rcx of the 6-arg
+  gldCreateContext) via its own gldSetConfigData
+  (grf64 0x139ae): +0xC/+0x3F800000/+0x4000-maxes...;
+  **+0x2c/+0x2d = the DRIVER CTX's own bytes at +0x268/
+  +0x269** (the swap capability's provenance); color-size
+  bytes; caps words +0x198/+0x19c/+0x1a0; limits to
+  +0x1a4+. The stub refuses the entry and the block sat
+  all-zero except our +0x2d=1. Not this rung's gate (the
+  block feeds limits/describes), but the map is banked for
+  the limits work.
+- **THE CLASSIFICATION TRIGGER (the decisive read):
+  `gliAttachDrawableWithOptions`** (0xf30x+): calls the
+  driver through **dispatch table slot +0x48**
+  (0xf444: `callq *0x168(%r8)` — driver-obj+0x168 =
+  table+0x48) with the drawable, **CHECKS THE RESULT**
+  (0xf44d+: cmpl $3/$2/$1-class parse); on success
+  (`xorl %r12d`) → `[0x6570] = r15` (the drawable object,
+  NONZERO) → `gliUpdateDispatchState` → al=0 → **HARDWARE
+  classification** → the +0x50 install → the block filled.
+  Our table's +0x48 is a NOOP (void garbage return) → the
+  result check fails → r12d stays the 0x2714 default →
+  software. The export-level gldAttachDrawable (which
+  fires, returns 0) is a DIFFERENT call site.
+
+## RUNG 48 PRE-REGISTERED — THE ATTACH SLOT: table +0x48 =
+the real gldAttachDrawable (committed before
+implementation)
+
+**The change (one line):** gldInitDispatch writes
+gldAttachDrawable to dispatch+0x48 (alongside clear +0x8,
+readpixels +0x10, install +0x50). The entry already returns
+0; if the table call's ARG ORDER differs from the entry
+call (logged), the log names it and the signature is
+adjusted next run.
+
+**Predictions:**
+- (i) **THE FULL CHAIN:** the attach result passes the
+  engine's parse → [0x6570] nonzero → gliUpdateDispatchState
+  flips hardware → "+0x50 install CALLED, block1 filled" →
+  CGLFlushDrawable tail-calls the SWAP → the relay presents
+  AT THE APP'S FLUSH — the presentation where apps expect
+  it. Desktop stable (the claim is now set — the
+  exclusivity watch applies at the NEXT BOOT, not now).
+- (ii) The table call's args differ (the entry signature
+  misfits) → a crash or a garbage type logged at the slot
+  call → the float's table+0x48 source function read next
+  (the shared's +0x740 block's slot order).
+- (iii) The result checks still refuse (the float's attach
+  returns something other than plain 0 through the table —
+  e.g. a type code) → the checks' comparisons name the
+  expected convention.
+
+**Exposure:** stub live-swap; probe rerun; no kext; no
+reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

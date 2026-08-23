@@ -836,7 +836,11 @@ long gldGetRendererInfo(void* rec, int query_mask)
     memset(r, 0, 0x88);
     *(unsigned long*)&r[0] = (unsigned long)&_mh_bundle_header; /* +0 anchor */
     r[2] = 0x1AF40100;   /* +8  our renderer id (our vendor space) */
-    r[3] = 0x6CD;        /* +0xc class field (software, per float) */
+    r[3] = 0x17CD;       /* +0xc class field — RUNG 47: HARDWARE class
+                           (0x6CD | 0x1000), the worked example's own
+                           recorded value (VMsvga2GLDriver.c:139). The
+                           transport, readback, and presentation back
+                           the claim since rung 45. */
     r[4] = 0xD;          /* +0x10 */
     r[5] = 0x8008000;    /* +0x14 caps word (software class) */
     r[6] = 0x20000000;   /* +0x18 caps word */
@@ -954,6 +958,14 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
             p++; walked += 4; break;          /* value attrs: consumed */
         case 47: case 48: case 72: case 54: break;  /* no-op pass */
         case 49: flags |= 4; si = 1; break;
+        case 73: flags |= 0x100; break;       /* RUNG 47 — kCGLPFAccelerated:
+                                                 the HARDWARE claim. Held back
+                                                 since rung 24 ("honest only
+                                                 with functional 3D"); the
+                                                 transport, readback, and
+                                                 on-screen presentation now
+                                                 back it. Worked-example
+                                                 value: 0x501-class flags. */
         case 76: flags |= 1; break;           /* BackingStore */
         case 86: flags |= 0x2000; break;
         case 80: p++; walked += 4; break;     /* Window: consumes mask value */
@@ -976,6 +988,17 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
      * never passes, 0x4C9 always does. Not a hardware claim: the
      * float's software objects carry it. */
 build:
+    /* RUNG 47 CORRECTION — the claim is UNCONDITIONAL: the engine
+     * strips attr 73 before forwarding (observed: the {73,5} request
+     * arrives as [0x5 0x4] — the accelerated criterion filters
+     * RENDERERS via the census engine-side; the driver never sees
+     * 73). A hardware renderer claims hardware on EVERY object —
+     * the worked example's shape (VMsvga2GLDriver.c:169: p[1]=0x501
+     * applied to every return, no conditional). The scorer is
+     * requirement-based (rung 26: extra bits harmless — 0x4C9 passed
+     * a 0x4C0-composed request), so the extra bit cannot break plain
+     * requests. */
+    flags |= 0x100;
     unsigned* obj = (unsigned*)calloc(1, 0x38);
     if (!obj) {
         ep_log("  gldChoosePixelFormat -> 0x2716 (alloc fail; out NULL)");
