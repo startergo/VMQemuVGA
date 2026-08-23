@@ -5441,6 +5441,42 @@ reboot.
 
 ---
 
+## RUNG 48 RESULT — *** THE SWAP AT THE APP'S OWN FLUSH ***
+— prediction (i) complete: the direct install landed and
+CGLFlushDrawable tail-called the driver's swap:
+
+```
+stub:   rung48: DIRECT INSTALL engine=0x100848c20 block1=0x10084f1e8
+stub:   rung46: SWAP fired (engine [0x66b0]) — presenting
+stub:   rung46: SWAP presented (wait 0x0, relay 0x0) 320x262
+kernel: hostRelayBlit: GA path — surface 223039688, flush rect 320x262@200,588
+```
+
+- **THE COMPLETE APP DRAW CYCLE, DRIVER-ROUTED END TO
+  END:** glClear (the clear slot → the virgl batch → the
+  host GPU) → CGLFlushDrawable ([engine+0x66b0] → the
+  driver's swap → fence-wait → the 0x600C relay → surface
+  write → desktop flush → scanout). The base arithmetic
+  was right (engine=0x100848c20 — sane, no crash); the
+  two-pointer write put the swap where the engine jumps.
+- **Visual corroboration not re-taken this run** (the
+  window closed at probe exit); the relay chain is the
+  same one visually verified in rung 45 — the same
+  bytes through the same doors, now triggered at flush.
+  A held-open window with eyes on it remains the
+  standing confirm for any future claim-writing.
+- **THE HONESTY BOUNDARY, MOVED:** the 0x100 hardware
+  claim is now SET in the shipped stub (unconditional pf
+  flags, record class 0x17CD) AND backed — accelerated
+  pixel formats match, the census reports accelerated=1,
+  and the swap presents through the proven chain. What
+  remains honest-refusal: the other ~20 GL entries
+  (noop dispatches), the app's own clear COLOR (still
+  the proof color), and the config block (limits) still
+  unfilled (gldSetConfigData's map banked for it).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

@@ -79,6 +79,10 @@ static int g_vm_mask = 0;  /* mirror of the real gld_io_data mask store */
  * zeroed (the float uses its own glg_processor_default_data). */
 static unsigned long g_proc_stand_in[64];
 
+/* RUNG 48 — the engine sub-block (gldCreateContext's a4); the
+ * engine context base = sub-block − 0x79b8 (renderer idx 0). */
+static void* g_engine_subblock = NULL;
+
 /* RUNG 37 — THE FIRST BRIDGE SLOT: gldClear through the virgl
  * transport, direct (no Mesa yet — the plumbing proof: a GLD
  * dispatch call reaching the device). The call sequence mirrors
@@ -674,6 +678,24 @@ long gld_fill_engine_calls(void* dctx, void* block1, void* block2,
     return 0;
 }
 
+/* RUNG 48 — THE ATTACH SLOT (+0x48): the engine's
+ * gliAttachDrawableWithOptions calls here (gle 0xf444) with the
+ * drawable and PARSES THE RESULT (0xf44d+); a passing return is
+ * what sets [engine+0x6570] — the hardware classification. Log
+ * the raw args (the table call's convention may differ from the
+ * entry-level attach) and return success. */
+long gld_table_attach(void* a0, void* a1, void* a2, void* a3,
+                      void* a4, void* a5)
+{
+    (void)a3; (void)a4; (void)a5;
+    char b[128];
+    snprintf(b, sizeof(b),
+             "rung48: TABLE attach(+0x48) CALLED a0=%p a1=0x%lx a2=%p -> 0",
+             a0, (unsigned long)(uintptr_t)a1, a2);
+    ep_log(b);
+    return 0;
+}
+
 /* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
  * registered device id, don't guess it. libGFXShared's
  * _gfx_plugin_head is an exported global; the stub shares its
@@ -1158,6 +1180,9 @@ long gldCreateContext(void** out, void* pf, void* shared,
     if (a4) {
         unsigned char* sb = (unsigned char*)a4;
         sb[0x2d] = 1;
+        g_engine_subblock = a4;   /* rung 48: the engine base derives
+                                   * from it (sub-block = engine +
+                                   * 0x79b8 + idx*0x888, idx=0) */
         snprintf(buf, sizeof(buf),
                  "rung46: sub-block %p [+0x2d]=1 (readback 0x%x)",
                  a4, sb[0x2d]);
@@ -1212,10 +1237,10 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
                        void* a4, void* a5, void* a6)
 {
     (void)a3; (void)a4; (void)a5; (void)a6;
-    char buf[96];
+    char buf[112];
     snprintf(buf, sizeof(buf),
-             "CALL gldAttachDrawable type=0x%x a3=%p a4=%p (rung 35)",
-             type, a3, a4);
+             "CALL gldAttachDrawable type=0x%x a3=%p a4=%p ra=%p (rung 48)",
+             type, a3, a4, __builtin_return_address(0));
     ep_log(buf);
     /* RUNG 35: the float's offscreen path reads arg3 (rdx) as a
      * DESCRIPTOR: +0 width, +4 height, +8 bytes-per-row, +0x10
@@ -1321,6 +1346,13 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
      * kSlots (the rung-34 gap — the float stores here too, grf
      * 0x14f9e). */
     *(void**)((char*)dispatch + 0x50) = (void*)&gld_fill_engine_calls;
+    /* RUNG 48 — THE ATTACH SLOT: gliAttachDrawableWithOptions calls
+     * the driver through table+0x48 (gle 0xf444, driver-obj+0x168)
+     * and CHECKS THE RESULT (0xf44d+); a passing attach is what
+     * sets [engine+0x6570] (the drawable object) — the hardware
+     * classification that gates the install and the swap. The
+     * noop's void/garbage return failed the parse. */
+    *(void**)((char*)dispatch + 0x48) = (void*)&gld_table_attach;
     if (limits) {
         for (int i = 0; i < 6; i++)          /* +0..+0x14, the float's zeros */
             limits[i] = 0;
@@ -1333,6 +1365,26 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
         limits[1] = 0x4000;
     }
     ep_log("  gldInitDispatch -> 0 (22 noop slots; limits maxes=0x4000)");
+    /* RUNG 48 — THE DIRECT INSTALL: the classification transition
+     * ran BEFORE this function filled the table (attach precedes
+     * InitDispatch; the engine's [0x6758] call hit a pre-fill table
+     * and the transition never repeats). The sub-block pointer
+     * gives the engine base (sub-block = engine+0x79b8, idx 0);
+     * block1 = engine+0x65c8; write the flush/swap entries the
+     * engine would have installed: +0xE0 = flush ([0x66a8]), +0xE8
+     * = swap ([0x66b0]). */
+    if (g_engine_subblock) {
+        char* eng = (char*)g_engine_subblock - 0x79b8;
+        char* block1 = eng + 0x65c8;
+        *(void**)(block1 + 0xE0) = (void*)&gld_flush_entry;
+        *(void**)(block1 + 0xE8) = (void*)&gld_swap_entry;
+        char b2[128];
+        snprintf(b2, sizeof(b2),
+                 "rung48: DIRECT INSTALL engine=%p block1=%p "
+                 "(+0xE0 flush, +0xE8 swap written)",
+                 (void*)eng, (void*)block1);
+        ep_log(b2);
+    }
     return 0;
 }
 /* RUNG 36 — gldUpdateDispatch is THE DISPATCHER'S ENTRY (slot 11,
