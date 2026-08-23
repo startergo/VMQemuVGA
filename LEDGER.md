@@ -4602,6 +4602,41 @@ away:**
   generalizes (and the PRESENTATION half of the rung — the GA
   surface write — follows with the dims in hand).
 
+**RUNG 39 CROSS-CHECK COMPLETE (2026-08-22) — THE MAPPING
+NAMED, TWO REAL BUGS FIXED (one the lifetime contract's
+read-side), the bounds query now succeeds — and returns an
+EMPTY RECT: the geometry lives behind the GA bind:**
+```
+probe:  cid=0xaa4f-class  wid=0x18-class  sid=0x1bb38688-class
+desc:   d[0]=cid  d[1]=wid  d[2]=sid      ← (cid,wid,sid) at DWORDS 0,1,2
+rung39: CGSGetSurfaceBounds(cid,wid,sid) -> 0 rect=[0 0 0 0]
+```
+- **THE MAPPING:** the descriptor IS (cid, wid, sid) at dword
+  indices 0,1,2 — my d[0]/d[4]/d[8] was an INDEX-vs-OFFSET
+  confusion (the float's (%r13)/0x4(%r13)/0x8(%r13) reads
+  BYTES). Fixed.
+- **BUG 2 — THE LIFETIME RULE (cost one run):** the descriptor
+  is ENGINE-OWNED SCRATCH, valid only DURING the call — my
+  bounds query ran ~1s later (after CoreGraphics' dlopen) and
+  read REUSED memory (0x0/0xf where the entry dump showed the
+  true wid/sid). The stub now COPIES the triple at entry. The
+  writability contract's read-side sibling: copy caller-owned
+  inputs before any deferred use.
+- **BUG 3 (sequence):** the probe ordered the surface AFTER
+  drawing; reordered pre-draw. Bounds still empty.
+- **THE RESULT: the query SUCCEEDS (r=0) with rect=[0 0 0 0]**
+  — the correct triple, the surface ordered and flushed, and
+  CGS reports no geometry. **READING (from the milestone-2
+  finding): a raw CGS surface has no bounds until BOUND through
+  the GA path (SetIDMode) — the same machinery that gave
+  LockSurface its view backing. The window's geometry AND its
+  presentation both live behind the GA bind.**
+- **THE PROOF STANDS AT 4x4** (no regression; the round trip
+  remains proven). The window-sized generalization is ONE WIRE
+  away: the GA bind (SetIDMode with the saved triple) at
+  attach, then the bounds query — the milestone-2 machinery,
+  proven in the GA era, now the GLD's next integration.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

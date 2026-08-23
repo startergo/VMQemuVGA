@@ -182,6 +182,11 @@ int main(int argc, char *argv[])
                    "<== the coupling step\n", e_set, ERRDESC(e_set));
             int e_fl = flush(cid, wid, sid);
             printf("CGSFlushSurface -> %d (%s)\n", e_fl, ERRDESC(e_fl));
+            /* RUNG 39: ORDER the surface BEFORE drawing (real apps'
+             * sequence; the bounds query returns 0x0 until ordered). */
+            int e_ord0 = order(cid, wid, sid, 1, 0);
+            printf("CGSOrderSurface(pre-draw) -> %d (%s)\n", e_ord0, ERRDESC(e_ord0));
+            fflush(stdout);
             /* RUNG 34: the full app draw cycle — current, draw,
              * swap. CGLFlushDrawable is the compositing call, the
              * first flush through this driver. */

@@ -127,13 +127,43 @@ static int virgl_transport_init(void)
 
 static long g_clear_count = 0;
 
+/* RUNG 39 — the saved window triple + the lazy bounds query */
+static unsigned g_sid_cid = 0, g_sid_wid = 0, g_sid_sid = 0;
+static int g_bounds_locked = 0;
+static int g_fb_w = 4, g_fb_h = 4;      /* rung 39: window-sized when attached */
+static void virgl_set_window_target(int w, int h);   /* fwd (lazy bounds call) */
+
+static void virgl_query_window_bounds(void)
+{
+    if (g_bounds_locked || !g_sid_cid) return;
+    void* cgh = dlopen(
+        "/System/Library/Frameworks/ApplicationServices.framework/"
+        "Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+        RTLD_LAZY);
+    if (!cgh) return;
+    typedef int (*gsb_t)(unsigned, unsigned, unsigned, void*);
+    gsb_t gsb = (gsb_t)dlsym(cgh, "CGSGetSurfaceBounds");
+    if (!gsb) return;
+    double rect[4] = { 0, 0, 0, 0 };
+    int r = gsb(g_sid_cid, g_sid_wid, g_sid_sid, rect);
+    int w = (int)rect[2], h = (int)rect[3];
+    char b[128];
+    snprintf(b, sizeof(b),
+             "rung39: CGSGetSurfaceBounds(0x%x,0x%x,0x%x) -> %d rect=[%g %g %g %g] %dx%d",
+             g_sid_cid, g_sid_wid, g_sid_sid, r,
+             rect[0], rect[1], rect[2], rect[3], w, h);
+    ep_log(b);
+    if (r == 0 && w > 0 && h > 0) {
+        virgl_set_window_target(w, h);
+        g_bounds_locked = 1;   /* locked — the target is the window */
+    }
+}
+
 /* RUNG 38 — the readback resources: one 4x4 B8G8R8A8 render
  * target per process, created+backed on first use. */
 static uint32_t g_fb_res = 0;
 static unsigned char* g_fb_backing = NULL;   /* 4*4*4 = 64 bytes */
 static const unsigned char kProofColor[4] = { 0x40, 0x80, 0xBF, 0xFF }; /* B,G,R,A = .25/.5/.75/1 */
-
-static int g_fb_w = 4, g_fb_h = 4;      /* rung 39: window-sized when attached */
 
 /* RUNG 39 — retarget at the real window dims (from
  * CGSGetSurfaceBounds at attach). Recreates the resource at
@@ -243,6 +273,7 @@ static void gld_clear_real(void* ctx, unsigned mask,
                  g_clear_count, mask);
         ep_log(b);
     }
+    virgl_query_window_bounds();   /* lazy: the surface is ordered by now */
     if (virgl_ensure_fb() < 0) return;
     /* RUNG 38 fix 4 — THE MESA STREAM DIFF's first finding: Mesa's
      * color-clear mask is 4 (captured: 00080007 00000004 with
@@ -824,10 +855,14 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
      * stride are float-internal and will NOT be mirrored. */
     if (a3 && (unsigned long)a3 > 0x1000) {
         unsigned* d = (unsigned*)a3;
-        char b2[128];
-        snprintf(b2, sizeof(b2),
-                 "  desc: +0=0x%x +4=0x%x +8=0x%x +c=0x%x +10=0x%x +14=0x%x",
-                 d[0], d[1], d[2], d[3], d[4], d[5]);
+        /* RUNG 39 cross-check: the FULL descriptor (16 dwords) —
+         * compared against the probe's printed cid/wid/sid, this
+         * names which fields the bounds call wants. */
+        char b2[256];
+        int o = 0;
+        o += snprintf(b2 + o, sizeof(b2) - o, "  desc[16]:");
+        for (int i = 0; i < 16; i++)
+            o += snprintf(b2 + o, sizeof(b2) - o, " %x", d[i]);
         ep_log(b2);
     }
     if (!ctx) {
@@ -845,27 +880,24 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
      * query the bounds, create a WINDOW-SIZED virgl resource, and
      * retarget the clear at it. */
     if (type == 0x50 && a3 && (unsigned long)a3 > 0x1000) {
-        unsigned* d = (unsigned*)a3;
-        void* cgh = dlopen(
-            "/System/Library/Frameworks/ApplicationServices.framework/"
-            "Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
-            RTLD_LAZY);
-        if (cgh) {
-            typedef int (*gsb_t)(unsigned, unsigned, unsigned, void*);
-            gsb_t gsb = (gsb_t)dlsym(cgh, "CGSGetSurfaceBounds");
-            if (gsb) {
-                double rect[4] = { 0, 0, 0, 0 };
-                int r = gsb(d[0], d[4], d[8], rect);
-                int w = (int)rect[2], h = (int)rect[3];
-                char b[128];
-                snprintf(b, sizeof(b),
-                         "rung39: CGSGetSurfaceBounds(0x%x,0x%x,0x%x) -> %d "
-                         "%dx%d", d[0], d[4], d[8], r, w, h);
-                ep_log(b);
-                if (r == 0 && w > 0 && h > 0)
-                    virgl_set_window_target(w, h);
-            }
-        }
+        /* THE LIFETIME RULE (rung 39, cost one run): the descriptor
+         * is ENGINE-OWNED SCRATCH, valid only DURING the call — the
+         * bounds query ran ~1s later (after CoreGraphics' dlopen) and
+         * read REUSED memory (0x0/0xf where the entry dump showed
+         * wid/sid). COPY the triple at entry; use the copies. */
+        unsigned id0 = ((unsigned*)a3)[0];
+        unsigned id1 = ((unsigned*)a3)[1];
+        unsigned id2 = ((unsigned*)a3)[2];
+        /* RUNG 39 second finding: at attach time the surface is NOT
+         * YET ORDERED — CGSGetSurfaceBounds succeeds but returns 0x0.
+         * SAVE the triple (the lifetime rule) and query LAZILY at the
+         * first clear, when the surface is on screen. */
+        g_sid_cid = id0; g_sid_wid = id1; g_sid_sid = id2;
+        char b3[96];
+        snprintf(b3, sizeof(b3),
+                 "rung39: triple saved (0x%x,0x%x,0x%x) — bounds deferred to first clear",
+                 id0, id1, id2);
+        ep_log(b3);
     }
     ep_log("  gldAttachDrawable -> 0 (type stored; rung 39 target handling done)");
     return 0;
