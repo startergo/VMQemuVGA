@@ -6038,6 +6038,37 @@ float's map). Named next: the draw probe.
 
 ---
 
+## RUNG 54 PRE-REGISTERED — THE DRAW PROBE: a triangle
+through the primitive slots (committed before
+implementation)
+
+**The change (probe-only — the identification thunks are
+already deployed):** an immediate-mode triangle
+(glBegin/glColor/glVertex ×3/glEnd — no buffer objects,
+no arrays) between the clear and the readback, then the
+existing swap. The draw will NOT render this rung (the
+primitive slots are still noops) — the goal is
+IDENTIFICATION: which slots fire, with what args.
+
+**Predictions:**
+- (i) **THE PRIMITIVE SLOTS FIRE:** the thunks name them
+  (+0xb8/+0xc0 per the float's map, or others); the
+  logged a0/a1 shapes the next rung's read; the screen
+  stays green (the clear; no render); no crash.
+- (ii) **No slot fires** (the engine buffers immediate
+  mode internally and flushes via its own command-buffer
+  machinery — the [0x6060] gleFinishCommandBuffer path)
+  → the draw door is the engine's buffer flush, a
+  different read.
+- (iii) **A crash** (the engine expects real entries
+  where noops return void) → recoverable by redeploy;
+  the crashing slot's log line names it.
+
+**Exposure:** probe rebuild; stub unchanged; no kext; no
+reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
