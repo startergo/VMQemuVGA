@@ -5063,6 +5063,64 @@ install cycle); stub live-swap; probe re-ship (post-reboot
 
 ---
 
+## RUNG 45 RESULT — *** BLUE IN THE WINDOW *** — THE
+PRESENTATION COMPLETE: a GL call rendered by the HOST GPU,
+presented through the driver's own chain, VISIBLE ON SCREEN
+(user-confirmed). One instrumentation error made and
+corrected on the way:
+
+- **THE FIX LANDED (09:06 run, kext 05b5b83a):** the relay
+  writes at the shape offset; the flush reads exactly
+  there; the push succeeded (no 0x2d6 at the timestamp);
+  the probe's window filled with medium blue RGB(64,128,191)
+  — the clear color, byte-for-byte the proof color.
+  **Prediction (i) landed; (ii) falsified** — CGS bounds
+  [200 588 320 262] are desktop top-left coordinates (blue
+  appeared IN the window, not 358px below).
+- **BYTE-PRECISE CONFIRMATION (09:07 run, stub 8ace386d):**
+```
+rung45: VIEW at shape_off (r588+800): bf8040ffbf8040ffbf8040ffbf8040ff
+```
+  The proof color sits at EXACTLY 588*2080 + 200*4 in the
+  stub's mapping of the surface backing — the shape
+  offset, where the flush reads.
+- **INSTRUMENTATION ERROR, corrected in-session:** the
+  first two discriminator reads (rows 0/1/261/588 and the
+  32-row sweep) probed bytes 0..3 of each row —
+  STRUCTURALLY blind to a window starting at column 200
+  (byte 800). Their "ALL ZERO" was the probe's error, not
+  the relay's; the precise read at +800 settles it. Lesson
+  recorded: a discriminator must probe the WRITE FORMULA's
+  exact bytes, not a row's head.
+- **RESIDUAL (unexplained, bounded):** the 08:53 run —
+  same kext as the 09:06 success — read "Nothing" on the
+  screen. Same flush rect, same push success, same proof.
+  Leading hypothesis (NOT verified): the look happened
+  after the window closed and WindowServer's removal
+  composite overwrote the desktop rect. Not reproducible
+  retroactively; if a later run shows the same variance,
+  the discriminator is a held-open window with a timed
+  look.
+- **THE COMPLETE CHAIN, VERIFIED END TO END (2026-08-23
+  09:06-09:07):** probe's glClear/glReadPixels → the GLD
+  dispatch table's REAL slots → the stub's virgl transport
+  → the window-sized resource (320x262) → THE HOST GPU
+  EXECUTING THE CLEAR → byte-exact readback in the guest →
+  0x600C relay (kernel re-read → row-copy at the SHAPE
+  OFFSET into the window's surface backing → desktop flush
+  at the live shape rect → scanout push) → **PIXELS ON
+  SCREEN.**
+- **The honest boundary:** the CONTENT is still the proof
+  color — the stub ignores the app's own clear color (the
+  probe asked for green) and the swap slot (CGLFlushDrawable
+  → GLD) is still a noop; the presentation fires from the
+  ReadPixels proof, not from the app's flush. The next
+  wires, in order: (a) the swap slot real (present at
+  CGLFlushDrawable — where apps expect it); (b) the app's
+  own clear color through (gldClear's color args → the
+  submitted command); (c) the remaining 20 noop slots →
+  Mesa-backed, slot by slot.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

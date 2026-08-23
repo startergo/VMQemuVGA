@@ -3828,14 +3828,21 @@ IOReturn CLASS::hostRelayBlit(uint32_t res3d, uint32_t ctx_id,
                 return ret;
             }
 
-            /* 2. Row copy into the SURFACE backing at (0,j) —
-             * surface-space (the surface IS the window's). Identity
-             * rows, R<->B swizzle for wire-67 sources. Stride is the
-             * surface's allocation stride. */
+            /* 2. Row copy into the SURFACE backing at the SHAPE
+             * OFFSET — RUNG 45's fix (2026-08-23). The original
+             * write at (0,j) from the base was the black-rect bug:
+             * every consumer of this allocation addresses window
+             * pixels at (shape_x, shape_y) inside it (the write-lock
+             * handout VMAccelSurfaceClient.cpp:1095-1115 and the
+             * flush's read :625); a base-relative write lands where
+             * nothing reads. Identity rows, R<->B swizzle for
+             * wire-67 sources; stride is the allocation's. */
             const bool swizzle = (src_fmt == 67);
             const uint32_t row_bytes = w * 4;
             const uint32_t surf_stride = surf->bytes_per_row;
-            if ((uint64_t)(h - 1) * surf_stride + row_bytes >
+            const uint64_t shape_off = (uint64_t)surf->shape_y * surf_stride
+                                     + (uint64_t)surf->shape_x * 4;
+            if (shape_off + (uint64_t)(h - 1) * surf_stride + row_bytes >
                 surf->backing_memory->getLength()) {
                 IOLog("hostRelayBlit: GA write exceeds surface — "
                       "SKIPPING (no corruption)\n");
@@ -3865,7 +3872,8 @@ IOReturn CLASS::hostRelayBlit(uint32_t res3d, uint32_t ctx_id,
                     }
                 }
                 IOByteCount put = surf->backing_memory->writeBytes(
-                    (IOByteCount)j * surf_stride, m_relay_row, row_bytes);
+                    shape_off + (IOByteCount)j * surf_stride,
+                    m_relay_row, row_bytes);
                 if (put != row_bytes) break;
             }
             IOLockUnlock(m_relay_lock);

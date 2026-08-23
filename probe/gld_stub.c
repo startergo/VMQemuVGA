@@ -531,6 +531,78 @@ static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
     ep_log(match
            ? "  *** ROUND TRIP PROVEN AT WINDOW SIZE: corners+center == proof color ***"
            : "  readback MISMATCH at window size");
+    /* RUNG 44 — THE PRESENTATION WRITE: the kernel's relay present
+     * (0x600C hostRelayBlit, FB/VMVirtIOGPU.cpp:8037). Its GA branch
+     * re-reads this resource kernel-side, row-copies into the
+     * GA-BOUND surface backing (stride 2080 — the extent rule lives
+     * there), flushes the shape rect into the desktop backing, and
+     * pushes the rect to the host scanout. Contract honored: the
+     * 0x600B fence wait above. scalars {res, x, y, w, h} — the GA
+     * branch uses w,h (row copy); x,y belong to the non-GA
+     * fallback. */
+    {
+        uint64_t rb[5] = { g_fb_res, 0, 0,
+                           (uint64_t)g_fb_w, (uint64_t)g_fb_h };
+        kr = IOConnectCallMethod(g_virgl_conn, 0x600C,
+                                 rb, 5, NULL, 0,
+                                 NULL, NULL, NULL, NULL);
+        char b2[80];
+        snprintf(b2, sizeof(b2),
+                 "rung44: 0x600C hostRelayBlit res=%u %ux%u -> 0x%x",
+                 g_fb_res, g_fb_w, g_fb_h, kr);
+        ep_log(b2);
+        /* RUNG 44 CONTINUATION — the black-rect discriminator: the
+         * surface backing is mapped in THIS process (g_ga_view).
+         * (A) rows zero -> the relay's surface write never happened
+         * (its silent readBytes/writeBytes break); (B) rows blue ->
+         * steps 1-2 fine, the divergence is the flush's source. */
+        if (g_ga_view && g_ga_surf.rowBytes) {
+            unsigned char* v = (unsigned char*)g_ga_view;
+            unsigned rb = g_ga_surf.rowBytes;
+            char vb[640]; int o = 0;
+            /* RUNG 45 sweep: hunt the write ANYWHERE in the
+             * allocation (rows 0..849 step 32, first 4 bytes).
+             * Pre-fix the blue sat at r0..261; post-fix it should
+             * move to r588..849. All-zero = the relay's row loop
+             * never wrote (its silent break — next rung logs it). */
+            int hits = 0, first_hit = -1;
+            unsigned maxrow = 850;
+            for (unsigned row = 0; row < maxrow && o < 600; row += 32) {
+                unsigned nz = 0;
+                for (int c = 0; c < 4; c++)
+                    if (v[(size_t)row * rb + c]) { nz = 1; break; }
+                if (nz) {
+                    hits++;
+                    if (first_hit < 0) first_hit = (int)row;
+                    o += snprintf(vb + o, sizeof(vb) - o, " r%u:", row);
+                    for (int c = 0; c < 8 && o < 620; c++)
+                        o += snprintf(vb + o, sizeof(vb) - o, "%02x",
+                                      v[(size_t)row * rb + c]);
+                }
+            }
+            char b3[704];
+            snprintf(b3, sizeof(b3),
+                     "rung45: VIEW sweep (stride %u, step 32) hits=%d "
+                     "first=%d%s", rb, hits, first_hit,
+                     hits ? vb : " — ALLOCATION ALL ZERO");
+            ep_log(b3);
+            /* THE PRECISE READ: the write starts at byte 800 of row
+             * 588 (shape_off = 588*2080 + 200*4 — the X offset; the
+             * sweep above probes bytes 0..3 of each row and CANNOT
+             * see a window starting at column 200). */
+            {
+                size_t off = (size_t)588 * rb + 200 * 4;
+                char b4[96]; int o4 = 0;
+                for (int c = 0; c < 16 && o4 < 60; c++)
+                    o4 += snprintf(b4 + o4, sizeof(b4) - o4, "%02x",
+                                   v[off + c]);
+                char b5[128];
+                snprintf(b5, sizeof(b5),
+                         "rung45: VIEW at shape_off (r588+800): %s", b4);
+                ep_log(b5);
+            }
+        }
+    }
 }
 
 /* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
