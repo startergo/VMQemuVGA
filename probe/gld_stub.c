@@ -96,6 +96,10 @@ struct vm_caps_v1 {
              prim_mask, max_tbo_size, max_uniform_blocks, max_viewports,
              max_texture_gather_components;
 };
+/* RUNG 52b — the layout proof: the device advertises
+ * capset_max_size 308 for id=1; if OUR v1 struct is not
+ * exactly 308 bytes, the layout is wrong and every field
+ * read is suspect. Compile-time fatal. */
 struct vm_caps_v2 {
     struct vm_caps_v1 v1;
     float min_aliased_point_size, max_aliased_point_size;
@@ -127,6 +131,15 @@ struct vm_caps_v2 {
 };
 static struct vm_caps_v2 g_caps;
 static int g_caps_fetched = 0, g_caps_v2_ok = 0;
+/* RUNG 52b — THE LAYOUT PROOF + THE TRUNCATION GUARD:
+ * the device advertises capset_max_size 308 for id=1 — if our v1
+ * struct is not exactly 308 bytes the layout is wrong and every
+ * field read is suspect (compile-time fatal). max_samples lives at
+ * v1+0x11C = 284, inside BOTH the 308-byte v1 blob and the 764
+ * delivered of v2 — cross-checked at runtime against the v1 blob. */
+_Static_assert(sizeof(struct vm_caps_v1) == 308,
+               "v1 capset layout != 308 — the device's advertised size");
+static uint32_t g_v1_blob_samples = 0xFFFFFFFF;  /* the cross-check */
 static io_connect_t g_virgl_conn;   /* tentative — defined with the
                                       * transport below (rung 37) */
 
@@ -159,6 +172,59 @@ static void virgl_fetch_capset(void)
             memcpy(&g_caps, blob, copy);
             g_caps_v2_ok = (id == 2);
             g_caps_fetched = 1;
+            /* RUNG 52b — the cross-blob check: when the V2 blob is in
+             * hand, ALSO fetch the V1 blob (308 bytes — the entire v1
+             * struct, zero truncation margin doubt) and compare
+             * max_samples: agreement proves the value is a host fact,
+             * not a 764-byte-truncation artifact. */
+            if (id == 2 && want_id == 2) {
+                for (uint32_t j = 0; j < 2; j++) {
+                    uint64_t ji[1] = { j };
+                    uint64_t jo[3] = { 0, 0, 0 };
+                    uint32_t jc = 3;
+                    if (IOConnectCallMethod(g_virgl_conn, 0x6006,
+                                            ji, 1, NULL, 0,
+                                            jo, &jc, NULL, NULL)
+                            != KERN_SUCCESS) continue;
+                    if ((uint32_t)jo[0] != 1) continue;
+                    uint8_t v1b[512];
+                    size_t v1sz = (jo[2] < sizeof(v1b)) ? jo[2] : sizeof(v1b);
+                    uint64_t vi[2] = { jo[0], jo[1] };
+                    if (IOConnectCallMethod(g_virgl_conn, 0x6007,
+                                            vi, 2, NULL, 0,
+                                            NULL, NULL, v1b, &v1sz)
+                            != KERN_SUCCESS) break;
+                    struct vm_caps_v1 v1x;
+                    memset(&v1x, 0, sizeof(v1x));
+                    memcpy(&v1x, v1b,
+                           v1sz < sizeof(v1x) ? v1sz : sizeof(v1x));
+                    g_v1_blob_samples = v1x.max_samples;
+                    /* RAW-DWORD control: the words at 0x100..0x12C of
+                     * BOTH blobs, pre-struct — removes the last decode
+                     * doubt (a struct-layout error would shift MANY
+                     * fields; the raw bytes are the ground truth). */
+                    char cb[240]; int co = 0;
+                    co += snprintf(cb + co, sizeof(cb) - co,
+                                   "rung52b: v1(%uB) samples=%u (v2: %u) "
+                                   "glsl=%u RAW v1[0x100..]:",
+                                   (unsigned)v1sz, v1x.max_samples,
+                                   g_caps.v1.max_samples, v1x.glsl_level);
+                    for (int wd = 0; wd < 8 && co < 220; wd++)
+                        co += snprintf(cb + co, sizeof(cb) - co, " %08x",
+                                       ((uint32_t*)v1b)[0x40 + wd]);
+                    ep_log(cb);
+                    char cb2[200]; int co2 = 0;
+                    co2 += snprintf(cb2 + co2, sizeof(cb2) - co2,
+                                    "rung52b: RAW v2[0x100..]:");
+                    uint32_t v2raw[512];
+                    memcpy(v2raw, blob, copy < sizeof(v2raw) ? copy : sizeof(v2raw));
+                    for (int wd = 0; wd < 8 && co2 < 180; wd++)
+                        co2 += snprintf(cb2 + co2, sizeof(cb2) - co2,
+                                        " %08x", v2raw[0x40 + wd]);
+                    ep_log(cb2);
+                    break;
+                }
+            }
             char rb[160];
             snprintf(rb, sizeof(rb), "rung52: capset id=%u ver=%u size=%u "
                      "copy=%u 2d=%u 3d=%u cube=%u layers=%u rt=%u samples=%u "
@@ -1609,16 +1675,41 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
  * stated identity. The bridge replaces noops with Mesa calls,
  * slot by slot. */
 static long g_noop_count = 0;
-static void gld_noop(void* a0, void* a1, void* a2, void* a3,
-                     void* a4, void* a5)
+static void gld_noop_body(long slot, void* a0)
 {
-    (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
-    if (++g_noop_count <= 10 || (g_noop_count % 1000) == 0) {
-        char buf[64];
-        snprintf(buf, sizeof(buf), "NOOP dispatch #%ld", g_noop_count);
+    (void)a0;
+    if (++g_noop_count <= 16 || (g_noop_count % 1000) == 0) {
+        char buf[80];
+        snprintf(buf, sizeof(buf), "NOOP dispatch #%ld SLOT 0x%lx",
+                 g_noop_count, slot);
         ep_log(buf);
     }
 }
+/* RUNG 54 — the identification thunks: one per slot offset, so the
+ * log NAMES which noop the engine actually calls. The choice of the
+ * next real slot follows from what fires. */
+#define NOOP_FN(name, slot) \
+    static void name(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) \
+    { (void)a1;(void)a2;(void)a3;(void)a4;(void)a5; gld_noop_body(slot, a0); }
+NOOP_FN(gld_noop_00, 0x00)
+NOOP_FN(gld_noop_18, 0x18)
+NOOP_FN(gld_noop_20, 0x20)
+NOOP_FN(gld_noop_28, 0x28)
+NOOP_FN(gld_noop_30, 0x30)
+NOOP_FN(gld_noop_38, 0x38)
+NOOP_FN(gld_noop_40, 0x40)
+NOOP_FN(gld_noop_80, 0x80)
+NOOP_FN(gld_noop_88, 0x88)
+NOOP_FN(gld_noop_90, 0x90)
+NOOP_FN(gld_noop_98, 0x98)
+NOOP_FN(gld_noop_a0, 0xa0)
+NOOP_FN(gld_noop_b8, 0xb8)
+NOOP_FN(gld_noop_c0, 0xc0)
+NOOP_FN(gld_noop_c8, 0xc8)
+NOOP_FN(gld_noop_d0, 0xd0)
+NOOP_FN(gld_noop_f0, 0xf0)
+NOOP_FN(gld_noop_f8, 0xf8)
+NOOP_FN(gld_noop_100, 0x100)
 long gldInitDispatch(void* ctx, unsigned long* dispatch,
                      unsigned* limits, void* a3, void* a4, void* a5)
 {
@@ -1632,14 +1723,27 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
         ep_log("  gldInitDispatch -> -1 (no dispatch block)");
         return -1;
     }
-    /* Every offset the float writes (grf.t 0x14da0-0x14f73): */
-    static const unsigned kSlots[] = {
-        0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38,
-        0x40, 0x48, 0x80, 0x88, 0x90, 0x98, 0xa0, 0xb8,
-        0xc0, 0xc8, 0xd0, 0xf0, 0xf8, 0x100
-    };
-    for (unsigned i = 0; i < sizeof(kSlots)/sizeof(kSlots[0]); i++)
-        *(void**)((char*)dispatch + kSlots[i]) = (void*)&gld_noop;
+    /* Every offset the float writes (grf.t 0x14da0-0x14f73) — one
+     * IDENTIFYING thunk per still-noop slot (rung 54). */
+    *(void**)((char*)dispatch + 0x00)  = (void*)&gld_noop_00;
+    *(void**)((char*)dispatch + 0x18)  = (void*)&gld_noop_18;
+    *(void**)((char*)dispatch + 0x20)  = (void*)&gld_noop_20;
+    *(void**)((char*)dispatch + 0x28)  = (void*)&gld_noop_28;
+    *(void**)((char*)dispatch + 0x30)  = (void*)&gld_noop_30;
+    *(void**)((char*)dispatch + 0x38)  = (void*)&gld_noop_38;
+    *(void**)((char*)dispatch + 0x40)  = (void*)&gld_noop_40;
+    *(void**)((char*)dispatch + 0x80)  = (void*)&gld_noop_80;
+    *(void**)((char*)dispatch + 0x88)  = (void*)&gld_noop_88;
+    *(void**)((char*)dispatch + 0x90)  = (void*)&gld_noop_90;
+    *(void**)((char*)dispatch + 0x98)  = (void*)&gld_noop_98;
+    *(void**)((char*)dispatch + 0xa0)  = (void*)&gld_noop_a0;
+    *(void**)((char*)dispatch + 0xb8)  = (void*)&gld_noop_b8;
+    *(void**)((char*)dispatch + 0xc0)  = (void*)&gld_noop_c0;
+    *(void**)((char*)dispatch + 0xc8)  = (void*)&gld_noop_c8;
+    *(void**)((char*)dispatch + 0xd0)  = (void*)&gld_noop_d0;
+    *(void**)((char*)dispatch + 0xf0)  = (void*)&gld_noop_f0;
+    *(void**)((char*)dispatch + 0xf8)  = (void*)&gld_noop_f8;
+    *(void**)((char*)dispatch + 0x100) = (void*)&gld_noop_100;
     *(void**)((char*)dispatch + 0x8) = (void*)&gld_clear_real;   /* RUNG 37/38 */
     *(void**)((char*)dispatch + 0x10) = (void*)&gld_readpixels_real; /* RUNG 38 */
     /* RUNG 46: the install entry — the engine calls this slot

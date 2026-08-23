@@ -5979,6 +5979,65 @@ stub:   CALL gldGetString(0x1f01) -> "Apple M4 Pro (virgl)"
 
 ---
 
+## RUNG 52b — THE SAMPLES VERIFICATION: run, and it
+found a REAL divergence. Byte-level ground truth,
+three controls:
+
+- **The layout proof (compile-time):**
+  `_Static_assert(sizeof(struct vm_caps_v1) == 308)` —
+  our struct is exactly the device's advertised v1 size.
+- **The dual-blob cross-check:** the v1 capset (308
+  bytes, FULLY delivered — zero truncation margin) says
+  **samples=4**; the v2 blob says **1**. glsl=410
+  agrees in both.
+- **The raw-dword control (pre-struct, the ground
+  truth):**
+```
+v1[0x108..0x11C]: 0000019a 00000800 00000004 00000001 00000008 00000004
+v2[0x108..0x11C]: 0000019a 00000800 00000004 00000001 00000008 00000001
+                  glsl=410  layers   streamout  dual     rt=8    samples
+```
+  The blobs are IDENTICAL through 0x118 and differ at
+  exactly ONE dword (0x11C). **The divergence is
+  host-side — virglrenderer fills max_samples
+  differently for the two capset shapes** (4 in the
+  legacy v1 fill, 1 in v2 — v2's value plausibly from
+  PIPE_CAP_MAX_SAMPLES under ANGLE-on-Metal, whose
+  answer may be narrower than Metal's own). Nothing
+  guest-side manufactures the 1; the decode matches the
+  raw bytes exactly.
+- **The struct-prefix argument (why the disagreement
+  itself proves byte-difference):** v2 EMBEDS v1 as its
+  first 308 bytes; a layout error in our decode would
+  misread BOTH blobs the same way and they would AGREE.
+  They disagree on one field with neighbors agreeing —
+  the bytes differ.
+- **The GLD's claim: v2's 1 (the conservative), by
+  design** — the same capset Mesa's modern path reads.
+  Honest downstream statements: "MSAA: 1× per the v2
+  capset; the legacy v1 fill reports 4; the divergence
+  is virglrenderer-internal."
+- **The Linux cross-decoder control (the gold standard)
+  — NOT handy:** the EndeavourOS.utm exists on disk but
+  is not registered in UTM (utmctl lists only the SL
+  and XP VMs). If imported, `glxinfo`'s GL_MAX_SAMPLES
+  on it reads the same v2 blob through a known-good
+  decoder — the one-command settle, named for whenever
+  that VM is imported.
+
+## RUNG 54 (identification instrument) — NO NOOPS FIRE
+in the probe's cycle: the slot-identifying thunks (one
+per still-noop offset, each logging its slot) deployed
+and ran — ZERO noop lines. The probe's draw cycle is
+saturated on the REAL entries (clear, readpixels,
+attach, install, swap). **The next slot cannot be
+chosen from this probe — a DRAW-calling instrument is
+required** (glBegin/vertex-array-class calls route
+through the +0xb8/+0xc0 primitive-buffer slots per the
+float's map). Named next: the draw probe.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
