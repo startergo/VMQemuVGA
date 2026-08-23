@@ -4773,6 +4773,88 @@ kernel: VMQemuVGA3DUserClient: SetSurface id=... opts=0x901 — BOUND (320x262 b
 
 ---
 
+## RUNG 43 — THE WRITE-LOCK (2026-08-22 night) — LANDED,
+kernel-verified; BOTH rung-42 remainders closed (row=0 and the
+lock's NoResources); the window target LIVE; *** ROUND TRIP
+PROVEN AT WINDOW SIZE ***:
+
+- **THE CALL:** writeLockSurface — the surface client's TABLE
+  INDEX 14 (the third consecutive index-from-disassembly win:
+  7, 9, 14), scalar-free, StructO-only; the out struct is
+  IOAccelSurfaceInformation with the address at +0 and
+  (row, width, height) as u32 at +32/+36/+40.
+- **RESULT (stub + kernel, same run):**
+```
+stub:    rung43: WriteLock(14) -> 0x0 addr=0x10592aca0 row=2080 320x262
+kernel:  VMAccelSurfaceClient: WriteLock — backing ALLOCATED 1769472 bytes
+         (extent 520x850 stride 2080), client 0x105800000 kernel 0xffffff8053ca0000
+kernel:  VMQemuVGA3DUserClient: SetSurface id=262746307 opts=0x901 — BOUND
+         (320x262 bpp=4 row=2080)
+kernel:  VMQemuVGA3DUserClient: LockMemory — app view 105800000 row=2080
+stub:    rung40: GA BOUND+LOCKED sid=0xfa930c3 -> 0x0 view=0x105800000 rowBytes=2080
+```
+  The lock LAZY-CREATES the backing (the rung-42 named
+  requirement — the NoResources was exactly the absent
+  backing); the 2D bind's row=0 resolved to 2080 BY the lock;
+  and the GA bind's 0xe00002d8 fell to 0x0 with the VIEW
+  MAPPED (0x105800000, rowBytes=2080).
+- **THE WINDOW TARGET WENT LIVE FROM THE LOCK'S DIMS**
+  (`./probe/gld_stub.c:252` — virgl_set_window_target(iu[1],
+  iu[2]) on lock success): the fb resource is created AT THE
+  WINDOW SIZE —
+```
+stub:    rung37: virgl ctx 257 OPEN (transport live)
+stub:    rung38/39: fb res 257 created+backed+ctxAttached 320x262 (0x6009 -> 0x0)
+stub:    0x600B wait -> 0x0; 0x3009 transfer_from (320x262) -> 0x0
+stub:    backing[0..15]: bf8040ffbf8040ffbf8040ffbf8040ff
+stub:    *** ROUND TRIP PROVEN AT WINDOW SIZE: corners+center == proof color ***
+kernel:  v3d batch done size=76 ret=0x0 (x2)
+kernel:  transferFromHost3D: Resource 257 pixels copied from host to guest
+```
+  The round trip generalized from the private 4x4 proof to
+  the real drawable's dimensions, byte-exact at corners,
+  center, and the last pixel.
+- **THE EXTENT-VS-WINDOW STRIDE (load-bearing for the
+  presentation write):** row=2080 is the EXTENT's stride
+  (520x850 base extent, 2080=520*4), NOT the window's
+  (320*4=1280). The lock's info carries the window dims but
+  the extent's row; any write into view 0x105800000 must
+  stride 2080 or rows tear.
+- **CGSGetSurfaceBounds stays the empty rect** ([0 0 0 0]) —
+  now IRRELEVANT: the lock's dims are the source of truth
+  and the query is a closed detour (kept as fallback only).
+- **The probe's own printed pixel (`f8 05 c0 5f`) and
+  glGetError garbage are NOT a regression:** the ReadPixels
+  slot voids all caller args by design
+  (`./probe/gld_stub.c:487` — self-contained proof, never
+  writes the caller's buffer); the probe's stack print was
+  never a check. Attributed by reading the slot, not
+  inferred.
+- **Run provenance (the honest record):** the first
+  verification run was lost twice — the guest rebooted
+  (23:21, /tmp wiped) and the session compacted before the
+  background task's output was read. What survived: the
+  working tree (the rung-43 edit, uncommitted) and the
+  deployed stub (digest eaf71aa5d719700ca863095ee59af2a5,
+  host build == guest install — the deploy had completed).
+  The run above is the REPRODUCTION: probe re-shipped,
+  root-owned stub log cleared, full chain re-fired — same
+  shape, fresh addresses (view 0x105800000 vs the lost run's
+  0x105700000 — different boot, same sizes).
+- **THE CHAIN, COMPLETE END TO END:** gldAttachDrawable's
+  descriptor (cid,wid,sid) → type-0 surface-client open →
+  SetIDMode(7) → SetShape(9, IdentityScale, window bounds) →
+  WriteLock(14) [backing created, dims live] → GA
+  AllocateSurface/LockSurface [view mapped] → virgl fb
+  resource at window size → host-rendered, byte-verified
+  content IN THE GUEST. **Remaining to visible pixels: the
+  PRESENTATION WRITE — copy the readback into view
+  0x105800000 at row 2080 (the flush path), and WindowServer
+  composites it. The door is open; the write is the next
+  rung.**
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

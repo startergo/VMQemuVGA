@@ -221,6 +221,38 @@ static int ga_bind_surface(unsigned sid)
                                      wr, wb[0], wb[1], wb[2], wb[3],
                                      (int)rgn.w, (int)rgn.h, kr2);
                             ep_log(b2);
+                            /* RUNG 43 — THE WRITE-LOCK (the lock's
+                             * named requirement: "backing not yet created
+                             * (no WindowServer write-lock)"). writeLockSurface
+                             * (index 14, StructO-only) LAZY-CREATES the
+                             * backing at first lock; our surface passes
+                             * every gate (id, geometry, bpp, base extent).
+                             * After this, the GA lock maps the backing. */
+                            if (kr2 == KERN_SUCCESS && rgn.w > 0) {
+                                uint8_t info[128];
+                                size_t isz = sizeof(info);
+                                kern_return_t kr3 = IOConnectCallMethod(
+                                    g_surf_conn, 14,
+                                    NULL, 0, NULL, 0,
+                                    NULL, 0, info, &isz);
+                                uint64_t* iw = (uint64_t*)info;
+                                uint32_t* iu = (uint32_t*)(info + 32);
+                                char b3[144];
+                                snprintf(b3, sizeof(b3),
+                                         "rung43: WriteLock(14) -> 0x%x "
+                                         "addr=0x%llx row=%u %ux%u",
+                                         kr3,
+                                         (unsigned long long)iw[0],
+                                         iu[0], iu[1], iu[2]);
+                                ep_log(b3);
+                                /* THE WINDOW TARGET GOES LIVE: the lock's
+                                 * info carries the true dims (iu[1]=width,
+                                 * iu[2]=height). */
+                                if (kr3 == KERN_SUCCESS && iu[1] > 0 && iu[2] > 0) {
+                                    virgl_set_window_target(iu[1], iu[2]);
+                                    g_bounds_locked = 1;
+                                }
+                            }
                         }
                     }
                 }
