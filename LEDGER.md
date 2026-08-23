@@ -6695,6 +6695,60 @@ recording error (corrected)
 
 ---
 
+## 2026-08-23 (post-reboot) — PANIC TRIAGE: the guest
+runs **4 vCPUs** (hw.ncpu=4, observed), outside the
+documented 1-vCPU dev config; today's panics are the
+known SMP-under-TCG class, ONE with our refresh path
+as the spinning victim
+
+- **Census:** 24 `Kernel_*.panic` reports since
+  2026-08-10 in DiagnosticReports; FIVE today
+  (08:09, 12:01, 12:59, 16:10, 19:09), each paired
+  with a configd crash at the same timestamp.
+  Chronic, not new.
+- **Signature (all read):** `Panic: NMIPI for spinlock
+  acquisition timeout` — cross-CPU spinlock timeout,
+  impossible on 1 vCPU by construction.
+- **12:59 panic — OUR PATH AS VICTIM (fully
+  symbolicated, binary md5-verified 05b5b83a…):**
+  CPU 3 panicked spinning on the kernel timer-queue
+  lock `0xffffff80008a8f60` (owner thread active on
+  CPU 1, in `etimer_resync_deadlines`/`setPop` — the
+  timer subsystem itself, no kext frames). The
+  spinning thread's stack:
+  `VMVirtIOFramebuffer::refreshDisplay()`
+  (VMVirtIOFramebuffer.cpp:2643) →
+  `VMVirtIOGPU::flushResource()` (VMVirtIOGPU.cpp:
+  10115) → `VMVirtIOGPU::submitCommand()`
+  (VMVirtIOGPU.cpp:2318) → `IODelay(20)` →
+  `_delay_for_interval` → `_clock_delay_until` →
+  `_assert_wait_deadline` → `_timer_call_enter`
+  (lock site) → watchdog.
+- **The code's own assumption, now violated:** the
+  poll-loop comment at VMVirtIOGPU.cpp:2298 states
+  IODelay busy-waits "without yielding, which is fine
+  on this **1-vCPU workloop**". IODelay's kernel path
+  enters the global timer queue; under 4-vCPU TCG any
+  slow timer-processing thread on another CPU holds
+  that lock past the watchdog while our poll spins.
+  Victim, not cause — 16:10 (launchd) and 19:09
+  (AppleUSBEHCI+15294, DirectoryService) panicked in
+  the same class with no kext frames.
+- **NOT a regression:** the same binary has run all
+  week (md5 match, load list stable); the class
+  predates today and does not follow any of this
+  repo's changes.
+- **OPEN DECISION (config, not code):** restore the
+  documented 1-vCPU dev setting (kills this panic
+  class by construction) or accept SMP as a test
+  axis — in which case the IODelay(20) poll inside
+  submitCommand is a flagged risk surface and the
+  poll should re-arm/yield instead of IODelay under
+  SMP. No code change made; rung 62 (read-only)
+  unaffected either way.
+
+---
+
 ## RUNG 62 PRE-REGISTERED — THE NS DEPTH GATE READ:
 what the NS translation asserts that CGL-direct
 never checks (committed before the disassembly)
