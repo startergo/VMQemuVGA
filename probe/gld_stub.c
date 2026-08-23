@@ -1997,13 +1997,15 @@ const char* gldGetString(void* ctx, unsigned name,
         if (!vsn_built) {
             vsn_built = 1;
             if (g_caps_fetched && g_caps.v1.glsl_level >= 100) {
-                /* RUNG 60 correction: the host backend is ANGLE/
-                 * Metal (the debug log's own env: NPT_BACKEND=dxmt,
-                 * ANGLE_*) — GLES underneath. The 4.1 is virgl's
-                 * ES->desktop TRANSLATION, not a desktop context;
-                 * the attribution says so while the leading number
-                 * passes version gates. */
-                snprintf(vsn, sizeof(vsn), "%u.%u (virgl, ANGLE/Metal ES backend; engine software fallback)",
+                /* RUNG 61 correction (the rung-60 attribution was
+                 * WRONG): UTM's Display panel shows "Apple Core
+                 * OpenGL" was already the renderer backend — the
+                 * ANGLE/dxmt env lines in the debug log belong to
+                 * UTM's own display pipeline (CocoaSpice drawing the
+                 * guest screen), NOT to virglrenderer's context. The
+                 * capset numbers were measured under a desktop GL
+                 * host all along. */
+                snprintf(vsn, sizeof(vsn), "%u.%u (virgl, Apple Core OpenGL backend; engine software fallback)",
                          g_caps.v1.glsl_level / 100, g_caps.v1.glsl_level % 100 / 10);
             } else {
                 snprintf(vsn, sizeof(vsn), "2.1 VMQemuVGA (engine software)");

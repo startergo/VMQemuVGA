@@ -6589,6 +6589,53 @@ limits), the boot debug log's [VREND CAPS] lines.
   falsified for the split; the divergence has another
   mechanism.
 
+---
+
+## RUNG 61 RESULT — SETTLED BY OBSERVATION BEFORE THE
+BOOT: "Apple Core OpenGL" was ALREADY the backend; the
+ES hypothesis dead; the rung-60 version attribution a
+recording error (corrected)
+
+- **THE OBSERVATION THAT SETTLED IT:** UTM's Display
+  panel screenshot — "Apple Core OpenGL" selected as
+  the renderer backend, and (per the follow-up) this
+  is how it had been all along. Prediction (iv) fires
+  without a reboot: **every measurement to date
+  (capset 4.1/glsl-410, renderer "Apple M4 Pro",
+  samples v1=4/v2=1) was taken under a desktop GL
+  host context.**
+- **THE RUNG-60 ATTRIBUTION WAS WRONG — stated as a
+  correction.** The debug log's `NPT_BACKEND=dxmt`,
+  `ANGLE_METAL_DEBUG_BINDINGS=1`, `ANGLE_ENABLE_
+  DEBUG_TRACE=1` lines led to "ANGLE-on-Metal IS the
+  backend; the guest is on the gl=es path." Those env
+  vars belong to **UTM's own display pipeline** —
+  CocoaSpice drawing the guest framebuffer on the
+  host — not to virglrenderer's context creation.
+  Reading an env line and naming the owner of the
+  process that carries it are different acts; the
+  second was skipped. The version string corrected to
+  `"4.1 (virgl, Apple Core OpenGL backend; engine
+  software fallback)"` (the capset-derived numbers
+  stand — they are what the device reports under its
+  actual configuration).
+- **WHAT THE SPLIT IS NOT:** the samples v1/v2
+  divergence (4 vs 1) is not an ES-vs-desktop artifact
+  — it exists under Core OpenGL. Its mechanism is
+  still open. Remaining candidate: the debug log's
+  own `Overriding max_samples 4 -> 1 for
+  fake_sw_msaa` — a virglrenderer-side clamp on the
+  v2 (VIRGL2) capset fill, not a backend property.
+  Read the virglrenderer source for fake_sw_msaa
+  before proposing another explanation.
+- **THE GL=ES→CORE TRANSITION IS MOOT** as an
+  experiment axis: there was never an es boot to
+  transition from. What remains testable is the
+  backend selector itself (Apple Core OpenGL vs the
+  ANGLE/Metal option in UTM's panel) — a different
+  rung, only if a reason to expect it matters
+  appears.
+
 **Exposure:** host-config change + VM reboot; probe
 re-ship after the /tmp wipe; the stub/kext unchanged.
 
