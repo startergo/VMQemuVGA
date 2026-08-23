@@ -6409,6 +6409,52 @@ rung55: OSMesa clear DONE — private buffer[0..7]: 00ff00ff00ff00ff
 
 ---
 
+## RUNG 59 PRE-REGISTERED — GLMARK2 THROUGH THE GLD
+(committed before implementation)
+
+**The instrument:** glmark2-macos (native AppKit
+x86_64; OpenGL resolves transitively — the PURE SYSTEM
+PATH, no env, no substitute). Data tree 9.4 MB
+(models/shaders/textures), `--data-path` override.
+Shipped to /Users/glmark/ on the guest.
+
+**The realization that reframes the version question:**
+GLMark gates at startup on GL_VERSION >= 2.0 — and the
+honest answer changed. **GLEngine is a COMPLETE
+software GL** — that is WHY the draw slots never fired
+(rung 54): the engine's own LLVM vertex machine
+RASTERS the draws. Our driver provides the surface,
+the clears, the readback, the swap. A "2.1" claim now
+describes the REAL system: the engine's genuine
+software rasterizer + our proven transport. Rung 53's
+line ("version claims capability the stub refuses")
+predates the embedded-Mesa proof and the engine-path
+understanding — the claim is no longer unbacked.
+
+**The change:** gldGetString(GL_VERSION) returns
+"2.1 VMQemuVGA (engine software; virgl transport)" —
+the engine's own GL level (10.6's software GL is 2.1),
+attributed honestly.
+
+**Predictions:**
+- (i) **GLMARK RUNS:** the gate passes; the scenes run
+  (the ENGINE's rasterizer drawing; OUR surface path
+  presenting — the write-lock/GA machinery scales to
+  any window); a SCORE prints; the stub log shows the
+  full lifecycle at benchmark scale; the desktop
+  survives.
+- (ii) **A deeper gate blocks** (GLSL version, a
+  required extension, context creation shape) — the
+  failing check named by glmark's output; the next
+  wire follows.
+- (iii) **A crash in an entry** the probe never
+  exercised — the thunks name the slot; recoverable.
+
+**Exposure:** stub live-swap; the binary + data
+shipped read-only to the guest; no kext; no reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
