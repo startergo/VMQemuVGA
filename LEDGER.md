@@ -6809,6 +6809,56 @@ split.
 **Exposure:** reads only — guest otool of AppKit and
 GLRendererFloat; no stub change, no boot.
 
+**RUNG 62 CHECKPOINT (same evening, disassembly
+read, first half):** AppKit's initWithAttributes is
+SMALL and fully decoded (imp 0xb7b2d, AppKit
+10.6.8):
+
+```
+-[NSOpenGLPixelFormat initWithAttributes:]
+  → [super init]
+  → createPixelFormat(attrs)            (0xb7bb2)
+      __NS_CGLSetOption(0x1F9, 0)       ← BEFORE choose
+      __NS_CGLChoosePixelFormat(attrs,&pf,&npix)
+      (on err) __NSOpenGLRecordError
+  → store pf in _pixelFormatAuxiliary; NULL → nil
+```
+
+- **PREDICTION (ii) DEAD:** NS calls the SAME
+  `CGLChoosePixelFormat` — no private GLD entry, no
+  CGS round. The zero-`_CGL`-imports fact resolves
+  via **soft linking**: `__NS_CGLChoosePixelFormat`
+  lazily resolves `"CGLChoosePixelFormat"` through
+  `_GetOpenGLFunctionPointer` →
+  `__NSSoftLinkingGetFrameworkFunction` (framework
+  CFString; the AppKit source path in the assert
+  string: `OpenGL.subproj/NSOpenGLStubs.m`).
+- **THE ONLY TWO DISCRIMINATORS between the NS call
+  and our CGL-direct harness:**
+  1. `CGLSetOption(0x1F9, 0)` — option 505, set to
+     0, immediately before the choose, never reset.
+     Not a public CGLOptionEnum; identity unknown.
+  2. The appended bare attr `4` (kCGLPFAWindow) —
+     NS appends it to the caller's list (NSTest's
+     forwarded lists all end in 4; the NS attr enums
+     are numerically identical to CGL's, so
+     "translation" is identity-plus-append).
+- **PREDICTION (iii) REFINED (the leading
+  hypothesis):** no-depth NS sets pass WITH attr 4
+  present — attr 4 alone is insufficient. The
+  fit-everything combination: the scorer treats
+  DEPTH × WINDOW jointly (a "depth on window
+  drawables" advertisement) — window-without-depth
+  passes, CGL-depth-without-window passes, NS
+  depth+window fails because our pf object lacks
+  that advertisement. The float's pf-build tail is
+  where that field/bit will be found.
+- **THE LOCAL REPRO (named, next):** make the
+  CGL-direct harness do exactly what NS does —
+  `CGLSetOption(505,0)` + append attr 4 — and bisect
+  which of the two flips depth to fail, no AppKit
+  involved. Then the float read names the field.
+
 **Exposure:** host-config change + VM reboot; probe
 re-ship after the /tmp wipe; the stub/kext unchanged.
 
