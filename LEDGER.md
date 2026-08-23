@@ -5390,6 +5390,57 @@ reboot.
 
 ---
 
+## RUNG 48 RESULT + CONTINUATION — the attach slot IS the
+export's call site (proven by return-address arithmetic);
+the install fired at the WRONG MOMENT — before the table
+existed. The direct install pre-registered:
+
+- **PROVEN: the export fires through the engine's attach
+  path.** The logged return address 0x1053e544b −
+  GLEngine-base 0x1052f6000 = **0xf44b = 0xf444+7** (the
+  REX-prefixed `callq *0x168(%r8)`) — our gldAttachDrawable
+  IS the table+0x48 entry, called from
+  gliAttachDrawableWithOptions. r15 = the descriptor
+  (nonzero); every success path ends at `[0x6570]=r15` →
+  gliUpdateDispatchState.
+- **THE TIMING BUG (why the install never fired):** the
+  attach (and thus the classification transition) runs
+  BEFORE gldInitDispatch fills the table — the log order is
+  attach(:09) THEN InitDispatch(:09). The engine's
+  transition-time [0x6758] call hit a pre-fill table, and
+  the transition never repeats ([0x7988] already 0; later
+  updates take the `testb %cl; je return` early-out).
+  gldInitDispatch fills the ENGINE's own table region
+  directly (rsi = engine ctx+0x6708) — post-fill, the
+  entries are right, but nothing calls them.
+- **THE DIRECT INSTALL (pre-registered, stub-side):** the
+  sub-block pointer (gldCreateContext's a4) =
+  engine+0x79b8+idx*0x888 with idx=0 (single renderer) →
+  **engine base = a4 − 0x79b8**, and block1 =
+  engine+0x65c8. At the END of gldInitDispatch (table now
+  filled), write block1+0xE0 = flush entry, block1+0xE8 =
+  swap entry. Sixteen bytes, two pointers, no engine
+  cooperation.
+
+**Predictions:**
+- (i) **THE SWAP FIRES AT CGLFlushDrawable** ([0x798c]=1
+  already written, [0x6540]==0 no FBO): "rung46: SWAP
+  fired" logs between ReadPixels and teardown; the relay
+  presents at the app's flush; the window blues.
+- (ii) **Crash/miswrite** (the base arithmetic wrong —
+  idx≠0 or the sub-block relation misread): the process
+  dies at flush; recovery = redeploy the previous stub
+  (minutes, no boot).
+- (iii) **Still noop** (the engine re-nooped block1 after
+  our write — a later gliUpdateDispatchState with [0x7988]
+  back to 1): the noop-block writer's trigger read is the
+  next step.
+
+**Exposure:** stub live-swap; probe rerun; no kext; no
+reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
