@@ -5477,6 +5477,49 @@ kernel: hostRelayBlit: GA path — surface 223039688, flush rect 320x262@200,588
 
 ---
 
+## RUNG 49 PRE-REGISTERED — THE APP'S OWN CLEAR COLOR
+(committed before implementation)
+
+**The read (the float's gldClear, grf64 0x15087):** the
+clear call takes (ctx, mask) ONLY — no color args. The
+color comes from `r13 = [ctx+0x740]` — the shared/processor
+block (gldCreateContext's 5th arg, which the rung-30 mirror
+already stores at ctx+0x740) — and gldClearDrawBuffer reads
+the four floats at **shared+0x2ea0/+0x2ea4/+0x2ea8/+0x2eac**
+(grf64 0x12b91-0x12ba9: R,G,B,A into xmm6/7/5/8). The
+ENGINE owns glClearColor state and mirrors it there; the
+driver reads it at clear time.
+
+**The change:** gld_clear_real (and the swap/proof paths)
+read the four floats from [ctx+0x740]+0x2ea0 and submit
+THEM in the CLEAR blob (the four color dwords), replacing
+the fixed proof floats. The readback proof's expected bytes
+become COMPUTED from the same floats (BGRA order: B,G,R,A
+bytes). The color is logged at each clear.
+
+**Predictions:**
+- (i) **GREEN AT THE FLUSH — THE APP'S OWN COLOR:** the
+  probe calls glClearColor(0,1,0,1); the stub logs
+  `clear color 0.000000 1.000000 0.000000 1.000000`; the
+  proof passes with expected bytes 00 FF 00 FF; the window
+  fills GREEN at CGLFlushDrawable — the first time the
+  DISPLAYED color is the APPLICATION'S choice.
+- (ii) The floats read wrong (offset misread or the engine
+  doesn't maintain +0x2ea0 for our contexts): the logged
+  color is 0/0/0/0 or stale; the window shows the wrong
+  color; the engine's glClearColor path (its store site)
+  is the next read.
+- (iii) The floats read right but the proof fails on the
+  computed-expected change: an instrumentation bug in the
+  byte-order computation — caught by the log before any
+  conclusion.
+
+**Exposure:** stub live-swap; probe rerun; no kext; no
+reboot. Visual check requested (green is unmistakable vs
+the blue proof).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
