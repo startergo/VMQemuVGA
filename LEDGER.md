@@ -6146,6 +6146,55 @@ function-pointer machinery — the real draw contract:
 
 ---
 
+## RUNG 55 PRE-REGISTERED — THE MESA LINKAGE: OSMesa
+inside the GLD, proven on the clear (committed before
+implementation)
+
+**The decision, taken:** the Mesa linkage. The
+hand-built slots proved the transport; the draw class
+gets Mesa's proven implementation (the substitute era:
+clears, triangles, textured triangles byte-exact;
+PowerFox and WebGL Aquarium through this exact library
+and kernel transport).
+
+**The design (cheapest honest proof):** the stub
+dlopens the substitute's OWN working library
+(/Users/sl/subst/libOSMesa.8.dylib — the build-tree
+one, digests verified in the substitute era) with
+GALLIUM_DRIVER=virgl set by the stub itself. At the
+first clear: OSMesaCreateContextExt on a PRIVATE
+window-sized buffer, OSMesaMakeCurrent. The clear slot
+THEN forwards the app's color to OSMesa's glClearColor/
+glClear — Mesa's full stack renders (state tracker →
+virgl → OUR kernel 0x6008 → host GPU → readback into
+the private buffer). The proof artifact: the private
+buffer's first bytes == the app's color — Mesa-rendered
+green, logged beside the hand-built clear's bytes.
+
+**Predictions:**
+- (i) **THE LINKAGE PROVEN:** OSMesa loads in the GLD
+  process, its context renders the clear through its
+  own virgl round trip, and the private buffer reads
+  the app's color (00 ff 00 ff-class). Two producers,
+  one green — ours and Mesa's, logged side by side.
+- (ii) **OSMesa fails to init in this process** — the
+  known single-threaded TLS gate (u_thread.h's
+  compromise) vs the engine's pack/unpack threads, or
+  the dlopen in a bundle context — the failure named
+  (the substitute ran in plain app processes; the GLD
+  host process is the same class but the engine's
+  threads are the new variable).
+- (iii) **OSMesa renders but into nothing** (its
+  transport init collides with ours — two contexts on
+  one connection SHOULD coexist; ctx ids distinct) —
+  the kernel log + debug log name it.
+
+**Exposure:** stub live-swap; probe rerun; the
+substitute's library read from the guest disk; no
+kext; no reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
