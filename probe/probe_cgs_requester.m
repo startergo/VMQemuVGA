@@ -192,6 +192,23 @@ int main(int argc, char *argv[])
              * first flush through this driver. */
             CGLError e_cur = CGLSetCurrentContext(ctx);
             printf("CGLSetCurrentContext -> %d\n", e_cur);
+            /* RUNG 50 — the limits census: what does the engine answer
+             * before/after the config block is filled? */
+            {
+                GLint tex = -1, vp[2] = { -1, -1 };
+                GLint r = -1, g = -1, b = -1, a = -1, dbits = -1, sbits = -1;
+                glGetIntegerv(0x0D33, &tex);          /* MAX_TEXTURE_SIZE */
+                glGetIntegerv(0x0D3A, vp);            /* MAX_VIEWPORT_DIMS */
+                glGetIntegerv(0x0D52, &r);            /* RED_BITS */
+                glGetIntegerv(0x0D53, &g);
+                glGetIntegerv(0x0D54, &b);
+                glGetIntegerv(0x0D55, &a);
+                glGetIntegerv(0x0D56, &dbits);        /* DEPTH_BITS */
+                glGetIntegerv(0x0D57, &sbits);        /* STENCIL_BITS */
+                printf("LIMITS: tex=%d vp=%dx%d bits r%d g%d b%d a%d d%d s%d\n",
+                       tex, vp[0], vp[1], r, g, b, a, dbits, sbits);
+                fflush(stdout);
+            }
             glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             printf("glClear done, glGetError = 0x%x\n", glGetError());

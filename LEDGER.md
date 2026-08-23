@@ -5552,6 +5552,50 @@ screen: GREEN (user visual, both runs — "green")
 
 ---
 
+## RUNG 50 PRE-REGISTERED — THE CONFIG BLOCK: fill
+gldSetConfigData's map (committed before implementation)
+
+**The BEFORE measurement (instrumentation, old stub +
+limits-census probe):** `LIMITS: tex=0 vp=0x0 bits r0 g0
+b0 a0 d0 s0` — the engine answers EVERY limits query with
+ZERO. A real GL app (they query limits at startup) would
+see max-texture-size 0 — a broken GL. The config block
+(all-zero except our +0x2d) is the presumptive source.
+
+**The fill (at gldCreateContext, extending the rung-46
+write):** the float's gldSetConfigData map (grf64 0x139ae,
+read end to end in rung 47): dwords +0xC/+0x3F800000/
++0x4000/+0x4000/+1/+1; bytes +0x18=0xA/+0x19=8/+0x1A=8/
++0x1B=0/+0x1C=0xC; the color bytes (+0x31=1, +0x32=8,
++0x34..+0x37=8/8/8/8 — BGRA8888; accum +0x38..+0x3B=0);
++0x5B/+0x5D/+0x5E=1; the limits run +0x68..+0x178
+(0x1000/0x40/0x10/0x80/0x20/16.0f/8/0x10/0x4000-words/
+0x2000/enum-words 0x83f0.. /0x100000/0xFFFFFFF8/7/...);
++0x17C=1, +0x17E=1; the caps ORs +0x198 =
+0x2683A001|0x197C5FFE, +0x19C = 0x20000000|0xC0000000,
++0x1A0 = 4|8|0x20000000|0x590000. The ctx-derived fields
+(the float reads its own ctx's color formats at +0x40..
+and the +0x260/+0x264/+0x254/+0x258 blocks) are filled
+with the BGRA8888-derived equivalents; two placeholder
+immediates (+0x1E word, +0x6C/+0x78 dwords) filled 0.
+
+**Predictions:**
+- (i) **REAL LIMITS:** `tex=16384`, `vp` nonzero, `bits
+  r8 g8 b8 a8` — the config block IS the engine's limits
+  source; apps see a real GL.
+- (ii) **PARTIAL:** some queries move, others stay 0 — the
+  engine's per-query field map is partial against the
+  float's; the unmoved query names the next field to find
+  (the engine's glGetIntegerv read for that enum).
+- (iii) **Crash/miswrite** (an offset or the derived
+  values wrong): recoverable by redeploy; the log prints
+  the block address first.
+
+**Exposure:** stub live-swap; the new limits-census probe;
+no kext; no reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
