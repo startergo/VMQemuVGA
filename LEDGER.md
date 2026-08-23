@@ -5890,6 +5890,47 @@ LIMITS: tex=16384 vp=16384x16384 bits r8 g8 b8 a8 d0 s0
 
 ---
 
+## RUNG 53 PRE-REGISTERED — THE RENDERER STRING: the
+device's name in glGetString (committed before
+implementation)
+
+**The honesty line, drawn explicitly:** GL_RENDERER is a
+FACT statement — the hardware that executes what we
+submit, and the capset names it ("Apple M4 Pro");
+returning it is honest NOW. GL_VERSION is a CAPABILITY
+claim — "4.1" would assert entries that are still
+noops; it stays "0.0 stub" until the entries are real
+(the same reasoning as the 0x100 hold, applied to
+strings).
+
+**The change:** gldGetString(0x1F01) returns a static
+"%s (virgl)" built once from g_caps.renderer (NUL-
+forced — the field is char[64] and the capset copy was
+764 bytes, renderer at ~640-704, intact), falling back
+to the stub string when the capset is absent. The probe
+prints VENDOR/RENDERER/VERSION after make-current (it
+never printed strings before — the rung-32 string probe
+was a different instrument).
+
+**Predictions:**
+- (i) **THE DEVICE'S NAME IN THE APP'S HAND:**
+  `GL_RENDERER = Apple M4 Pro (virgl)` printed by the
+  probe; the stub log shows the gldGetString(0x1F01)
+  call (rung 32 proved strings reach the driver entry).
+- (ii) **Empty/garbled** (the renderer offset wrong or
+  the 764-byte truncation bites) → the log's capset line
+  already printed the string correctly, so a mismatch
+  isolates it to the copy/NUL handling.
+- (iii) **The engine serves its own cache** (the string
+  query doesn't reach the driver this path) → the stub
+  log lacks the call; the engine's string cache source
+  read next.
+
+**Exposure:** stub live-swap; probe rebuild; no kext;
+no reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
