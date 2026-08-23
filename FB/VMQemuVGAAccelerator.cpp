@@ -3709,14 +3709,12 @@ IOReturn CLASS::returnCommandBuffer(uint32_t context_id)
                 flush_op.gpu_commands = 0;
             }
         }
-        
-        // Process software commands
-        if (flush_op.software_commands > 0) {
-            IOLog("VMQemuVGAAccelerator: Processing %d software commands\n", flush_op.software_commands);
-            // Simulate software command processing time
-            IODelay(flush_op.software_commands * 10); // 10μs per command
-        }
-        
+
+        /* RUNG 63: the "software commands" block that stood here was a
+         * SIMULATION — IODelay(n*10) busy-waiting for work that never
+         * happened (its own comment said so). Deleted; nothing real was
+         * lost. software_commands remains a counter for the log below. */
+
         uint64_t flush_end = getCurrentTimestamp();
         flush_op.flush_time_us = convertToMicroseconds(flush_end - flush_start);
         

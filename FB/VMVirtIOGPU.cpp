@@ -34,6 +34,27 @@ bool VMVirtIOGPU::cap3dPublishGate()
     return gate != 0;
 }
 
+/* RUNG 63: submitCommand poll-spin cap, boot-arg gated.
+ * vm-poll-spin=N caps the IODelay(20) busy-wait phase at N iterations;
+ * default (no arg) is 10 = the historical behaviour, 0 = sleep-only.
+ * Rationale (2026-08-23 panic triage): IODelay's kernel path enters the
+ * global timer queue, and a busy-spinning vCPU under TCG steals scheduler
+ * time from the other vCPUs — the documented SMP starvation-panic
+ * mechanism. The gate lets one binary run spin-fast on 1-vCPU and
+ * sleep-polite on SMP without a rebuild. */
+static int vm_poll_spin_limit()
+{
+    static int limit = -1;
+    if (limit < 0) {
+        int v = 10;
+        if (PE_parse_boot_argn("vm-poll-spin", &v, sizeof(v)))
+            limit = (v < 0) ? 0 : v;
+        else
+            limit = 10;
+    }
+    return limit;
+}
+
 bool CLASS::init(OSDictionary* properties)
 {
     if (!super::init(properties))
@@ -2303,7 +2324,9 @@ IOReturn CLASS::submitCommand(virtio_gpu_ctrl_hdr* cmd, size_t cmd_size,
     // saving ~45ms/frame (5 calls × ~9ms). Verified via the EXIT OK
     // log line's new spin_iter field — values <SPIN_ITERATIONS mean
     // the spin covered it; values >= SPIN_ITERATIONS mean we fell back.
-    static const int SPIN_ITERATIONS = 10;
+    /* RUNG 63: spin cap now boot-arg gated (vm-poll-spin, default 10 —
+     * ordinary boots byte-identical; 0 = pure IOSleep under SMP). */
+    const int SPIN_ITERATIONS = vm_poll_spin_limit();
     /* Poll budget is caller-class-aware (2026-08-18): 2D microtransfers
      * keep the original 150-iteration budget; 3D batches (executeCommands)
      * pass 600 — they do real host GL work and under host contention
