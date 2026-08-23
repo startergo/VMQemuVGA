@@ -4921,6 +4921,148 @@ readfb baseline; screenshot optional corroboration).
 
 ---
 
+## RUNG 44 RESULT + CONTINUATION — THE RECT IS ON SCREEN,
+BLACK: geometry and push VERIFIED end to end; the content
+diverged to zeros inside the relay. The next discriminator
+pre-registered (the mapped-view read):
+
+**First run (23:46:36, pre-reboot): the relay clean to the
+flush, the final push hit the sporadic timeout class:**
+```
+stub:   rung44: 0x600C hostRelayBlit res=258 320x262 -> 0x0
+kernel: hostRelayBlit: GA path — surface 263158340 (320x262 row 2080),
+        flush rect 320x262@200,588
+kernel: VMVirtIOGPU::transferToHost2D: Command failed: 0xe00002d6
+```
+  0xe00002d6 = **kIOReturnTimeout** (MacKernelSDK
+  IOReturn.h:123 — 0x2d5 Busy, 0x2d6 Timeout, 0x2d7 Offline;
+  two earlier labels corrected: 0x2be = NoResources (rung 40
+  called it Unsupported), 0x2d8 = NotReady (rung 41 called it
+  NoResources; NotReady fits that wall BETTER — "past the
+  lookup, backing absent"). The timeout class is the
+  display's own sporadic one: 117 failures since 23:29:56
+  against ~48k transfers in the same span (~0.2%; refresh
+  windows show 149/156 then 469/469 succeeding) — not a
+  regression, a retry.
+
+**Second run (08:26:13, post-reboot): the push SUCCEEDED —
+and the screen answered:**
+```
+stub:   *** ROUND TRIP PROVEN AT WINDOW SIZE *** (bytes bf8040ff — blue in the guest buffer, seconds before)
+stub:   rung44: 0x600C hostRelayBlit res=256 320x262 -> 0x0
+kernel: transferFromHost3D: Resource 256 pixels copied (x2 — the proof's + the relay's)
+kernel: hostRelayBlit: GA path — surface 264219650, flush rect 320x262@200,588
+        (NO transferToHost2D failure — the rect reached the host scanout)
+screen: A BLACK RECTANGLE appeared (user visual, the exact
+        observation: "BLACK rectangle was")
+```
+- **WHAT IS VERIFIED:** the presentation geometry chain,
+  whole — 0x600C → the GA-bound surface → the shape rect →
+  the desktop backing → transferToHost2D + flush → the HOST
+  SCANOUT. A rect appeared ON SCREEN through the driver's
+  own present path, sized and positioned by the flush. The
+  position was NOT flagged wrong by the observation (a
+  misplaced-vs-inwindow adjudication needs a live window —
+  the window had closed; the next run holds it open).
+- **WHAT BROKE: the CONTENT — blue in the guest backing
+  (byte-verified the same second) presented as BLACK.** The
+  divergence is inside hostRelayBlit's userspace-blind
+  steps. NAMED SUSPECT: step 2's silent failure path —
+  `if (got != row_bytes) break;` (readBytes) and the
+  writeBytes counterpart LOG NOTHING; an untouched
+  freshly-allocated surface backing (zeros) flushed to the
+  desktop = exactly a black rect.
+- **THE DISCRIMINATOR (pre-registered, zero kext changes):
+  the surface backing is mapped in OUR process at
+  g_ga_view.** Read it after the 0x600C call:
+  - (A) view rows ZERO → the surface write never happened
+    (readBytes/writeBytes failing silently on the
+    user-attached descriptor — likely the prepare/lifetime
+    contract; fix lands in the kext with a LOG LINE on that
+    break first).
+  - (B) view rows BLUE (bf 80 40 ff at row starts, stride
+    2080) → steps 1-2 fine; the divergence is the flush's
+    source (s->kernel_map vs backing_memory — two different
+    allocations?) — fix in the kext's flush source.
+  - (C) view blue AND screen blue — falsified already by
+    the black observation.
+
+**THE DISCRIMINATOR RAN (08:29:57, deploy e18af822): outcome
+(B) — the surface IS blue:**
+```
+rung44: 0x600C hostRelayBlit res=257 320x262 -> 0x0
+rung44: VIEW after relay (stride 2080) r0:bf8040ffbf8040ff
+        r1:bf8040ffbf8040ff r261:bf8040ffbf8040ff
+```
+  Steps 1-2 exonerated (rows 0, 1, AND 261 byte-exact from
+  the mapping's base). The divergence is DOWNSTREAM of the
+  surface write.
+
+**ROOT CAUSE (read from the code, all three formulas):**
+the surface allocation has TWO coordinate systems and the
+relay used the wrong one.
+- The write-lock's handout: `info->address = base +
+  shape_y*bytes_per_row + shape_x*bpp`
+  (`./FB/VMAccelSurfaceClient.cpp:1095-1115`) — window
+  pixels live at the SHAPE OFFSET inside the allocation.
+  The 520x850 base extent exists so any shape rect fits:
+  (200,588)+(320,262) = exactly the extent corner.
+- The relay's write: `writeBytes(j*surf_stride, ...)` —
+  row j from the BASE (`./FB/VMVirtIOGPU.cpp:3867`; its
+  comment "surface-space, the surface IS the window's" is
+  FALSIFIED — that is not where the surface's consumers
+  read).
+- The flush's read: `src + (shape_y+r)*stride +
+  shape_x*bpp` (`./FB/VMAccelSurfaceClient.cpp:625`) —
+  rows 588..849, which the relay never wrote: ZEROS.
+  Blue at base rows 0..261 (verified by the view read),
+  zeros flushed from rows 588..849 → THE BLACK RECT. Every
+  observation explained; no residuals.
+
+---
+
+## RUNG 45 PRE-REGISTERED — THE ONE-LINE KEXT FIX: the
+relay writes at the SHAPE OFFSET (committed before
+implementation)
+
+**The change (hostRelayBlit step 2, `./FB/VMVirtIOGPU.cpp`):
+write at `shape_y*stride + shape_x*4 + j*stride` instead of
+`j*stride`; the bounds check grows the same offset.** The
+flush's read formula is then satisfied exactly. No new
+kernel API calls (offset arithmetic only — not the
+boot-risk class; recovery via slclean if it somehow fails
+to boot).
+
+**The stub gains one discriminator row:** read view row 588
+(the shape row) in addition to 0/1/261 — after the fix the
+blue should MOVE there (r0 goes dark, r588 blue), proving
+the fix landed kernel-side even before the screen speaks.
+
+**Predictions:**
+- (i) **BLUE IN THE WINDOW:** the probe's window (live
+  during the hold) fills with medium blue RGB(64,128,191)
+  — CGS bounds [200 588 320 262] are desktop top-left
+  coordinates (the shape rect is "the window's live desktop
+  position" by the flush's own design comment), so the rect
+  lands exactly on the window. THE PRESENTATION COMPLETE:
+  GL call → host GPU → guest → window surface → desktop →
+  scanout, VISIBLE.
+- (ii) **BLUE MISPLACED** (below the window): the CGS
+  origin is bottom-left after all; the fix is a y-flip at
+  SetShape time (y_tl = display_h − y_cgs − h), named now.
+- (iii) **STILL BLACK:** view r588 blue but screen black →
+  the divergence moves to the flush's dst or the push
+  (m_hblit_dst_res vs the scanout resource); the kernel log
+  + view rows name which.
+- (iv) View reads after the fix: r0 ZEROS, r588 BLUE (the
+  write moved), proof lines unchanged.
+
+**Exposure:** kext rebuild + cache + reboot (the full
+install cycle); stub live-swap; probe re-ship (post-reboot
+/tmp wipe).
+
+---
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
