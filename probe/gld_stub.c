@@ -145,10 +145,50 @@ static IOGraphicsAcceleratorInterface* g_ga_vt = NULL;
 static IOBlitSurface g_ga_surf;
 static vm_address_t g_ga_view = 0;
 
+static io_connect_t g_surf_conn = MACH_PORT_NULL;   /* the type-0 client (kept open) */
+
 static int ga_bind_surface(unsigned sid)
 {
     if (g_ga_vt) return 0;                    /* once per process */
     setenv("VM_GA_PROBE", "1", 1);            /* the plugin's Start gate */
+    /* RUNG 41 — THE REGISTRATION: our sid must be in the kernel's
+     * cross-client registry (the ONLY add site is setIDMode,
+     * VMAccelSurfaceClient.cpp:661). Open the surface client (type 0,
+     * gated by vm-accel-surface=1 — on) and call SetIDMode: user
+     * selector 0x83 (enum index 7 + 0x7C, verified across six table
+     * rows), scalars (wID, modebits); 0xA = BGRA32 (bpp 4). */
+    {
+        CFMutableDictionaryRef am = IOServiceMatching("VMQemuVGAAccelerator");
+        io_service_t asvc = am ? IOServiceGetMatchingService(kIOMasterPortDefault, am)
+                               : IO_OBJECT_NULL;
+        if (asvc == IO_OBJECT_NULL) {
+            ep_log("rung41: no accelerator service");
+        } else {
+            kern_return_t kr = IOServiceOpen(asvc, mach_task_self(), 0,
+                                             &g_surf_conn);
+            IOObjectRelease(asvc);
+            if (kr != KERN_SUCCESS) {
+                char b[80]; snprintf(b, sizeof(b), "rung41: type-0 open FAIL 0x%x", kr);
+                ep_log(b);
+            } else {
+                /* CORRECTION: the direct user-client call uses the TABLE
+                 * INDEX (the eIOAccelSurfaceMethods enum), not the 0x8x
+                 * worked-example notes — 0x83 never reached the handler
+                 * (0xe00002c7, no kernel line). SetIDMode = index 7. */
+                uint64_t sm[2] = { sid, 0xA };
+                kr = IOConnectCallMethod(g_surf_conn, 7,
+                                         sm, 2, NULL, 0,
+                                         NULL, NULL, NULL, NULL);
+                char b[96];
+                snprintf(b, sizeof(b),
+                         "rung41: SetIDMode(idx 7) sid=0x%x mode=0xA -> 0x%x",
+                         sid, kr);
+                ep_log(b);
+                /* the client stays OPEN — its m_surface is the registry
+                 * entry; close = stop = unregister */
+            }
+        }
+    }
     CFMutableDictionaryRef m = IOServiceMatching("VMVirtIOFramebuffer");
     if (!m) { ep_log("rung40: FB matching FAILED"); return -1; }
     io_service_t fb = IOServiceGetMatchingService(kIOMasterPortDefault, m);

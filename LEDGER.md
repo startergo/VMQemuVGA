@@ -4688,6 +4688,48 @@ granularity:
 
 ---
 
+## RUNG 41 — THE REGISTRATION (2026-08-22 night) — LANDED,
+kernel-verified; one selector correction banked; the GA bind
+advanced FROM unknown-id TO no-resources — a deeper, named wall:
+
+- **THE SEQUENCE:** open the surface client (type 0 — the
+  vm-accel-surface-gated class; the boot-arg is on) and call
+  SetIDMode with (wID=sid, modebits=0xA=BGRA32).
+- **CORRECTION (banked): the direct user-client call uses the
+  TABLE INDEX, not the 0x8x worked-example numbering.** 0x83
+  returned 0xe00002c7 with NO kernel line (never reached the
+  handler). SetIDMode = eIOAccelSurfaceMethods index **7** —
+  and index 7 returned **0x0** with the kernel-verified line:
+```
+VMAccelSurfaceClient: SetIDMode(wID=0x1bb32fd0 modebits=0xa depth=0xa bpp=4) -> STORED
+```
+  (The ":8x" comments in the kext's table are VMsvga2's era
+  notes — a DIFFERENT table's numbering; the second
+  worked-example-numbering error this arc, after the rung-12
+  table.)
+- **The GA bind then advanced:** from 0xe00002be (unknown id —
+  the registry miss) to **0xe00002d8 (kIOReturnNoResources)** —
+  PAST the lookup, inside the kext's 2D surface machinery. The
+  kernel sequence: our client created+started, SetIDMode
+  STORED, the GA plugin's 2D context started, GetConfig →
+  {0,0} — then the resource refusal.
+- **THE NEXT WIRE (named):** the milestone-2 flow sets the
+  surface's SHAPE AND BACKING before locking
+  (kIOAccelSurfaceSetShapeBacking — SetShapeBacking(options,
+  fbIndex, IOAccelDeviceRegion) — the ":82" row, index 6);
+  ours is REGISTERED BUT SHAPELESS — the 2D SetSurface's
+  backing allocation is the no-resources site. The wire:
+  SetShapeBacking with the window's region (from the bounds —
+  which themselves come from the shape → the chicken-and-egg
+  breaks via the CGS rect or the window's NSFrame passed at
+  attach... the descriptor had +0x10=0x40=64-class values —
+  the region may live THERE; the full descriptor dump from
+  rung 39's cross-check holds it).
+- **The proof stands at 4x4** throughout; every step of this
+  rung is additive and logged.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
