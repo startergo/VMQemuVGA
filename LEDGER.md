@@ -6557,6 +6557,43 @@ ANGLE/GLES), and a standing rule born:
 
 ---
 
+## RUNG 61 PRE-REGISTERED — THE GL=CORE EXPERIMENT: a
+real desktop GL host context (committed before the
+boot)
+
+**The change:** UTM booted with gl=core — virglre-
+nderer against a DESKTOP GL context instead of
+ANGLE's GLES. Everything downstream re-measured.
+
+**The instruments (all already live):** the stub's
+capset line (with the v1/v2 dual-blob cross-check and
+the raw-dword control — rung 52b), the auto-derived
+strings, the full probe cycle (green proof, swap,
+limits), the boot debug log's [VREND CAPS] lines.
+
+**Predictions:**
+- (i) **THE SPLIT CLOSES:** the v1/v2 max_samples
+  divergence (4 vs 1) vanishes or changes shape —
+  the ES-shaped fill was the mechanism; the debug
+  log's "Overriding max_samples 4 -> 1 for
+  fake_sw_msaa" line disappears or changes.
+- (ii) **CAPS SHIFT:** glsl_level/limits move (a real
+  desktop 4.1 offers more than the ES translation) —
+  the strings re-derive automatically; possibly
+  GL_VERSION's honest number changes with them.
+- (iii) **CORE FAILS TO INIT:** virglrenderer cannot
+  create a desktop context through this stack — the
+  display breaks; recovery is booting back to gl=es
+  (the known-good).
+- (iv) **NO CHANGE** in caps — the ES hypothesis
+  falsified for the split; the divergence has another
+  mechanism.
+
+**Exposure:** host-config change + VM reboot; probe
+re-ship after the /tmp wipe; the stub/kext unchanged.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
