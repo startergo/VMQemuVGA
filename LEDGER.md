@@ -5596,6 +5596,37 @@ no kext; no reboot.
 
 ---
 
+## RUNG 50 RESULT — REAL LIMITS: prediction (i) landed —
+the config block IS the engine's limits source:
+
+```
+BEFORE: LIMITS: tex=0     vp=0x0        bits r0 g0 b0 a0 d0 s0
+AFTER:  LIMITS: tex=16384 vp=16384x16384 bits r8 g8 b8 a8 d0 s0
+stub:   rung50: config block 0x10181b1d8 FILLED (limits+caps; +0x2d=1)
+```
+
+- **max texture size 16384, viewport 16384², RGBA8888** —
+  the queries every real GL app issues at startup now
+  answer sanely. The broken-GL state (all zeros) is closed.
+- **d0 s0 — consistent, not a defect:** the probe's pixel
+  format requests no depth/stencil buffer; a zero
+  DEPTH_BITS answer is the honest one for this format.
+  When a depth-requesting format is exercised, the
+  depth-size field (+0x19/+0x1A-class or the format-driven
+  path) gets its own rung.
+- The caps ORs (+0x198/+0x19C/+0x1A0) are set to the
+  float's own masks — feature-gating consequences (if any
+  engine path now takes a feature branch) are unobserved;
+  the draw cycle's lines are unchanged (the green
+  clear/swap still present — verified in the same run's
+  log).
+- **The honest-refusal list shrinks to ONE item:** the ~20
+  noop GL entries. The lifecycle, the claim, the draw
+  cycle, the color, the presentation, and now the limits
+  are all real.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

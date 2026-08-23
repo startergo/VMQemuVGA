@@ -1216,13 +1216,51 @@ long gldCreateContext(void** out, void* pf, void* shared,
      * rung-30 mirror ignored the arg; write the byte now. */
     if (a4) {
         unsigned char* sb = (unsigned char*)a4;
-        sb[0x2d] = 1;
+        /* RUNG 50 — THE CONFIG BLOCK: the float's gldSetConfigData
+         * map (grf64 0x139ae), filled here at create. The engine
+         * answers GL limits queries from this block; unfilled, every
+         * query returned ZERO (measured). */
+        unsigned* w = (unsigned*)sb;
+        unsigned short* h = (unsigned short*)sb;
+        w[0] = 0xC;  w[1] = 0x3F800000;             /* +0, +4: 1.0f */
+        w[2] = 0x4000; w[3] = 0x4000;               /* +8, +C: max tex dims */
+        w[4] = 1; w[5] = 1;                          /* +10, +14 */
+        sb[0x18] = 0xA; sb[0x19] = 8; sb[0x1A] = 8;  /* +18..+1A */
+        sb[0x1B] = 0; sb[0x1C] = 0xC; h[0x0F] = 0;   /* +1B, +1C, +1E */
+        sb[0x2C] = 0; sb[0x2D] = 1; sb[0x2E] = 0; sb[0x2F] = 1;
+        sb[0x30] = 0; sb[0x31] = 1; sb[0x32] = 8;
+        sb[0x34] = 8; sb[0x35] = 8; sb[0x36] = 8; sb[0x37] = 8;  /* RGBA sizes */
+        sb[0x38] = 0; sb[0x39] = 0; sb[0x3A] = 0; sb[0x3B] = 0;  /* accum */
+        sb[0x3C] = 0; sb[0x3D] = 0; sb[0x3E] = 0; sb[0x3F] = 0;
+        sb[0x58] = 0; sb[0x59] = 0; sb[0x5B] = 1;
+        sb[0x5C] = 0; sb[0x5D] = 1; sb[0x5E] = 1;
+        w[0x68/4] = 0x1000; w[0x6C/4] = 0; w[0x70/4] = 4;
+        w[0x74/4] = 0x13; w[0x78/4] = 0;
+        w[0x7C/4] = 0x80; w[0x80/4] = 0x80; w[0x84/4] = 0x20;
+        w[0x88/4] = 0x41800000; w[0x8C/4] = 0x41800000;  /* 16.0f */
+        h[0x90/2] = 8; h[0x92/2] = 0x10; h[0x94/2] = 0x10; h[0x96/2] = 8;
+        h[0x98/2] = 0x4000; h[0x9A/2] = 0x4000;
+        h[0x9C/2] = 0x4000; h[0x9E/2] = 0x4000;
+        h[0xA0/2] = 0x2000; sb[0xA2] = 5;
+        h[0xA4/2] = 0x83f0; h[0xA6/2] = 0x83f1;
+        h[0xA8/2] = 0x83f2; h[0xAA/2] = 0x83f3; h[0xAC/2] = 0x8837;
+        w[0xC4/4] = 0x4000;
+        w[0x130/4] = 0x1000; w[0x134/4] = 0x40; w[0x13C/4] = 0x10;
+        w[0x140/4] = 0x40; w[0x144/4] = 0x1000; w[0x148/4] = 0x400;
+        w[0x14C/4] = 0x1000; w[0x154/4] = 0x100000;
+        w[0x158/4] = 0xFFFFFFF8; w[0x15C/4] = 7; w[0x160/4] = 0x40;
+        w[0x168/4] = 0x10; w[0x16C/4] = 0x20; w[0x170/4] = 0x40;
+        w[0x174/4] = 0x20; w[0x178/4] = 0x20;
+        sb[0x17C] = 1; h[0x17E/2] = 1;
+        w[0x198/4] = 0x2683A001 | 0x197C5FFE;
+        w[0x19C/4] = 0x20000000 | 0xC0000000;
+        w[0x1A0/4] = 4 | 8 | 0x20000000 | 0x590000;
         g_engine_subblock = a4;   /* rung 48: the engine base derives
                                    * from it (sub-block = engine +
                                    * 0x79b8 + idx*0x888, idx=0) */
         snprintf(buf, sizeof(buf),
-                 "rung46: sub-block %p [+0x2d]=1 (readback 0x%x)",
-                 a4, sb[0x2d]);
+                 "rung50: config block %p FILLED (limits+caps; +0x2d=1)",
+                 a4);
         ep_log(buf);
     }
     if (!pf) {
