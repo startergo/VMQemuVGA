@@ -6069,6 +6069,48 @@ reboot.
 
 ---
 
+## RUNG 54 RESULT — PREDICTION (ii): NO SLOT FIRES — the
+draw door is ENGINE-INTERNAL:
+
+```
+probe:  triangle issued, glGetError = 0x409e337d   (garbage class, as always)
+stub:   CLEAR-REAL ... SWAP presented               (the real cycle, unchanged)
+stub:   ZERO NOOP/SLOT lines                        (no primitive slot called)
+```
+
+- The immediate-mode triangle ran clean and reached NO
+  driver entry. The engine buffers vertices in ITS OWN
+  vertex machine (gleLLVMInit / gleAllocVertexMachine —
+  the software rasterizer machinery gleInitializeContext
+  builds for every context) and never consults the
+  table for primitives.
+- **THE DRAW DOOR, NAMED: gldUpdateDispatch's renderer
+  SELECTION.** The float's UpdateDispatch (0x152da) is
+  state-diff machinery that ORs dirty bits and selects
+  the point/line/poly renderer functions (the table's
+  +0x30/+0x38/+0x40 per the rung-32 map) from the
+  shared's processor block — telling the engine "route
+  draws to MY functions." Ours returns 4 and marks
+  NOTHING: the engine's dispatch keeps its own software
+  vertex path. **The next read: the float's 0x152da
+  selection — which dirty bits and shared fields make
+  the engine route draws through the table.**
+- **The existing drawing instruments (review's
+  suggestion, dispositioned):** the killtest without
+  the substitute exercises the same system path (CGL →
+  our GLD) — its triangles would buffer the same
+  engine-internal way (the same negative); virgl_clear_
+  test drives Mesa's OWN transport, not the GLD. Their
+  value comes AFTER the selection read, as richer draw
+  workloads for the newly-routed slots.
+- **"Saturated on the real entries" stands as the
+  milestone it is:** the probe's ENTIRE cycle now runs
+  through implemented paths; the negative proves the
+  frontier has moved from plumbing to the engine's
+  draw-routing contract.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
