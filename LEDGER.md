@@ -4730,6 +4730,49 @@ VMAccelSurfaceClient: SetIDMode(wID=0x1bb32fd0 modebits=0xa depth=0xa bpp=4) -> 
 
 ---
 
+## RUNG 42 — THE SHAPE WIRE (2026-08-22 night) — LANDED,
+kernel-verified: the bind now reads the WINDOW'S TRUE
+DIMENSIONS. Two gates banked (the empty-region no-op and the
+IdentityScaleBit); the remaining row=0 + NoResources named
+(the LockMemory read):
+
+- **THE CALL:** setShape (index 9; 2 scalars (options,
+  fbIndex) + the IOAccelDeviceRegion struct-in {u32 num_rects;
+  i16 x,y,w,h} — IOAccelTypes.h:36, IOAccelSurfaceConnect.h:
+  47-50). **The bounds source: CGSGetWindowBounds(cid, wid)**
+  — windows have bounds even when their surfaces don't (the
+  surface-bounds call needed the bind; the window-bounds call
+  doesn't) → `[200 588 320 262]` (the probe's window, 320x262
+  = 240 + the 22px title bar).
+- **GATE 1 (banked): num_rects=0 is the NO-OP path** —
+  setShape returns Success WITHOUT storing (the worked
+  example's empty-region fixup). The stores need the region
+  path; with num_rects=0 the stores still fire — but only
+  under GATE 2.
+- **GATE 2 (banked): the stores require
+  kIOAccelSurfaceShapeIdentityScaleBit (0x4,
+  IOAccelSurfaceConnect.h:141)** in options — options=0 left
+  geometry untouched with a clean Success return (the second
+  silent-success gate this arc; the kernel log's "no
+  IdentityScaleBit: geometry untouched" line named it).
+- **RESULT (kernel-verified):**
+```
+rung42: GetWindowBounds -> 0 [200 588 320 262]; SetShape(9) 320x262 -> 0x0
+kernel: VMQemuVGA3DUserClient: SetSurface id=... opts=0x901 — BOUND (320x262 bpp=4 row=0)
+```
+  The bind reads the real window dims. **REMAINING: row=0
+  (bytes_per_row still unset — computed at lock/backing time)
+  and the GA lock's 0xe00002d8 (NoResources)** — the
+  kVM2DLockMemory (selector 5) read names what it needs (the
+  row computation and/or the backing allocation).
+- **The registration-to-bind chain now stands:** type-0 open →
+  SetIDMode(7) → SetShape(9, IdentityScale, window bounds) →
+  the GA plugin → 2D SetSurface BOUND at window size. The
+  lock, the view, and the presentation are the remaining
+  doors, each one read away.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

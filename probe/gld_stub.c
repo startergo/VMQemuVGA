@@ -184,6 +184,46 @@ static int ga_bind_surface(unsigned sid)
                          "rung41: SetIDMode(idx 7) sid=0x%x mode=0xA -> 0x%x",
                          sid, kr);
                 ep_log(b);
+                /* RUNG 42 — THE SHAPE: setShape (index 9; 2 scalars
+                 * (options, fbIndex) + the IOAccelDeviceRegion struct-in:
+                 * {u32 num_rects; i16 x,y,w,h}) stores width/height into
+                 * the registry's surface — the fields the 2D bind reads
+                 * (the 0x0 bpp=4 row=0 bind was the shapeless surface).
+                 * Bounds source: CGSGetWindowBounds(cid, wid). */
+                {
+                    void* cg2 = dlopen(
+                        "/System/Library/Frameworks/ApplicationServices.framework/"
+                        "Frameworks/CoreGraphics.framework/Versions/A/CoreGraphics",
+                        RTLD_LAZY);
+                    if (cg2) {
+                        typedef int (*gwb_t)(unsigned, unsigned, void*);
+                        gwb_t gwb = (gwb_t)dlsym(cg2, "CGSGetWindowBounds");
+                        if (gwb) {
+                            double wb[4] = { 0, 0, 0, 0 };
+                            int wr = gwb(g_sid_cid, g_sid_wid, wb);
+                            struct { uint32_t n; int16_t x, y, w, h; } rgn;
+                            rgn.n = 0;
+                            rgn.x = (int16_t)wb[0]; rgn.y = (int16_t)wb[1];
+                            rgn.w = (int16_t)wb[2]; rgn.h = (int16_t)wb[3];
+                            /* The stores gate on the IdentityScaleBit
+                             * (kIOAccelSurfaceShapeIdentityScaleBit =
+                             * 0x4, IOAccelSurfaceConnect.h:141) —
+                             * options=0 leaves geometry untouched. */
+                            uint64_t ss[2] = { 0x4 /*IdentityScale*/, 0 };
+                            kern_return_t kr2 = IOConnectCallMethod(
+                                g_surf_conn, 9, ss, 2,
+                                &rgn, sizeof(rgn),
+                                NULL, NULL, NULL, NULL);
+                            char b2[128];
+                            snprintf(b2, sizeof(b2),
+                                     "rung42: GetWindowBounds -> %d [%g %g %g %g]; "
+                                     "SetShape(9) %dx%d -> 0x%x",
+                                     wr, wb[0], wb[1], wb[2], wb[3],
+                                     (int)rgn.w, (int)rgn.h, kr2);
+                            ep_log(b2);
+                        }
+                    }
+                }
                 /* the client stays OPEN — its m_surface is the registry
                  * entry; close = stop = unregister */
             }
