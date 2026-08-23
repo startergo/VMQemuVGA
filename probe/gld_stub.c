@@ -83,6 +83,99 @@ static unsigned long g_proc_stand_in[64];
  * engine context base = sub-block − 0x79b8 (renderer idx 0). */
 static void* g_engine_subblock = NULL;
 
+/* RUNG 52 — THE CAPSET: virgl_hw.h's structs, copied verbatim
+ * (same x86_64 layout rules as the host's producer; v1 = 77 words
+ * = 308 bytes = the boot-logged VIRGL size exactly). */
+struct vm_format_mask { uint32_t bitmask[16]; };
+struct vm_caps_v1 {
+    uint32_t max_version;
+    struct vm_format_mask sampler, render, depthstencil, vertexbuffer;
+    uint32_t bset;   /* the bool set: one 32-bit bitfield word */
+    uint32_t glsl_level, max_texture_array_layers, max_streamout_buffers,
+             max_dual_source_render_targets, max_render_targets, max_samples,
+             prim_mask, max_tbo_size, max_uniform_blocks, max_viewports,
+             max_texture_gather_components;
+};
+struct vm_caps_v2 {
+    struct vm_caps_v1 v1;
+    float min_aliased_point_size, max_aliased_point_size;
+    float min_smooth_point_size, max_smooth_point_size;
+    float min_aliased_line_width, max_aliased_line_width;
+    float min_smooth_line_width, max_smooth_line_width;
+    float max_texture_lod_bias;
+    uint32_t max_geom_output_vertices, max_geom_total_output_components,
+             max_vertex_outputs, max_vertex_attribs, max_shader_patch_varyings;
+    int32_t min_texel_offset, max_texel_offset,
+            min_texture_gather_offset, max_texture_gather_offset;
+    uint32_t texture_buffer_offset_alignment, uniform_buffer_offset_alignment,
+             shader_buffer_offset_alignment, capability_bits;
+    uint32_t sample_locations[8];
+    uint32_t max_vertex_attrib_stride, max_shader_buffer_frag_compute,
+             max_shader_buffer_other_stages, max_shader_image_frag_compute,
+             max_shader_image_other_stages, max_image_samples,
+             max_compute_work_group_invocations, max_compute_shared_memory_size;
+    uint32_t max_compute_grid_size[3], max_compute_block_size[3];
+    uint32_t max_texture_2d_size, max_texture_3d_size, max_texture_cube_size;
+    uint32_t max_combined_shader_buffers;
+    uint32_t max_atomic_counters[6], max_atomic_counter_buffers[6];
+    uint32_t max_combined_atomic_counters, max_combined_atomic_counter_buffers;
+    uint32_t host_feature_check_version;
+    struct vm_format_mask supported_readback_formats, scanout;
+    uint32_t capability_bits_v2, max_video_memory;
+    char renderer[64];
+    float max_anisotropy;
+};
+static struct vm_caps_v2 g_caps;
+static int g_caps_fetched = 0, g_caps_v2_ok = 0;
+static io_connect_t g_virgl_conn;   /* tentative — defined with the
+                                      * transport below (rung 37) */
+
+/* The fetch — the winsys's own calls verbatim (id=2 first, v1
+ * fallback): 0x6006 GET_CAPSET_INFO(idx) → {id, ver, size};
+ * 0x6007 GET_CAPSET(id, ver) → the blob. */
+static void virgl_fetch_capset(void)
+{
+    for (uint32_t want_id = 2; want_id >= 1; want_id--) {
+        for (uint32_t idx = 0; idx < 2; idx++) {
+            uint64_t in[1] = { idx };
+            uint64_t out[3] = { 0, 0, 0 };
+            uint32_t out_cnt = 3;
+            kern_return_t kr = IOConnectCallMethod(
+                g_virgl_conn, 0x6006, in, 1, NULL, 0,
+                out, &out_cnt, NULL, NULL);
+            if (kr != KERN_SUCCESS) continue;
+            uint32_t id = (uint32_t)out[0], ver = (uint32_t)out[1],
+                     size = (uint32_t)out[2];
+            if (size == 0 || size > 2048 || id != want_id) continue;
+            uint8_t blob[2048];
+            size_t bsz = size;
+            uint64_t cin[2] = { id, ver };
+            kr = IOConnectCallMethod(g_virgl_conn, 0x6007,
+                                     cin, 2, NULL, 0,
+                                     NULL, NULL, blob, &bsz);
+            if (kr != KERN_SUCCESS) continue;
+            memset(&g_caps, 0, sizeof(g_caps));
+            size_t copy = bsz < sizeof(g_caps) ? bsz : sizeof(g_caps);
+            memcpy(&g_caps, blob, copy);
+            g_caps_v2_ok = (id == 2);
+            g_caps_fetched = 1;
+            char rb[160];
+            snprintf(rb, sizeof(rb), "rung52: capset id=%u ver=%u size=%u "
+                     "copy=%u 2d=%u 3d=%u cube=%u layers=%u rt=%u samples=%u "
+                     "glsl=%u renderer=%.32s",
+                     id, ver, size, (unsigned)copy,
+                     g_caps.max_texture_2d_size, g_caps.max_texture_3d_size,
+                     g_caps.max_texture_cube_size,
+                     g_caps.v1.max_texture_array_layers,
+                     g_caps.v1.max_render_targets, g_caps.v1.max_samples,
+                     g_caps.v1.glsl_level, g_caps.renderer);
+            ep_log(rb);
+            return;
+        }
+    }
+    ep_log("rung52: NO CAPSET returned (0x6006/0x6007)");
+}
+
 /* RUNG 37 — THE FIRST BRIDGE SLOT: gldClear through the virgl
  * transport, direct (no Mesa yet — the plumbing proof: a GLD
  * dispatch call reaching the device). The call sequence mirrors
@@ -1333,6 +1426,10 @@ long gldCreateContext(void** out, void* pf, void* shared,
      * gliSwapBuffers SKIPS the driver call when it is zero. The
      * rung-30 mirror ignored the arg; write the byte now. */
     if (a4) {
+        /* RUNG 52 — fetch the capset FIRST (device transport + the
+         * winsys's own selector pair), then derive the limits. */
+        if (virgl_transport_init() > 0 && !g_caps_fetched)
+            virgl_fetch_capset();
         unsigned char* sb = (unsigned char*)a4;
         /* RUNG 50 — THE CONFIG BLOCK: the float's gldSetConfigData
          * map (grf64 0x139ae), filled here at create. The engine
@@ -1341,7 +1438,19 @@ long gldCreateContext(void** out, void* pf, void* shared,
         unsigned* w = (unsigned*)sb;
         unsigned short* h = (unsigned short*)sb;
         w[0] = 0xC;  w[1] = 0x3F800000;             /* +0, +4: 1.0f */
-        w[2] = 0x4000; w[3] = 0x4000;               /* +8, +C: max tex dims */
+        /* +8, +C: max tex dims — RUNG 52: DEVICE-sourced from the
+         * capset when v2 arrived (max_texture_2d_size); the float's
+         * 0x4000 remains the fallback. */
+        uint32_t max2d = (g_caps_fetched && g_caps_v2_ok &&
+                          g_caps.max_texture_2d_size) ? g_caps.max_texture_2d_size
+                                                      : 0x4000;
+        w[2] = max2d; w[3] = max2d;
+        if (g_caps_fetched && g_caps_v2_ok && max2d != 0x4000) {
+            char b3[80];
+            snprintf(b3, sizeof(b3),
+                     "rung52: max tex dims 0x4000 -> 0x%x (device)", max2d);
+            ep_log(b3);
+        }
         w[4] = 1; w[5] = 1;                          /* +10, +14 */
         sb[0x18] = 0xA; sb[0x19] = 8; sb[0x1A] = 8;  /* +18..+1A */
         sb[0x1B] = 0; sb[0x1C] = 0xC; h[0x0F] = 0;   /* +1B, +1C, +1E */
@@ -1357,8 +1466,8 @@ long gldCreateContext(void** out, void* pf, void* shared,
         w[0x7C/4] = 0x80; w[0x80/4] = 0x80; w[0x84/4] = 0x20;
         w[0x88/4] = 0x41800000; w[0x8C/4] = 0x41800000;  /* 16.0f */
         h[0x90/2] = 8; h[0x92/2] = 0x10; h[0x94/2] = 0x10; h[0x96/2] = 8;
-        h[0x98/2] = 0x4000; h[0x9A/2] = 0x4000;
-        h[0x9C/2] = 0x4000; h[0x9E/2] = 0x4000;
+        h[0x98/2] = (unsigned short)max2d; h[0x9A/2] = (unsigned short)max2d;
+        h[0x9C/2] = (unsigned short)max2d; h[0x9E/2] = (unsigned short)max2d;
         h[0xA0/2] = 0x2000; sb[0xA2] = 5;
         h[0xA4/2] = 0x83f0; h[0xA6/2] = 0x83f1;
         h[0xA8/2] = 0x83f2; h[0xAA/2] = 0x83f3; h[0xAC/2] = 0x8837;

@@ -5855,6 +5855,41 @@ reboot.
 
 ---
 
+## RUNG 52 RESULT — DEVICE-SOURCED LIMITS + THE HOST'S
+NAME: prediction (i) landed:
+
+```
+rung52: capset id=2 ver=2 size=1408 copy=764 2d=16384 3d=2048
+        cube=16384 layers=2048 rt=8 samples=1 glsl=410
+        renderer=Apple M4 Pro
+LIMITS: tex=16384 vp=16384x16384 bits r8 g8 b8 a8 d0 s0
+```
+
+- **The VIRGL2 capset arrived through the winsys's own
+  0x6006/0x6007 pair — zero kext changes.** The
+  device's true values: max 2D 16384, 3D 2048, cube
+  16384, array layers 2048, render targets 8, samples
+  1, **GLSL level 410** — and the renderer string:
+  **"Apple M4 Pro"**, the host GPU's own name through
+  the whole stack.
+- **The census's tex=16384 is now DEVICE-sourced** (the
+  float's 0x4000 happened to equal the device's 2D max;
+  the derivation is proven by the log, the value
+  unchanged). The 3D/cube/layers values are banked for
+  any future query that maps them.
+- **BOUNDED:** copy=764 — the struct-out returned 764 of
+  the 1408-byte cache (fields beyond renderer[64] —
+  max_anisotropy — read as zero; the kext's capset-out
+  path truncates; harmless for this fill, noted for any
+  future field that matters).
+- **NAMED FOLLOW-UPS:** gldGetString could return
+  "Apple M4 Pro (virgl)" as GL_RENDERER — the honest
+  device identity instead of the stub string; the
+  glsl_level 410 and rt=8 feed the caps words when a
+  query needs them.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
