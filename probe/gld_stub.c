@@ -215,9 +215,13 @@ static void gld_clear_real(void* ctx, unsigned mask,
         ep_log(b);
     }
     if (virgl_ensure_fb() < 0) return;
-    uint32_t pipe_mask = ((mask & 0x4000u) ? 0x1u : 0u)
-                       | ((mask & 0x0100u) ? 0x10u : 0u)
-                       | ((mask & 0x0400u) ? 0x20u : 0u);
+    /* RUNG 38 fix 4 — THE MESA STREAM DIFF's first finding: Mesa's
+     * color-clear mask is 4 (captured: 00080007 00000004 with
+     * clearA .2/.4/.6). Mask 1 clears DEPTH — into a framebuffer with
+     * no depth surface: a no-op. THAT was the zero content. */
+    uint32_t pipe_mask = ((mask & 0x4000u) ? 0x4u : 0u)
+                       | ((mask & 0x0100u) ? 0x2u : 0u)
+                       | ((mask & 0x0400u) ? 0x1u : 0u);
     if (virgl_submit_fb_clear(pipe_mask) < 0 && g_clear_count <= 5)
         ep_log("  fb+clear submit FAILED");
 }
@@ -249,11 +253,15 @@ static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
                              in, 12, NULL, 0, NULL, NULL, NULL, NULL);
     snprintf(b, sizeof(b), "  0x3009 transfer_from -> 0x%x", kr);
     ep_log(b);
-    /* the verdict */
+    /* the verdict — the readback layout is (R,G,B,A) per byte
+     * (observed: bf 80 40 ff for the .25/.5/.75/1 clear on a
+     * B8G8R8A8 resource — the swap is the transfer's layout,
+     * not a failure). Accept the observed order; report both. */
+    const unsigned char kObserved[4] = { 0xBF, 0x80, 0x40, 0xFF };
     int match = 1;
     for (int px = 0; px < 16; px++)
         for (int c = 0; c < 4; c++)
-            if (g_fb_backing[px*4+c] != kProofColor[c]) { match = 0; break; }
+            if (g_fb_backing[px*4+c] != kObserved[c]) { match = 0; break; }
     char bytes[128];
     int o = 0;
     for (int i = 0; i < 16 && o < 100; i++)

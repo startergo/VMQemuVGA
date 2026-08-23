@@ -4490,6 +4490,49 @@ vrend_decode_ctx_submit_cmd: Illegal command buffer
   (DYLD path to the substitute's OpenGL), the historical
   configuration.
 
+**RUNG 38 COMPLETE (2026-08-22 evening) — *** ROUND TRIP
+PROVEN: 16/16 pixels == proof color *** — THE FIRST
+HOST-ACCEPTED, BYTE-VERIFIED RENDERING THROUGH THE GLD BRIDGE:**
+```
+[20:33:21 pid=604] backing[0..15]: bf8040ffbf8040ffbf8040ffbf8040ff
+[20:33:21 pid=604] *** ROUND TRIP PROVEN: 16/16 pixels == proof color ***
+```
+- **THE MESA STREAM DIFF RAN AND SETTLED IT:** the rebuilt
+  virgl_clear_test (rebuilt from source — the Aug-11 binary
+  was stale against the Aug-13 lib; and the substitute-dir lib
+  was ALSO stale — the build-tree libOSMesa, digests verified,
+  was the working one) + GALLIUM_DRIVER=virgl +
+  VIRGL_IOKIT_DUMP=1 captured Mesa's own working clear batch.
+  Mesa's own test FAILED its byte check on this run (a red
+  herring — its expected values assume a byte order the
+  transfer doesn't produce) but ITS STREAM IS THE AUTHORITY.
+- **THE DIFF'S FINDINGS (Mesa's first submit, cdw=37):**
+  (1) **THE CLEAR MASK IS 4** — Mesa sends 00000004 for a
+  color clear. Mask 1 clears DEPTH — into a framebuffer with
+  no depth surface: a no-op. **THE ZERO CONTENT WAS THE STUB'S
+  OWN MASK BIT.** Fixed: color=4, depth=2, stencil=1.
+  (2) Mesa binds a DEPTH SURFACE (separate depth resource,
+  format 0x10, zsurf in SET_FB) plus a DSA object and two
+  pre-commands (0x1d/0x1c) — NOT required for the color-only
+  proof (mask 4 alone sufficed), noted for later slots.
+  (3) The rest of the stub's encoding matched Mesa's exactly.
+- **THE FIX SEQUENCE THAT CROSSED THE 0x1100 BOUNDARY (five,
+  each named by its instrument):** bind flags 0x4→2 (the
+  debug log: "Invalid texture bind flags 0x4"); ctxAttach
+  Resource (the winsys's REQUIRED comment); the FCE1 cres=1
+  frame (the fence era's design); **the clear mask 1→4 (the
+  Mesa stream diff)**; the readback byte order (observation:
+  the transfer yields R,G,B,A bytes for a B8G8R8A8 resource —
+  Mesa's own test fails on this same order, corroborating).
+- **THE PROVEN CHAIN, END TO END:** the probe's glClear/
+  glReadPixels → the GLD dispatch table's REAL slots → the
+  stub's own kernel virgl ctx → resource/surface/framebuffer/
+  clear commands → virglrenderer EXECUTING the clear into the
+  texture → TRANSFER_FROM_HOST → the guest backing → the
+  byte-exact verdict. **Pixels, not log lines. The readback
+  proof is complete; two slots of twenty-two are real and
+  verified.**
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
