@@ -5242,6 +5242,70 @@ unblocked). One piece of the door landed:
 
 ---
 
+## RUNG 47 PRE-REGISTERED — THE CLAIM FLIP: the 0x100
+hardware bit (committed before implementation)
+
+**The justification for lifting the honesty hold (the
+pre-bridge design decision's own condition):** "the 0x100
+hardware bit stays unset until Mesa backs it." Backing now
+exists — the transport (Increment C, the fence era), the
+readback (byte-exact at window size), and the on-screen
+presentation (rung 45). The claim would no longer be a
+claim; it would be a description.
+
+**The values, from the worked example's own experiments
+(`~/VMsvga2-modern/GLD/VMsvga2GLDriver.c:122-176`, the
+#if-0 blocks — the author's recorded working overrides):**
+- pf object +0xc flags: **0x501** = 0x400 | **0x100** | 0x1
+  — the 0x100 bit is the hardware claim (rung 26's decode:
+  attr 73 → 0x100), 0x1 the scorer's positive requirement.
+- renderer record +0xc class: **0x17CD** — ours is 0x6CD
+  (software, per the float); the 0x1000 bit is the
+  hardware-class difference.
+
+**The change (stub only, two one-liners):**
+1. gldChoosePixelFormat: `case 73: flags |= 0x100` —
+   attr 73 (kCGLPFAAccelerated) claims hardware, exactly
+   when the app asks for it (the float's own conditional
+   shape; plain requests keep the software-honest object).
+2. gldGetRendererInfo: `r[3] = 0x17CD` — the record's
+   class field flips to hardware.
+
+**Boot-safety (structural):** the live swap changes the
+bundle on disk; WindowServer holds the OLD software-
+claiming stub in memory until reboot — the desktop cannot
+adopt the claim mid-session. The exclusivity risk
+materializes only on the NEXT BOOT; the probe-first order
+is free.
+
+**Predictions:**
+- (i) **THE FULL PATH:** the probe's accelerated request
+  {73,5} matches (npix=1 — first time ever); the probe
+  uses it; the engine classifies the context hardware;
+  gliUpdateDispatchState calls our +0x50 install entry
+  ("block1 filled"); CGLFlushDrawable tail-calls the SWAP
+  ("rung46: SWAP fired"); the kernel logs the relay; the
+  window blues AT THE FLUSH. Desktop stable.
+- (ii) **The pf matches but classification stays
+  software** (the [0x6570]/[0x6548]-class engine objects
+  still absent — the hardware path may need more than the
+  claim): install entry still uncalled; next wire named =
+  the objects those fields hold (likely filled via the
+  table's create-path or the sub-block).
+- (iii) **WindowServer adoption at the NEXT boot** (the
+  exclusivity tripwire): if the desktop boots on the
+  hardware-claiming renderer and any refusal crashes it —
+  recovery is slclean + the stub swap back (documented
+  path).
+- (iv) **npix still 0 for {73,5}** (the scorer exact-tests
+  flags, not requirement-matches): the scorer's test read
+  is the next step.
+
+**Exposure:** stub live-swap; probe rerun; no kext; no
+reboot this rung.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
