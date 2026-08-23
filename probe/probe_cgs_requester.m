@@ -207,6 +207,11 @@ int main(int argc, char *argv[])
                 glGetIntegerv(0x0D57, &sbits);        /* STENCIL_BITS */
                 printf("LIMITS: tex=%d vp=%dx%d bits r%d g%d b%d a%d d%d s%d\n",
                        tex, vp[0], vp[1], r, g, b, a, dbits, sbits);
+                /* RUNG 53 — the strings an app sees */
+                printf("STRINGS: vendor=%s renderer=%s version=%s\n",
+                       glGetString(0x1F00) ? (const char*)glGetString(0x1F00) : "(NULL)",
+                       glGetString(0x1F01) ? (const char*)glGetString(0x1F01) : "(NULL)",
+                       glGetString(0x1F02) ? (const char*)glGetString(0x1F02) : "(NULL)");
                 fflush(stdout);
             }
             glClearColor(0.0f, 1.0f, 0.0f, 1.0f);

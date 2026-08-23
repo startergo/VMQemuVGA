@@ -5931,6 +5931,54 @@ no reboot.
 
 ---
 
+## RUNG 53 RESULT — THE DEVICE'S NAME IN THE APP'S HAND:
+prediction (i) landed, plus the review's three follow-ups
+dispositioned:
+
+```
+probe:  STRINGS: vendor=VMQemuVGA Project
+        renderer=Apple M4 Pro (virgl)  version=0.0 stub
+stub:   CALL gldGetString(0x1f01) -> "Apple M4 Pro (virgl)"
+```
+
+- **GL_RENDERER = "Apple M4 Pro (virgl)"** — the capset's
+  name, built once (NUL-forced, trailing-space-trimmed),
+  the stub string as fallback. GL_VERSION honestly stays
+  "0.0 stub" (a version is a capability claim; most
+  entries are still noops). The most conspicuous refusal
+  an app could see is retired.
+- **samples=1 — honesty by construction (the review's
+  flag, recorded):** the MSAA hunt's root was
+  over-advertising (virglrenderer's "Skipping 16
+  samples" against an advertised maximum;
+  webgl.msaa-samples=0 closed it). With the sample claim
+  DERIVED from the capset (which says 1), the
+  over-advertising class cannot recur through this
+  path — the claim and the device are the same source.
+- **The Mesa-reader agreement check: ATTEMPTED with the
+  wrong instrument — the right one named.** The
+  substitute (at /Users/sl/subst) under
+  DYLD_FRAMEWORK_PATH answers a raw-CGL probe with
+  NULL strings and untouched limits (its Mesa path
+  serves NSOpenGLContext-era apps; a CGL probe bypasses
+  it — and those windows are blank by design: gl* went
+  to Mesa, our clear never fired, the swap presented a
+  vacuous 4x4). The winsys's stderr get_caps line needs
+  a MESA-NATIVE test under the substitute (the
+  historical virgl_clear_test configuration) — pending,
+  with its exact instrument named.
+- **The truncation note now lives in the kext's own
+  source** (at the 0x6007 capset-out site): the
+  764-of-1408 silent truncation, the plausible-zeros
+  class, the pointer to the index-vs-id precedent.
+  Comment-only; the next kext build carries it.
+- **A clean green re-run taken after the blank-window
+  reports** — the artifacts identical to every green
+  run (clear, proof, swap 320x262); the blank windows
+  were the substitute runs' expected shape.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

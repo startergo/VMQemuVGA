@@ -9672,6 +9672,17 @@ IOReturn VMVirtIOGPUUserClient::getCapset(uint32_t capset_id, uint32_t version,
     // Bytes written = response size - header size.
     // (sendDisplayCommand returns the device's actual response length in
     // its resp_size parameter, but we work with what fits in our buffer.)
+    //
+    // SILENT-TRUNCATION NOTE (observed 2026-08-23, rung 52): a caller
+    // requesting the full VIRGL2 blob (capset_max_size 1408) received
+    // 764 bytes — no error, plausible zeros beyond. The v2 tail past
+    // renderer[64] (max_anisotropy, ... ) reads as zero through this
+    // path. The size actually delivered does not track either the
+    // requested capacity or the 2048-byte RESPONSE_CAP; the exact
+    // clamp site is unidentified. Any future limit that lives in the
+    // v2 tail must first settle where 764 comes from — a size mismatch
+    // producing plausible zeros is the same class that hid the
+    // index-vs-id capset bug (see .claude/rules/virtio-protocol.md).
     uint32_t blob_size = sizeof(response_buf) - sizeof(virtio_gpu_ctrl_hdr);
     if (blob_size > blob_capacity) blob_size = blob_capacity;
     memcpy(out_blob, response_buf + sizeof(virtio_gpu_ctrl_hdr), blob_size);

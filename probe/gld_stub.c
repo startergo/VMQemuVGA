@@ -1725,7 +1725,31 @@ const char* gldGetString(void* ctx, unsigned name,
     const char* s = NULL;
     switch (name) {
     case 0x1F00: s = "VMQemuVGA Project";                 break; /* GL_VENDOR   */
-    case 0x1F01: s = "VirtIO GPU stub (software, no rendering)"; break; /* GL_RENDERER */
+    case 0x1F01:                                            /* GL_RENDERER */
+        /* RUNG 53 — the DEVICE'S NAME (a fact statement: the
+         * hardware that executes what we submit, named by the
+         * capset). Built once; NUL-forced; the stub string is
+         * the fallback when the capset is absent. GL_VERSION
+         * stays honest — a version is a capability claim and
+         * most entries are still noops. */
+        {
+            static char rend[80];
+            static int rend_built = 0;
+            if (!rend_built) {
+                rend_built = 1;
+                rend[0] = 0;
+                if (g_caps_fetched && g_caps_v2_ok && g_caps.renderer[0]) {
+                    char tmp[65];
+                    memcpy(tmp, g_caps.renderer, 64);
+                    tmp[64] = 0;
+                    size_t l = strlen(tmp);
+                    while (l && (tmp[l-1] == ' ' || tmp[l-1] == 0)) tmp[--l] = 0;
+                    snprintf(rend, sizeof(rend), "%s (virgl)", tmp);
+                }
+            }
+            s = rend[0] ? rend : "VirtIO GPU stub (software, no rendering)";
+        }
+        break;
     case 0x1F02: s = "0.0 stub";                           break; /* GL_VERSION  */
     default:     s = NULL;                                 break;
     }
