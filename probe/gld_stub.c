@@ -126,42 +126,137 @@ static int virgl_transport_init(void)
 }
 
 static long g_clear_count = 0;
+
+/* RUNG 38 — the readback resources: one 4x4 B8G8R8A8 render
+ * target per process, created+backed on first use. */
+static uint32_t g_fb_res = 0;
+static unsigned char* g_fb_backing = NULL;   /* 4*4*4 = 64 bytes */
+static const unsigned char kProofColor[4] = { 0x40, 0x80, 0xBF, 0xFF }; /* B,G,R,A = .25/.5/.75/1 */
+
+static int virgl_ensure_fb(void)
+{
+    if (g_fb_res) return 0;
+    if (virgl_transport_init() < 0) return -1;
+    uint64_t in[11] = {
+        g_virgl_ctx, 2 /*PIPE_TEXTURE_2D*/, 1 /*B8G8R8A8_UNORM*/,
+        4 /*PIPE_BIND_RENDER_TARGET*/, 4, 4, 1, 0, 0, 0, 0
+    };
+    uint64_t out[1] = { 0 }; uint32_t out_cnt = 1;
+    kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6002,
+                                           in, 11, NULL, 0,
+                                           out, &out_cnt, NULL, NULL);
+    if (kr != KERN_SUCCESS) {
+        char b[64]; snprintf(b, sizeof(b), "rung38: 0x6002 createRes FAIL 0x%x", kr);
+        ep_log(b); return -1;
+    }
+    g_fb_res = (uint32_t)out[0];
+    g_fb_backing = (unsigned char*)calloc(1, 64);
+    uint64_t addr = (uint64_t)(uintptr_t)g_fb_backing;
+    uint64_t ab[5] = { g_fb_res,
+                       (uint32_t)(addr & 0xFFFFFFFFull), (uint32_t)(addr >> 32),
+                       64, 0 };
+    kr = IOConnectCallMethod(g_virgl_conn, 0x6003, ab, 5, NULL, 0,
+                             NULL, NULL, NULL, NULL);
+    if (kr != KERN_SUCCESS) {
+        char b[64]; snprintf(b, sizeof(b), "rung38: 0x6003 attach FAIL 0x%x", kr);
+        ep_log(b); return -1;
+    }
+    /* 0x6009 ctxAttachResource — REQUIRED before SET_FRAMEBUFFER_STATE
+     * can reference a surface built on this resource (the winsys's own
+     * comment, LEDGER commit 6d9a278; re-derived 2026-08-22 when the
+     * proof readback returned zeros with every transport call clean). */
+    uint64_t ca[2] = { g_virgl_ctx, g_fb_res };
+    kr = IOConnectCallMethod(g_virgl_conn, 0x6009, ca, 2, NULL, 0,
+                             NULL, NULL, NULL, NULL);
+    char b[80];
+    snprintf(b, sizeof(b),
+             "rung38: fb res %u created+backed+ctxAttached (0x6009 -> 0x%x)",
+             g_fb_res, kr);
+    ep_log(b);
+    return 0;
+}
+
+/* submit SET_FRAMEBUFFER_STATE + CLEAR (the distinctive proof color) */
+static int virgl_submit_fb_clear(unsigned pipe_mask)
+{
+    uint32_t blob[19] = {
+        /* CREATE_OBJECT surface (handle 1) */
+        0x00050801u, 1u, g_fb_res, 1u, 0u, 0u,
+        /* SET_FRAMEBUFFER_STATE: nr=1, zsurf=0, cbuf=surface 1 */
+        0x00030005u, 1u, 0u, 1u,
+        /* CLEAR */
+        0x00080007u, pipe_mask,
+        0x3E800000u, 0x3F000000u, 0x3F400000u, 0x3F800000u, /* .25/.5/.75/1 */
+        0u, 0x3FF00000u, 0u
+    };
+    uint32_t frame[21] = { 0x31454346u, 0 };
+    for (int i = 0; i < 19; i++) frame[2 + i] = blob[i];
+    uint64_t scalar = g_virgl_ctx;
+    kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6008,
+                                           &scalar, 1, frame, sizeof(frame),
+                                           NULL, NULL, NULL, NULL);
+    return (kr == KERN_SUCCESS) ? 0 : -1;
+}
+
 static void gld_clear_real(void* ctx, unsigned mask,
                            void* a2, void* a3, void* a4, void* a5)
 {
     (void)ctx; (void)a2; (void)a3; (void)a4; (void)a5;
     if (++g_clear_count <= 5 || (g_clear_count % 500) == 0) {
         char b[80];
-        snprintf(b, sizeof(b), "CLEAR-REAL #%ld mask=0x%x (rung 37)",
+        snprintf(b, sizeof(b), "CLEAR-REAL #%ld mask=0x%x (rung 38)",
                  g_clear_count, mask);
         ep_log(b);
     }
-    if (virgl_transport_init() < 0)
-        return;                      /* transport dead: silent vacuous clear */
-    /* GL mask bits -> PIPE bits: COLOR 0x4000->1, DEPTH 0x100->0x10,
-     * STENCIL 0x400->0x20 */
+    if (virgl_ensure_fb() < 0) return;
     uint32_t pipe_mask = ((mask & 0x4000u) ? 0x1u : 0u)
                        | ((mask & 0x0100u) ? 0x10u : 0u)
                        | ((mask & 0x0400u) ? 0x20u : 0u);
-    uint32_t blob[9] = {
-        0x00080007u,                  /* CLEAR | len 8 */
-        pipe_mask,
-        0, 0, 0, 0,                   /* color RGBA (run g 1: black) */
-        0, 0x3FF00000u,               /* depth = 1.0 (double bits) */
-        0                              /* stencil */
-    };
-    uint32_t frame[11] = { 0x31454346u, 0 };   /* 'FCE1', cres=0 */
-    for (int i = 0; i < 9; i++) frame[2 + i] = blob[i];
-    uint64_t scalar = g_virgl_ctx;
-    kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6008,
-                                           &scalar, 1,
-                                           frame, sizeof(frame),
-                                           NULL, NULL, NULL, NULL);
-    if (g_clear_count <= 5) {
-        char b[80];
-        snprintf(b, sizeof(b), "  0x6008 submit -> 0x%x (ctx %u)", kr, g_virgl_ctx);
-        ep_log(b);
+    if (virgl_submit_fb_clear(pipe_mask) < 0 && g_clear_count <= 5)
+        ep_log("  fb+clear submit FAILED");
+}
+
+/* THE READBACK SLOT (+0x10) — the proof instrument: wait the
+ * resource, TRANSFER_FROM_HOST, byte-compare against the proof
+ * color. THE ROUND TRIP: device pixels, not log lines. */
+static long g_readpix_count = 0;
+static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
+                                void* a4, void* a5)
+{
+    (void)ctx; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    if (++g_readpix_count > 3) return;   /* the proof runs thrice, no flood */
+    ep_log("READPIXELS-REAL (rung 38) — the readback proof");
+    if (virgl_ensure_fb() < 0) return;
+    if (virgl_submit_fb_clear(0x1) < 0) {
+        ep_log("  proof clear submit FAILED"); return;
     }
+    /* fence-era wait: 0x600B (res, flags) */
+    uint64_t w_in[2] = { g_fb_res, 0 };
+    kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x600B,
+                                           w_in, 2, NULL, 0,
+                                           NULL, NULL, NULL, NULL);
+    char b[64]; snprintf(b, sizeof(b), "  0x600B wait -> 0x%x", kr);
+    ep_log(b);
+    /* transfer_from: res, level, x,y,z, w,h,d, ctx, stride, lstride, off */
+    uint64_t in[12] = { g_fb_res, 0, 0,0,0, 4,4,1, g_virgl_ctx, 16, 64, 0 };
+    kr = IOConnectCallMethod(g_virgl_conn, 0x3009,
+                             in, 12, NULL, 0, NULL, NULL, NULL, NULL);
+    snprintf(b, sizeof(b), "  0x3009 transfer_from -> 0x%x", kr);
+    ep_log(b);
+    /* the verdict */
+    int match = 1;
+    for (int px = 0; px < 16; px++)
+        for (int c = 0; c < 4; c++)
+            if (g_fb_backing[px*4+c] != kProofColor[c]) { match = 0; break; }
+    char bytes[128];
+    int o = 0;
+    for (int i = 0; i < 16 && o < 100; i++)
+        o += snprintf(bytes + o, sizeof(bytes) - o, "%02x", g_fb_backing[i]);
+    snprintf(b, sizeof(b), "  backing[0..15]: %s", bytes);
+    ep_log(b);
+    ep_log(match
+           ? "  *** ROUND TRIP PROVEN: 16/16 pixels == proof color ***"
+           : "  readback MISMATCH — clear not executed host-side (or format/layout gap)");
 }
 
 /* RUNG 21 (pre-registered, LEDGER 29422cc) — measure the
@@ -737,7 +832,8 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
     };
     for (unsigned i = 0; i < sizeof(kSlots)/sizeof(kSlots[0]); i++)
         *(void**)((char*)dispatch + kSlots[i]) = (void*)&gld_noop;
-    *(void**)((char*)dispatch + 0x8) = (void*)&gld_clear_real;  /* RUNG 37 */
+    *(void**)((char*)dispatch + 0x8) = (void*)&gld_clear_real;   /* RUNG 37/38 */
+    *(void**)((char*)dispatch + 0x10) = (void*)&gld_readpixels_real; /* RUNG 38 */
     if (limits) {
         for (int i = 0; i < 6; i++)          /* +0..+0x14, the float's zeros */
             limits[i] = 0;

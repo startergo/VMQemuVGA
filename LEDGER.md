@@ -4403,6 +4403,49 @@ glClear and prints the first pixels.
 **Exposure:** live-swap via the guard; probe-only; no boot;
 kernel unchanged.
 
+**RUNG 38 RESULT (2026-08-22) — PREDICTION (ii): the chain is
+CLEAN at every transport step and the bytes are ZERO — the clear
+does not execute host-side. Two gaps closed (ctx-attach among
+them), the settling instruments identified, the negative control
+REGISTERED and pending on a degraded guest link:**
+```
+rung38: fb res 257 created+backed+ctxAttached (0x6009 -> 0x0)
+  0x600B wait -> 0x0; 0x3009 transfer_from -> 0x0
+  backing[0..15]: 00000000000000000000000000000000
+  readback MISMATCH — clear not executed host-side
+```
+- **The slot and the chain work:** the ReadPixels slot fires on
+  the probe's glReadPixels; the self-contained proof runs
+  resource-create (0x6002), backing (0x6003), ctx-attach
+  (0x6009), the SET_FRAMEBUFFER_STATE+CLEAR submit (0x6008),
+  the fence wait (0x600B), and TRANSFER_FROM_HOST (0x3009) —
+  every step returns clean. No crash; the swap still 0.
+- **Gap 1 closed (the winsys's own comment, LEDGER 6d9a278):**
+  ctxAttachResource (0x6009) is REQUIRED before
+  SET_FRAMEBUFFER_STATE can reference a surface — added;
+  still zeros. (The project learned this in the Mesa era and
+  re-derived it here — the second time this gap has cost a
+  rung; the winsys comment is now honored in the stub with its
+  provenance cited.)
+- **The remaining discriminators, in order:**
+  (a) **THE INCREMENT-C CONTROL (registered, pending):**
+  virgl_clear_test — byte-exact clears through this same
+  kernel+host stack — rerun on the live system. If it PASSES,
+  the host is fine and MY 19-dword encoding is wrong (isolated
+  to the batch); if it FAILS, the host state changed
+  (regression class). ATTEMPTED this session: the 4.8MB
+  libOSMesa transfer stalled on a degraded guest link (both
+  ssh pipes hung; killed). Run it the moment the link recovers.
+  (b) THE UTM DEBUG LOG (virglrenderer's decode errors are
+  invisible from the guest by construction): Debug Log is NOT
+  enabled on this VM (verified in the QEMU command line — no
+  -D/debug path); enabling it requires a VM restart — the
+  WATCHED-BOOT class; the standing rules govern.
+- **Honest state:** one slot real and reaching the device
+  (rung 37, proven); the readback slot's plumbing real (this
+  rung); HOST ACCEPTANCE still unproven — the 0x1100 boundary
+  stands, now with two named instruments to cross it.
+
 ---
 
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered

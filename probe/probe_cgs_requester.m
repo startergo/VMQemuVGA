@@ -190,6 +190,14 @@ int main(int argc, char *argv[])
             glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             printf("glClear done, glGetError = 0x%x\n", glGetError());
+            /* rung 38: the readback proof — fires the ReadPixels slot */
+            {
+                unsigned char px[64];
+                glReadPixels(0, 0, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, px);
+                printf("glReadPixels done, glGetError = 0x%x, "
+                       "first pixel = %02x %02x %02x %02x\n",
+                       glGetError(), px[0], px[1], px[2], px[3]);
+            }
             CGLError e_swap = CGLFlushDrawable(ctx);
             printf("CGLFlushDrawable -> %d  <== the swap\n", e_swap);
             fflush(stdout);
