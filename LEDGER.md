@@ -5800,6 +5800,61 @@ rung46: SWAP presented                      ← GREEN (user-confirmed: "green ag
 
 ---
 
+## RUNG 52 PRE-REGISTERED — THE CAPSET-DERIVED LIMITS
+FILL (committed before implementation)
+
+**The zero-kext-change discovery:** the winsys ALREADY
+has the capset path — `0x6006 GET_CAPSET_INFO(idx) →
+{id, ver, size}` and `0x6007 GET_CAPSET(id, ver) →
+blob` (`virgl_iokit_winsys.c:582-641`, the drm-winsys
+pattern). The stub calls both on g_virgl_conn; no
+selector additions, no boot.
+
+**The layout (virgl_hw.h, verified against the boot
+logs):** v1 = {max_version, sampler[16], render[16],
+depthstencil[16], vertexbuffer[16], bset, glsl_level,
+array_layers, streamout, dual_source, render_targets,
+samples, prim_mask, tbo, uniform_blocks, viewports,
+gather} = 77 words = **308 bytes = the boot-logged
+VIRGL size exactly**. v2 extends v1 with point/line
+floats, geom/vertex maxes, offset alignments,
+capability_bits, compute maxes, **max_texture_2d/3d/
+cube_size**, atomic counters, host_feature_check_
+version, readback/scanout masks, capability_bits_v2,
+max_video_memory, and **renderer[64]** (the host GPU's
+own name) = **1408 bytes = the boot-logged VIRGL2
+size**. Structs copied verbatim into the stub; the
+compiler lays them out identically (same x86_64 rules
+as the host's producer).
+
+**The change:** at gldCreateContext (before the config
+fill), virgl_transport_init + a capset fetch (id=2
+first, v1 fallback — the winsys's own order); the
+derived values logged (2d/3d/cube maxes, layers,
+render targets, samples, glsl level, the renderer
+string); the config block's +0x8/+0xC and the +0x98
+0x4000-words filled from caps.v2.max_texture_2d_size
+(old→new logged when different).
+
+**Predictions:**
+- (i) **DEVICE-SOURCED LIMITS:** the capset arrives
+  (0x6007, ≥308 bytes); the log prints the host's real
+  values and the renderer string; the census's tex
+  equals the DEVICE's max_texture_2d_size — changing
+  if the device differs from 16384, staying (now
+  device-sourced, log-proven) if it matches.
+- (ii) **0x6006/0x6007 refuse** on this connection or
+  arg shape → the winsys's exact call re-checked
+  (copied verbatim; a divergence named).
+- (iii) **Layout mismatch** (blob < v2's 1408 — a v1
+  fallback shape) → logged; the v1 fields used; the v2
+  remainders keep the float's constants.
+
+**Exposure:** stub live-swap; probe rerun; no kext; no
+reboot.
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look
