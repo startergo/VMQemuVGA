@@ -65,10 +65,12 @@ presentation is kernel- and stub-log verified end to end. **The app's own
 clear color is on screen**: `glClearColor` flows through the engine's state
 mirror into the driver's clear, the host GPU renders it, and the swap
 presents it — a probe window visibly fills with the application's chosen
-color at its own flush (visually confirmed). Remaining honest refusals:
-the other ~20 GL entries are noops and the renderer limits/config block is
-unfilled. Each refusal becomes a transport call, slot by slot. The contract
-was recovered by disassembling this guest's own `GLEngine` and
+color at its own flush (visually confirmed). **The renderer's limits are
+real**: the engine's config block is filled, and GL limit queries answer
+sanely (max texture 16384, viewport 16384², RGBA8888) where they
+previously returned all zeros. Remaining honest refusal: the other ~20 GL
+entries are noops. Each becomes a transport call, slot by slot. The
+contract was recovered by disassembling this guest's own `GLEngine` and
 `GLRendererFloat`; it is **10.6-specific and not portable** to later
 releases.
 
