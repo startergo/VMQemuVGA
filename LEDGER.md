@@ -6662,6 +6662,80 @@ recording error (corrected)
   patch, which is off the table (stock UTM). The
   samples question is CLOSED unless guest-side Mesa
   work makes real MSAA tenable.
+- **FRAMING RULE for everything downstream of the
+  capset (the mechanism inverts the usual reading):**
+  v2 max_samples=1 is NOT the host's limit — 4×
+  MSAA works host-side; the fork DELIBERATELY
+  under-reports to steer guest Mesa onto
+  fake_sw_msaa (its own comment says so). The honest
+  statement is "the v2 capset reports 1 **by
+  design**"; anything derived from it inherits that
+  deliberate conservatism, not a hardware boundary.
+  A future guest-side fix has a named target: Mesa's
+  format query mis-detection is the clamp's entire
+  reason — fix that and the clamp's premise dies.
+
+---
+
+## RUNG 62 PRE-REGISTERED — THE NS DEPTH GATE READ:
+what the NS translation asserts that CGL-direct
+never checks (committed before the disassembly)
+
+**The question (rung 60's open end):** through the
+NS harness every no-depth set passes and EVERY depth
+size (1/16/24/32) fails, while CGL-direct passes the
+same sizes; mode-echo and flags bisects are dead.
+The scorer's depth check reads a field not yet
+identified.
+
+**The hypothesis under test:** AppKit imports zero
+public `_CGL*` symbols (observed) — so
+`-[NSOpenGLPixelFormat initWithAttributes:]` cannot
+be calling CGLChoosePixelFormat through the normal
+link path; it composes its own request (forwarding
+sizes RAW, plus the valueless trailing attr 4) and
+resolves GL privately. If its translation asserts
+something the CGL path never checks — a MINIMUM, or
+a match against an enumerated list rather than a
+threshold — that rule produces exactly the observed
+split.
+
+**The two artifacts to read (the reference pair):**
+1. AppKit's `initWithAttributes:` itself (guest
+   binary; otool the method) — what it calls, what
+   it adds, where its verdict comes from.
+2. The float's pf-build TAIL STORE SEQUENCE
+   (GLRendererFloat, grf.t past the 0x17ca6 flags
+   store) — every field the ACCEPTED renderer writes
+   into the pf object. The float is the one renderer
+   AppKit accepts today; its object is the reference
+   our stub's object must match. Our stub writes
+   flags(0x4C9)/+0x10 mode/+0x1c depth=24/+0x20
+   stencil=8 — the diff set is the candidate list.
+
+**Predictions:**
+- (i) **A MISSING FIELD, not a wrong value:** the
+  float's tail writes one or more pf fields our stub
+  never sets (cmode/color-mode table pointer, depth
+  advertisement field at an offset ≠ +0x1c, or a
+  window-capable bit the scorer ANDs). The diff set
+  names it; one write flips the NS depth sets to OK.
+- (ii) **A CALL-SHAPE DIFFERENCE:** initWithAttributes
+  resolves a private GLD entry (dlsym/dyld soft
+  link) DIFFERENT from gldNewPixelFormat — a chooser
+  that consults the renderer's cmode table; the fix
+  is publishing that table, not a pf field.
+- (iii) **THE BARE TRAILING 4 (kCGLPFAWindow-class
+  boolean) is the discriminator:** no-depth lists
+  carry it too and pass, so it cannot be the depth
+  gate alone — but if the disassembly shows the NS
+  translation pairing attr 4 with a depth-bearing
+  secondary request (two pf rounds: one windowless
+  probe, one windowed), the failure is in the second
+  round's composition.
+
+**Exposure:** reads only — guest otool of AppKit and
+GLRendererFloat; no stub change, no boot.
 
 **Exposure:** host-config change + VM reboot; probe
 re-ship after the /tmp wipe; the stub/kext unchanged.
