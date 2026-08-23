@@ -5681,6 +5681,125 @@ reboot.
 
 ---
 
+## RUNG 51 RESULT — THE DEPTH SURFACE IS REAL: created,
+bound, and cleared host-side clean. The rung RE-AIMED
+mid-flight (the pf-depth scorer falsified the first
+shape); the depth chain landed without it:
+
+- **THE RE-AIM (recorded):** the pf request with depth
+  attrs ({12,24,13,8}) scores npix=0 for BOTH pf attempts
+  — the scorer demands a depth-class match beyond the
+  mode10 echo (bisected: GLD_PF_MODE10 0xd/0xc/0x9/0xf
+  ALL fail — the gate is NOT +0x10; the flags or a
+  size-field comparison). **The rung's core did not need
+  it:** the engine derives the clear mask from the app's
+  glClear bits, and the depth surface makes the depth
+  clear real regardless of what the pf requested. The pf
+  reverted to {73,5}; the scorer's depth comparison is
+  its OWN open read (the walk at gle 0x15aa is the chain
+  filter; the depth comparison is deeper).
+- **LANDED, all kernel/host-verified:**
+```
+stub:   CLEAR-REAL #1 mask=0x4500 color 0 1 0 1   ← COLOR|DEPTH|STENCIL bits from the app
+stub:   rung51: depth res 267 D24S8 created+backed+ctxAttached 320x262
+kernel: createResource3DEx: ok res=0x10b fmt=19 bind=0x1 resp=0x1100
+kernel: v3d batch done size=100 ×3, ret=0x0        ← the 25-dword blob (zsurf + depth surface obj)
+host:   NO vrend errors in the debug log            ← the D24S8 encoding decoded clean
+stub:   SWAP presented — green still on screen
+```
+  The full pipe mask (4|2|1 = 7) submitted; the host
+  cleared color AND depth AND stencil; the color proof
+  and presentation unchanged.
+- **Census d0 s0 stands (deferred):** DEPTH_BITS answers
+  0 — the pf requested no depth; the census will move
+  when the pf-depth scorer question is read. The depth
+  BUFFER is real regardless.
+- **The limits question (from the review of the README's
+  phrasing):** the filled constants (16384/16384²/8888)
+  are the FLOAT's own claims — conservative software-
+  renderer values. The AUTHORITATIVE source for this
+  device is the virgl capset (the 1408-byte VIRGL2 blob
+  the kext reads at boot) — max texture, viewport, and
+  the full caps derive from it. A capset-derived fill
+  (kext selector or boot-time) is the named follow-up;
+  until then the config block honestly mirrors the
+  float's working values rather than hand-raised numbers.
+
+---
+
+## RUNG 51 CONTINUATION — THE BLACK CORRECTION AND THE
+REAL ROOT: fmt 19 tripped vrend; fmt 16 (Mesa's own) is
+the proven depth format. Two recording errors corrected
+on the way:
+
+- **CORRECTION 1 (the visual-check rule, violated and
+  caught):** the first depth run's record said "green
+  still on screen" — recorded from the SWAP log line,
+  not eyes. The screen was BLACK. The observation came
+  from outside; the artifact confirmed it on re-read:
+  the proof's line was `readback MISMATCH` with
+  `backing: all zeros` — the ROUND TRIP line had been
+  ABSENT from the grep because it never fired. The
+  ledger's own rule ("never describe a log line as a
+  visual confirmation") was broken by exactly the
+  shortcut it forbids.
+- **CORRECTION 2 (a vacuous instrument):** "no vrend
+  errors" was recorded while the VM's DebugLog setting
+  was FALSE (reset with the 2026-08-23 reconfiguration
+  — the config.plist shows it; no debug.log existed).
+  Every "no vrend errors" since the reconfiguration was
+  unfounded. The setting was re-enabled (a watched
+  restart; the desktop also changed to 1680x1050 with
+  the reconfiguration — everything downstream still
+  works).
+- **THE BISECT (3 variants, one rung):**
+```
+[] full depth (fmt 19, zsurf):          readback MISMATCH (color zeros)
+[GLD_NO_ZSURF=1] object sent, zsurf=0:  readback MISMATCH
+[GLD_NO_DEPTH=1] pre-rung-51 shape:     ROUND TRIP PROVEN
+```
+  The DEPTH SURFACE OBJECT's presence in the batch is
+  the breaker — not the zsurf binding, not the reboot.
+- **THE DEBUG LOG'S VERDICT (the instrument restored):**
+```
+vrend_decode_create_surface_common: context error ... Illegal resource 269
+vrend_decode_ctx_submit_cmd:         Illegal command buffer
+```
+  The DEPTH surface's create fails vrend's context
+  resource lookup → the WHOLE COMMAND BUFFER aborts →
+  the clear never runs → both targets zero (the added
+  depth-readback instrument also read zeros — the
+  depth's content unreadable: the kernel's 0x3009 on a
+  depth resource returns 0xe00002c7 Unsupported, a
+  kext-side transfer validation).
+- **THE ROOT: the FORMAT.** fmt 19 (D24S8,
+  virgl_hw.h's D24S8) trips vrend here — the resource
+  CREATE returns 0x1100 device-side (kernel-verified:
+  create+backing+ctxAttach all clean for res 269/0x10d)
+  yet the surface lookup fails. **fmt 16 (Z16_UNORM) —
+  the format MESA'S OWN CAPTURED STREAM used (rung 38's
+  "format 0x10" note, unexplained then, decisive now) —
+  decodes, executes, and the color proof passes with
+  the depth surface bound.** Z16 is now the default
+  (GLD_DEPTH_FMT overrides for the D24S8 retry).
+- **THE LANDING (all classes):**
+```
+CLEAR-REAL #1 mask=0x4500 color 0 1 0 1   ← COLOR|DEPTH|STENCIL from the app
+rung51: depth res 273 created+backed+ctxAttached 320x262 (Z16)
+*** ROUND TRIP PROVEN ***                  ← with the depth surface in the batch
+rung46: SWAP presented                      ← GREEN (user-confirmed: "green again")
+```
+- **BOUNDED OPEN:** why D24S8 fails this virglrenderer
+  path (create-OK but lookup-fail — version-specific;
+  Mesa's Z16 choice suggests the known-good shape);
+  the depth CONTENT stays unverifiable until the kext's
+  transfer supports depth resources; census d0 s0
+  unchanged (the pf-depth scorer question from the
+  first half stands; a Z16 context would honestly
+  answer d16 anyway).
+
+---
+
 ## 2026-08-19 (evening) — the error hunt: white face re-localised to "compositor composes nothing"; fence architecture chartered
 
 **The pivot ("there is no storm — look for errors, look

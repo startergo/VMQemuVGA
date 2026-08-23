@@ -357,6 +357,7 @@ static void virgl_query_window_bounds(void)
 /* RUNG 38 — the readback resources: one 4x4 B8G8R8A8 render
  * target per process, created+backed on first use. */
 static uint32_t g_fb_res = 0;
+static uint32_t g_depth_res = 0;             /* rung 51: D24S8 target */
 static unsigned char* g_fb_backing = NULL;   /* 4*4*4 = 64 bytes */
 static const unsigned char kProofColor[4] = { 0x40, 0x80, 0xBF, 0xFF }; /* B,G,R,A = .25/.5/.75/1 */
 
@@ -425,6 +426,56 @@ static int virgl_ensure_fb(void)
              "rung38/39: fb res %u created+backed+ctxAttached %dx%d (0x6009 -> 0x%x)",
              g_fb_res, g_fb_w, g_fb_h, kr);
     ep_log(b);
+    /* RUNG 51 — THE DEPTH SURFACE: D24S8 =
+     * VIRGL_FORMAT_Z24_UNORM_S8_UINT (19), bind =
+     * VIRGL_BIND_DEPTH_STENCIL (1<<0 = 1 — bit 0, the bind
+     * whose absence the color rung's 0x4 mistake taught).
+     * Created+backed+attached alongside the color target;
+     * the SET_FB carries it as zsurf. */
+    {
+        /* The format: 16 (Z16_UNORM) — MESA'S OWN CHOICE in the
+         * rung-38 captured stream, and the PROVEN one here: fmt 19
+         * (D24S8) tripped vrend's "Illegal resource" at the depth
+         * surface create (the resource create returned 0x1100 but
+         * the surface lookup failed — the whole batch then aborted,
+         * zeroing color too). Z16 decodes, executes, and the color
+         * proof passes with the depth surface bound. GLD_DEPTH_FMT
+         * overrides for the D24S8 retry. */
+        unsigned dfmt = 16;
+        const char* e = getenv("GLD_DEPTH_FMT");
+        if (e) dfmt = (unsigned)strtoul(e, 0, 0);
+        uint64_t dz[11] = { g_virgl_ctx, 2 /*2D*/, dfmt,
+                            1 /*BIND_DEPTH_STENCIL*/,
+                            (uint64_t)g_fb_w, (uint64_t)g_fb_h,
+                            1, 0, 0, 0, 0 };
+        uint64_t dout[1] = { 0 }; uint32_t dcnt = 1;
+        kr = IOConnectCallMethod(g_virgl_conn, 0x6002,
+                                 dz, 11, NULL, 0,
+                                 dout, &dcnt, NULL, NULL);
+        if (kr != KERN_SUCCESS) {
+            ep_log("rung51: depth res create FAIL"); return -1;
+        }
+        g_depth_res = (uint32_t)dout[0];
+        size_t dsz = (size_t)g_fb_w * g_fb_h * 4;   /* D24S8 = 4 bytes */
+        unsigned char* dbuf = (unsigned char*)calloc(1, dsz);
+        uint64_t daddr = (uint64_t)(uintptr_t)dbuf;
+        uint64_t dab[5] = { g_depth_res,
+                            (uint32_t)(daddr & 0xFFFFFFFFull),
+                            (uint32_t)(daddr >> 32),
+                            (uint32_t)(dsz & 0xFFFFFFFFull),
+                            (uint32_t)(dsz >> 32) };
+        kr = IOConnectCallMethod(g_virgl_conn, 0x6003, dab, 5, NULL, 0,
+                                 NULL, NULL, NULL, NULL);
+        uint64_t dca[2] = { g_virgl_ctx, g_depth_res };
+        kr = IOConnectCallMethod(g_virgl_conn, 0x6009, dca, 2, NULL, 0,
+                                 NULL, NULL, NULL, NULL);
+        char b2[112];
+        snprintf(b2, sizeof(b2),
+                 "rung51: depth res %u D24S8 created+backed+ctxAttached "
+                 "%ux%u (0x6009 -> 0x%x)",
+                 g_depth_res, g_fb_w, g_fb_h, kr);
+        ep_log(b2);
+    }
     return 0;
 }
 
@@ -449,17 +500,46 @@ static void virgl_read_app_clear_color(void* ctx)
 static int virgl_submit_fb_clear(unsigned pipe_mask)
 {
     unsigned sh = ++g_surf_handle;
+    unsigned zsh = ++g_surf_handle;   /* rung 51: the depth surface */
     /* the app's color (rung 49) — raw float bits into the blob */
     uint32_t cr, cg, cb, ca;
     memcpy(&cr, &g_clear_rgba[0], 4);
     memcpy(&cg, &g_clear_rgba[1], 4);
     memcpy(&cb, &g_clear_rgba[2], 4);
     memcpy(&ca, &g_clear_rgba[3], 4);
-    uint32_t blob[19] = {
-        /* CREATE_OBJECT surface (fresh handle) */
+    /* RUNG 51: the batch grows the depth-surface object (6 dwords)
+     * and the SET_FB carries zsurf. 25 dwords total.
+     * GLD_NO_ZSURF=1: the black-screen bisect — everything created,
+     * the depth object still sent, but SET_FB zsurf=0 (splits
+     * "the binding breaks the color clear" from "the object does"). */
+    int no_zsurf = getenv("GLD_NO_ZSURF") != NULL;
+    /* GLD_NO_DEPTH=1: the FULL neuter — the pre-rung-51 batch shape
+     * (19 dwords, no depth object, zsurf=0). Splits "the depth
+     * addition breaks the color clear" from "the reboot's 1680x1050
+     * desktop changed something else". */
+    if (getenv("GLD_NO_DEPTH")) {
+        uint32_t old[19] = {
+            0x00050801u, sh, g_fb_res, 1u, 0u, 0u,
+            0x00030005u, 1u, 0u, sh,
+            0x00080007u, pipe_mask,
+            cr, cg, cb, ca,
+            0u, 0x3FF00000u, 0u
+        };
+        uint32_t oframe[3 + 19] = { 0x31454346u, 1, g_fb_res };
+        for (int i = 0; i < 19; i++) oframe[3 + i] = old[i];
+        uint64_t scalar0 = g_virgl_ctx;
+        kern_return_t kr0 = IOConnectCallMethod(
+            g_virgl_conn, 0x6008, &scalar0, 1, oframe, sizeof(oframe),
+            NULL, NULL, NULL, NULL);
+        return (kr0 == KERN_SUCCESS) ? 0 : -1;
+    }
+    uint32_t blob[25] = {
+        /* CREATE_OBJECT color surface (fresh handle) */
         0x00050801u, sh, g_fb_res, 1u, 0u, 0u,
-        /* SET_FRAMEBUFFER_STATE: nr=1, zsurf=0, cbuf=surface sh */
-        0x00030005u, 1u, 0u, sh,
+        /* CREATE_OBJECT depth surface (fresh handle, fmt 19) */
+        0x00050801u, zsh, g_depth_res, 19u, 0u, 0u,
+        /* SET_FRAMEBUFFER_STATE: nr=1, zsurf (0 under GLD_NO_ZSURF), cbuf */
+        0x00030005u, 1u, no_zsurf ? 0u : zsh, sh,
         /* CLEAR — the APP's color (rung 49) */
         0x00080007u, pipe_mask,
         cr, cg, cb, ca,
@@ -469,8 +549,8 @@ static int virgl_submit_fb_clear(unsigned pipe_mask)
      * (cres=1) — the fence era's design: the kext tracks last_seq
      * per listed resource, making the 0x600B wait real. cres=0 left
      * the wait vacuous (nothing tracked), racing the async batch. */
-    uint32_t frame[3 + 19] = { 0x31454346u, 1, g_fb_res };
-    for (int i = 0; i < 19; i++) frame[3 + i] = blob[i];
+    uint32_t frame[3 + 25] = { 0x31454346u, 1, g_fb_res };
+    for (int i = 0; i < 25; i++) frame[3 + i] = blob[i];
     uint64_t scalar = g_virgl_ctx;
     kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x6008,
                                            &scalar, 1, frame, sizeof(frame),
@@ -571,6 +651,36 @@ static void gld_readpixels_real(void* ctx, void* a1, void* a2, void* a3,
     ep_log(match
            ? "  *** ROUND TRIP PROVEN AT WINDOW SIZE: corners+center == proof color ***"
            : "  readback MISMATCH at window size");
+    /* RUNG 51 continuation — THE DEPTH READBACK: where did the clear
+     * land? Green bytes here = roles swapped (color into the depth
+     * target); 0xFFFFFF00-ish = depth cleared to 1.0 with color
+     * skipped; zeros = nothing cleared. */
+    if (g_depth_res) {
+        unsigned char* dbuf = calloc(1, (size_t)g_fb_w * g_fb_h * 4);
+        uint64_t daddr = (uint64_t)(uintptr_t)dbuf;
+        uint64_t dab[5] = { g_depth_res,
+                            (uint32_t)(daddr & 0xFFFFFFFFull),
+                            (uint32_t)(daddr >> 32),
+                            (uint32_t)((uint64_t)g_fb_w * g_fb_h * 4 & 0xFFFFFFFFull),
+                            (uint32_t)(((uint64_t)g_fb_w * g_fb_h * 4) >> 32) };
+        IOConnectCallMethod(g_virgl_conn, 0x6003, dab, 5, NULL, 0,
+                            NULL, NULL, NULL, NULL);
+        uint64_t din[12] = { g_depth_res, 0, 0,0,0,
+                             (uint64_t)g_fb_w, (uint64_t)g_fb_h, 1,
+                             g_virgl_ctx, (uint64_t)g_fb_w * 4,
+                             (uint64_t)g_fb_w * g_fb_h * 4, 0 };
+        kr = IOConnectCallMethod(g_virgl_conn, 0x3009,
+                                 din, 12, NULL, 0, NULL, NULL, NULL, NULL);
+        char db[128]; int do_ = 0;
+        for (int i = 0; i < 16 && do_ < 60; i++)
+            do_ += snprintf(db + do_, sizeof(db) - do_, "%02x", dbuf[i]);
+        char b6[160];
+        snprintf(b6, sizeof(b6),
+                 "rung51: DEPTH readback (res %u, xfer 0x%x): %s",
+                 g_depth_res, kr, db);
+        ep_log(b6);
+        free(dbuf);
+    }
     /* RUNG 44 — THE PRESENTATION WRITE: the kernel's relay present
      * (0x600C hostRelayBlit, FB/VMVirtIOGPU.cpp:8037). Its GA branch
      * re-reads this resource kernel-side, row-copies into the
@@ -1014,6 +1124,8 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
         case 6:  mode10 |= 0x2; break;        /* Stereo — echo (0xb7db) */
         case 3: case 4: case 7: case 8: case 9: case 10:
         case 51: case 52: case 57:
+        case 12: case 13:                     /* RUNG 51: Depth/Stencil
+                                                 sizes — value attrs */
             p++; walked += 4; break;          /* value attrs: consumed */
         case 47: case 48: case 72: case 54: break;  /* no-op pass */
         case 49: flags |= 4; si = 1; break;
@@ -1106,6 +1218,12 @@ build:
     {
         const char* e = getenv("GLD_PF_FLAGS");
         if (e) flags = (unsigned)strtoul(e, 0, 0);   /* bisect override */
+        /* RUNG 51 — the mode10 bisect (the scorer EXACT-tests +0x10,
+         * rung 24; the depth/stencil request composes bits there the
+         * walk doesn't echo yet — the bits are being found empirically
+         * per the rung-26 protocol). */
+        const char* e2 = getenv("GLD_PF_MODE10");
+        if (e2) mode10 = (unsigned)strtoul(e2, 0, 0);
     }
     obj[3] = flags;        /* +0xc — rung-24 honest subset 0x4C8 unless
                             * GLD_PF_FLAGS overrides (bisect only) */

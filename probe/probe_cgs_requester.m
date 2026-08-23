@@ -210,7 +210,10 @@ int main(int argc, char *argv[])
                 fflush(stdout);
             }
             glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
+            glClearDepth(1.0);
+            glClearStencil(0);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT
+                    | GL_STENCIL_BUFFER_BIT);
             printf("glClear done, glGetError = 0x%x\n", glGetError());
             /* rung 38: the readback proof — fires the ReadPixels slot */
             {
