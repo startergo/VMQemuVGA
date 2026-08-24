@@ -13485,3 +13485,32 @@ via block1; a teardown crash class recorded
 - **STATE:** CPU rendering (the float's raster) with
   visible content stands; GPU routing awaits the
   census read, which awaits the block1 hook.
+
+---
+
+## THE FULL SUITE, VISIBLE, COMPLETE (full2.log) —
+zero setup failures, every scene watched on screen;
+Score 4 — the honest number, and WHY it differs
+from the invisible 26
+
+```
+build vbo        12 FPS | texture n/l/m  12/10/8
+shading g/bp/cel 10/6/5 | bump hp/n/h     5/7/7
+effect2d edge/blur 3/2  | pulsar          10
+desktop shadow    1     | buffer sub/int  2/3
+jellyfish         2     | terrain         1 (24.8 s/frame)
+shadow            5     | refract         1
+conditionals f/v  4/10  | function lo/med 6/3
+loop ×3           4/4/3
+glmark2 Score: 4     (0 setup failures)
+```
+
+- **THE COMPARISON THAT TEACHES:** the pre-trampoline
+  suite scored 26 with NOTHING on screen — those FPS
+  were command-buffering cost, zero pixels produced.
+  This suite scores 4 with EVERY scene visible: the
+  difference per frame is the true cost of actually
+  rasterizing every fragment on the emulated CPU.
+  The 26 was never rendering; the 4 is.
+- terrain at 24.8 s/frame — the fragment-heaviest
+  scene; the GPU-routing case in one number.
