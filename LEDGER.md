@@ -13671,3 +13671,47 @@ substitute deploy; no reboot beyond the kext install.
 crash — SIGSEGV exit 139 on the terrain scene under
 the substitute — is its own diagnosis, independent of
 this rung).
+
+---
+
+## RUNG 67 RESULT — THE ZERO-COPY PRESENT LANDED:
+scanout-bound 3D resource, host-composited, and
+TERRAIN AT 28 FPS — the scene that cost 24.8
+SECONDS per frame on the CPU raster
+
+- **THE CHAIN (kernel log, live):**
+```
+scanoutPresent3D: res=401 800x600 BOUND to scanout
+  (2D refresh stood down)
+scanoutPresent3D: flush res=401 OK (zero-copy)   ← per frame
+```
+  0x600F scanoutPresent3D: SET_SCANOUT binds the 3D
+  resource (first call / on change), RESOURCE_FLUSH
+  per frame, the framebuffer's 2D refresh stands
+  down via the pre-built takeover flag. NO readback,
+  no guest pixel traffic — the Linux guest's path.
+- **TWO GATES FOUND AND OPENED on the way (each cost
+  a run):** (1) the winsys zero-copy block sat AFTER
+  the host-present rect return — moved FIRST, geometry
+  from the resource itself; (2) the OSMesa frontend
+  only calls flush_frontbuffer under SHIM_HOST_PRESENT
+  — the gate now also rides SHIM_ZERO_COPY.
+- **THE NUMBERS:**
+  - build (light): 14-15 → **17 FPS** — the wire was
+    NOT the light scenes' bottleneck; the TCG-emulated
+    command stream is (prediction i partially: the
+    frame's readback share measured ~15 ms of 75).
+  - **terrain (heavy): 24,826 ms → 35.8 ms — ~700×.**
+    THE divergence the fork predicted: the host GPU
+    rasterizes; the guest sends commands. Score 27.
+- **PREDICTION (iii) FIRED AS ACCEPTED:** present is
+  FULLSCREEN (SET_SCANOUT maps the resource to the
+  whole display; no desktop-position form exists) —
+  the 2D desktop is displaced while 3D owns the
+  scanout. The windowed composite is a WindowServer
+  integration problem, named for later.
+- **RESIDUAL:** the earlier terrain SIGSEGV (exit
+  139, substitute era) did NOT recur — unreproduced,
+  stays on the list. The fullscreen present means
+  the desktop needs releasing on app exit (the 2D
+  refresh restore path — verify before daily use).
