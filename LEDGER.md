@@ -12941,3 +12941,74 @@ mechanism itself.
 none new — no new KPI symbols, no new calls);
 verify on the next boot; GLD stub and config
 untouched.
+
+---
+
+## RUNG 63 RESULT — IMPLEMENTED, DEPLOYED, BOOTED CLEAN;
+both watchdog args verified live in the kernel; the
+simulated delay recategorized; the synchronous-poll
+question registered open
+
+- **THE CODE (commit b6e1ff1):** `vm-poll-spin` gate
+  added as a memoized parse beside `vm-cap3d`
+  (default 10 = byte-identical; 0 = pure IOSleep;
+  negative clamps to 0) — no header change, no new
+  KPI symbols; the accelerator's simulated
+  `IODelay(n*10)` block deleted outright.
+- **DEPLOYED:** /S/L/E md5 `534294c2…` verified
+  against the build; caches cleared, `kextcache
+  -system-caches` run, Startup/Extensions.mkext
+  rebuilt FRESH (9,800,503 bytes, mtime after the
+  install — the RTC reset at the 19:09 boot had made
+  timestamps read backwards; the guest clock is now
+  authoritative from 19:09 onward). Booted clean; 9
+  vmvirtio registry entries; no new kernel panic
+  (newest Kernel report remains the pre-rung-63
+  19:09 one; a configd USERSPACE crash at 19:35 is
+  the separate chronic issue, not kernel, not ours).
+- **BOTH WATCHDOGS ARMED AND VERIFIED LIVE:**
+  `sysctl kern.bootargs` shows
+  `…tlbto_us=10000000 slto_us=10000000 vti=9
+  vm-cap3d=1` — the args reach the kernel. `tlbto_us`
+  was raised from 0 to explicit-large in the same
+  edit (backup chain: config.plist.bak-slto): a TLB
+  panic had fired WITH `tlbto_us=0` live, so
+  0-does-not-disable is ESTABLISHED, not suspected —
+  and the two readings (0 = default; arg not parsed
+  on this xnu) are settled by the same test. If TLB
+  panics persist under the explicit value, the arg
+  is not reaching the timeout path, the TLB lever is
+  illusory, and `slto_us` becomes suspect by the
+  same mechanism — the panic SIGNATURE distinguishes
+  the two watchdogs, so this boot tests both levers
+  independently.
+- **CONVOY TRADE SHARPENED (review):** today's
+  spinlock panics are HELD-lock convoys (owners
+  active on other CPUs), not free-lock starvation —
+  the raised tolerance covers something actually
+  happening. The cost is real: a convoy that never
+  drains now hangs silently instead of panicking.
+  Diagnosis of a future hang must not assume
+  deadlock-or-nothing.
+- **SIMULATED DELAY RECLASSIFIED (review):** the
+  10µs-per-command pretend-work delay belongs with
+  the INVENTED-PROPERTY cleanup family — the reason
+  to remove it is HONESTY (it fabricated completion
+  time for work that never happened); the SMP
+  benefit is incidental. Deleted on those grounds.
+- **THE SYNCHRONOUS-POLL QUESTION (open, named):**
+  does 2318 need to be synchronous at all? For
+  fire-and-forget classes (2D flushes, refresh-path
+  transfers) a deferred completion picked up on the
+  next refresh tick removes the wait without a
+  command gate — a frame of latency, no spin. But
+  submitCommand also serves classes whose RETURN
+  VALUES are consumed immediately (capset blobs,
+  fence waits, transfer-from-host readback) — those
+  cannot defer. The split is per-caller-class, not
+  whole-function; register before implementing.
+- **EFFECTIVE VARIABLES OF THIS BOOT:** the kext
+  change is behavior-neutral by default (gate
+  dormant), so this boot's live variables are the
+  two watchdog args — one-variable discipline
+  preserved by construction, not by luck.
