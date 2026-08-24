@@ -13867,3 +13867,42 @@ display
   content question stands exactly as registered
   (UTM debug log the arbiter; relay the
   visually-proven fallback).
+
+---
+
+## THE UTM DEBUG LOG READ — the zero-copy chain is
+COMPLETE through compositing; the failure is the
+fd import's last inch inside UTM's display stack
+
+- **THE LOG (per-VM: <Snow Leopard.utm>/Data/
+  debug.log — the path the rules never recorded,
+  now recorded):**
+  - `gl scanout fd: 42/43` — virglrenderer hands
+    the 3D resource to the display via the NATIVE
+    GL-scanout fd path
+  - `cs_gl_scanout: got scanout` — CocoaSpice
+    accepts; `Ignoring scanout from stale fd 42`
+    drops the loser of same-millisecond scanout
+    pairs (our desktop-restore rebind and the 3D
+    bind racing; monitors config flapping 1024x768
+    between them)
+  - **380 cs_gl_draw in the 3D window (01:19:05-16,
+    ~35/s)** — the accepted scanout WAS composited
+    every frame. The chain is complete: render →
+    fd → accept → draw. AND THE SCREEN WAS BLACK.
+- **THE VERDICT:** the texture itself reads black
+  in UTM's compositor — the dmabuf/texture content
+  does not survive virglrenderer's GL export →
+  CocoaSpice's Metal import boundary (stock UTM;
+  host-side; the same boundary the ANGLE display
+  env vars live around). NOT our transport, NOT
+  virglrenderer's rendering (the relay path
+  read back REAL bytes from the same resource class).
+- **THE CHEAP EXPERIMENT (next):** the DISPLAY
+  RENDERER BACKEND dropdown (Default/ANGLE-GL/
+  ANGLE-Metal/Core-GL — currently Core GL) — one
+  setting flip + one zero-copy run: content under a
+  different import path = the whole thing lands;
+  black under all = the relay (readback) stays the
+  presenter and the ~15 ms readback is the honest
+  cost of stock UTM.
