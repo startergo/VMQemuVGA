@@ -15675,3 +15675,34 @@ than one word each
   and the falsified model are both banked —
   the next session starts from the handlers,
   not from guesses.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 3) — THE HANDLER
+CONVENTION CRACKED: r13 is a byte pointer;
+each handler's entry advances it; the RETURN
+VALUE IS THE ADVANCED POINTER
+
+- **THE MECHANIC (RET handler @ glp
+  0xd4130, first instructions):**
+```
+rdi = r13 + 8            ; advance ONE word
+eax = byte[r13+8] >> 1   ; condition field from
+       & 7                 the NEXT word's low bits
+  → 8-way table (0xd4159): TR/EQ/GE/GT/LE/LT/
+    NE/FL — the " (TR.xxxx)" suffix source
+```
+  glpDisassemble1Op RETURNS the advanced
+  pointer — the stream walker learns each
+  instruction's length from the handlers, not
+  from a table. Deriving the length table =
+  reading each handler's TOTAL advance (the
+  return value's r13 delta), which for
+ RET ≥ 2 words (op + condition word).
+- **THE FOUR REPRESENTATIVE HANDLERS
+  LOCATED:** MOV @ 0xd4a76, ADD @ 0xd4cbb,
+  TEX @ 0xd5000, RET @ 0xd4130 (dispatch
+  table base 0xd3f08). Next session: read
+  each handler's return-advance + operand
+  decode; the length/packing table falls out
+  mechanically; then the differential.
