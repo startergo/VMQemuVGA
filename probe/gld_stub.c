@@ -46,13 +46,79 @@ static void gld_stub_loaded(void)
  * Risk: if an entry's first arg is an integer handle rather than a
  * pointer, writing through it faults — accepted for a gated stub;
  * each entry gets a typed signature when its call site is read. */
+/* RUNG 64i — THE FLOAT TRAMPOLINE: forward engine calls to the REAL
+ * GLRendererFloat. Its attach builds the true drawbuffer (ctx+0x218),
+ * its machinery rasterizes, its own swap blits into the GA surface —
+ * and our swap WRAPPER (installed over block1+0xE8) pushes the
+ * surface afterward (0x600D). We keep OUR: pixel format (the depth
+ * codes), strings (capset), and the wrap layer. The float's entries
+ * take <= 6 args per the plugin ABI, so the uniform 6-arg void*
+ * forward is ABI-safe on x86_64. */
+#include <dlfcn.h>
+static void* g_float_lib = 0;
+static int g_fwd_armed = 0;   /* RUNG 64i gate: the loader probes
+                               * informational entries BEFORE any
+                               * Initialize — forwarding those to an
+                               * UNINITIALIZED float corrupts the
+                               * engine's registration (observed:
+                               * CGLCreateContext dying pre-renderer).
+                               * float_sym refuses until OUR Initialize
+                               * completes, then the trampoline arms. */
+/* the float's install (+0x50) / attach (+0x48) entries, captured from
+ * the float-filled dispatch block; the float's swap, captured at wrap
+ * time; the engine call block. */
+static long (*g_float_install)(void*,void*,void*,void*,void*,void*) = 0;
+static long (*g_float_attach)(void*,void*,void*,void*,void*,void*) = 0;
+static long (*g_float_swap_fn)(void*,void*,void*,void*,void*,void*) = 0;
+static void* g_block1 = 0;
+long gld_swap_wrapper(void* dctx, void* a1, void* a2, void* a3,
+                      void* a4, void* a5);
+static void* float_sym(const char* name)
+{
+    if (!g_fwd_armed)
+        return (void*)0;         /* not yet: see the gate comment above */
+    if (!g_float_lib) {
+        g_float_lib = dlopen(
+            "/System/Library/Frameworks/OpenGL.framework/Versions/A/"
+            "Resources/GLRendererFloat.bundle/GLRendererFloat",
+            RTLD_NOW | RTLD_LOCAL);
+        char b[160];
+        snprintf(b, sizeof(b), "rung64i: float dlopen -> %p%s",
+                 g_float_lib, g_float_lib ? "" : " (FAILED)");
+        ep_log(b);
+    }
+    return g_float_lib ? dlsym(g_float_lib, name) : (void*)0;
+}
+#define GLD_FWD(name, a0,a1,a2,a3,a4,a5, fb) do { \
+    static long (*fn)(void*,void*,void*,void*,void*,void*) = 0; \
+    if (!fn) fn = (long(*)(void*,void*,void*,void*,void*,void*)) \
+                 float_sym(name); \
+    if (fn) return (long)fn(a0,a1,a2,a3,a4,a5); \
+} while (0)
+#define GLD_FWDV(name, a0,a1,a2,a3,a4,a5) do { \
+    static void (*fn)(void*,void*,void*,void*,void*,void*) = 0; \
+    if (!fn) fn = (void(*)(void*,void*,void*,void*,void*,void*)) \
+                 float_sym(name); \
+    if (fn) { fn(a0,a1,a2,a3,a4,a5); return; } \
+} while (0)
+
+/* RUNG 64i second correction: the CONTENT objects (textures, programs,
+ * SetInteger...) arrive through these EXPORTED entries — they must
+ * forward once armed (the loader-time probes stay refused via the
+ * gate). gldCreateShared stays OURS (it fires inside CGLCreateContext
+ * before any create; the float's version there broke the context path).
+ * Blanket + gate + our-CreateShared = the 22:43-successful shape plus
+ * content objects. */
 #define EPR(n) long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    GLD_FWD(#n, a0,a1,a2,a3,a4,a5, -1); \
     if (a0) *(void**)a0 = (void*)0; \
     ep_log("CALL " #n " -> -1 (refusal; out zeroed)"); return -1; }
 #define EPB(n) long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    GLD_FWD(#n, a0,a1,a2,a3,a4,a5, 0); \
     if (a0) *(void**)a0 = (void*)0; \
     ep_log("CALL " #n " -> false (out zeroed)"); return 0; }
 #define EPV(n) void n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    GLD_FWDV(#n, a0,a1,a2,a3,a4,a5); \
     if (a0) *(void**)a0 = (void*)0; \
     ep_log("CALL " #n " (void; out zeroed)"); }
 
@@ -1422,6 +1488,26 @@ long gld_fill_engine_calls(void* dctx, void* block1, void* block2,
              "rung46: install entry +0x50 CALLED (dctx=%p block1=%p)",
              dctx, block1);
     ep_log(b);
+    /* RUNG 64i — FLOAT INSTALL FIRST: the float selects and writes
+     * its conditional flush/swap pair into block1 (+0xE0/+0xE8, per
+     * grf.t 0x1f912-0x1f921). We then WRAP the swap: save the float's
+     * entry, install our wrapper (which forwards then pushes the GA
+     * surface via 0x600D). */
+    if (g_float_install && block1) {
+        long r = (long)g_float_install(dctx, block1, block2,
+                                       a3, a4, a5);
+        g_block1 = block1;
+        g_float_swap_fn =
+            (long(*)(void*,void*,void*,void*,void*,void*))
+            *(void**)((char*)block1 + 0xE8);
+        *(void**)((char*)block1 + 0xE8) = (void*)&gld_swap_wrapper;
+        char w[128];
+        snprintf(w, sizeof(w),
+                 "rung64i: float swap %p WRAPPED (push after)",
+                 (void*)g_float_swap_fn);
+        ep_log(w);
+        return r;
+    }
     if (block1) {
         *(void**)((char*)block1 + 0xE0) = (void*)&gld_flush_entry;
         *(void**)((char*)block1 + 0xE8) = (void*)&gld_swap_entry;
@@ -1440,6 +1526,27 @@ long gld_table_attach(void* a0, void* a1, void* a2, void* a3,
                       void* a4, void* a5)
 {
     (void)a3; (void)a4; (void)a5;
+    if (g_float_attach) {                     /* RUNG 64i: real attach */
+        long r = (long)g_float_attach(a0, a1, a2, a3, a4, a5);
+        /* The float's attach ran its flush/swap selection, writing
+         * block1+0xE8 (= ctx+0x66b0) with ITS swap. WRAP IT: save the
+         * float's entry, install our push-after wrapper. block1 =
+         * ctx + 0x65c8 (the install-entry geometry). */
+        if (a0) {
+            void** slot = (void**)((char*)a0 + 0x65c8 + 0xE8);
+            g_float_swap_fn =
+                (long(*)(void*,void*,void*,void*,void*,void*))*slot;
+            if (g_float_swap_fn != (void*)&gld_swap_wrapper) {
+                *slot = (void*)&gld_swap_wrapper;
+                char w[128];
+                snprintf(w, sizeof(w),
+                         "rung64i: attach-wrap: float swap %p WRAPPED "
+                         "(ctx=%p)", (void*)g_float_swap_fn, a0);
+                ep_log(w);
+            }
+        }
+        return r;
+    }
     char b[128];
     snprintf(b, sizeof(b),
              "rung48: TABLE attach(+0x48) CALLED a0=%p a1=0x%lx a2=%p -> 0",
@@ -1524,6 +1631,12 @@ static void dump_plugins_once(void)
 int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
                          void* arg3, void* arg4, int arg5)
 {
+    /* RUNG 64i CORRECTION: do NOT forward Initialize to the float —
+     * its registration (plugin/device tables, same 0x1020400 id we
+     * claim) CORRUPTS the engine's renderer state and CGLCreate-
+     * Context dies before reaching any renderer entry (observed
+     * 22:36/22:38). The float's per-call entries run fine on our
+     * registration. */
     FILE *f = fopen("/tmp/vm_gld_stub.log", "a");
     if (f) {
         time_t t = time(NULL);
@@ -1557,6 +1670,8 @@ int gldInitializeLibrary(int* psvc, void* arg1, int GLDisplayMask,
                  "guard=mask!=0 -> %d)\n",
                 ts, (int)getpid(), arg5 & 1, rc, g_vm_ok);
         fclose(f);
+        g_fwd_armed = 1;   /* RUNG 64i: our registration complete —
+                            * the float trampoline may now serve */
         return rc;
     }
     g_vm_ok = 0;
@@ -1913,6 +2028,10 @@ long gldDestroyPixelFormat(void* obj, void* a1, void* a2, void* a3, void* a4, vo
 long gldCreateShared(void** out, unsigned mask, void* arg3,
                      void* a3, void* a4, void* a5)
 {
+    /* RUNG 64i: NOT forwarded — this fires inside CGLCreateContext
+     * before any renderer create; the float's version on un-Initialized
+     * state broke the context path (the 22:41/22:42 failures). Our
+     * rung-29 mirror is the proven answer. */
     (void)a3; (void)a4; (void)a5;
     if (out) *out = (void*)0;               /* THE RULE — always, first */
     char buf[96];
@@ -1956,6 +2075,20 @@ long gldDestroyShared(void* obj, void* a1, void* a2, void* a3, void* a4, void* a
 long gldCreateContext(void** out, void* pf, void* shared,
                       void* a4, void* a5, void* a6)
 {
+    {
+        static long (*fn)(void*,void*,void*,void*,void*,void*) = 0;
+        if (!fn) fn = (long(*)(void*,void*,void*,void*,void*,void*))
+                     float_sym("gldCreateContext");
+        if (fn) {
+            long r = (long)fn(out, pf, shared, a4, a5, a6);
+            char fb[128];
+            snprintf(fb, sizeof(fb),
+                     "rung64i: float CreateContext -> 0x%lx (*out=%p "
+                     "pf=%p)", r, out ? *out : (void*)0, pf);
+            ep_log(fb);
+            return r;
+        }
+    }
     if (out) *out = (void*)0;               /* THE RULE — always, first */
     char buf[96];
     snprintf(buf, sizeof(buf),
@@ -2055,6 +2188,7 @@ long gldCreateContext(void** out, void* pf, void* shared,
  * field the float initialized in CreateShared), unlock, free. */
 long gldDestroyContext(void* ctx, void* a1, void* a2, void* a3, void* a4, void* a5)
 {
+    GLD_FWD("gldDestroyContext", ctx, a1, a2, a3, a4, a5, 0);
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
     ep_log("CALL gldDestroyContext (rung 30)");
     if (ctx) {
@@ -2082,6 +2216,35 @@ EPR(gldReclaimContext)
 long gldAttachDrawable(void* ctx, unsigned type, void* a3,
                        void* a4, void* a5, void* a6)
 {
+    /* RUNG 64i — REAL ATTACH: the float's entry-level attach builds
+     * the true drawable (drawbuffer at ctx+0x218) — the contract our
+     * mirror skipped. Forward it. */
+    {
+        static long (*fn)(void*,void*,void*,void*,void*,void*) = 0;
+        if (!fn) fn = (long(*)(void*,void*,void*,void*,void*,void*))
+                     float_sym("gldAttachDrawable");
+        if (fn) {
+            long r = (long)fn(ctx, (void*)(uintptr_t)type,
+                              a3, a4, a5, a6);
+            /* attach-wrap (same as the +0x48 site): the float's
+             * selection wrote ctx+0x66b0; wrap it. */
+            if (ctx) {
+                void** slot = (void**)((char*)ctx + 0x65c8 + 0xE8);
+                g_float_swap_fn =
+                    (long(*)(void*,void*,void*,void*,void*,void*))*slot;
+                if (g_float_swap_fn != (void*)&gld_swap_wrapper) {
+                    *slot = (void*)&gld_swap_wrapper;
+                    char w[144];
+                    snprintf(w, sizeof(w),
+                             "rung64i: entry-attach-wrap: float swap %p "
+                             "WRAPPED (ctx=%p)", (void*)g_float_swap_fn,
+                             ctx);
+                    ep_log(w);
+                }
+            }
+            return r;
+        }
+    }
     (void)a3; (void)a4; (void)a5; (void)a6;
     char buf[112];
     snprintf(buf, sizeof(buf),
@@ -2194,18 +2357,60 @@ NOOP_FN(gld_noop_d0, 0xd0)
 NOOP_FN(gld_noop_f0, 0xf0)
 NOOP_FN(gld_noop_f8, 0xf8)
 NOOP_FN(gld_noop_100, 0x100)
+/* (the g_float_* wrapper globals and gld_swap_wrapper live with the
+ * RUNG 64i trampoline helpers at the top of the file) */
+
+/* our swap WRAPPER: the float's swap blits the frame into the GA
+ * surface; we then push the surface to the desktop (0x600D). */
+long gld_swap_wrapper(void* dctx, void* a1, void* a2, void* a3,
+                      void* a4, void* a5)
+{
+    long r = g_float_swap_fn
+        ? (long)g_float_swap_fn(dctx, a1, a2, a3, a4, a5) : 0;
+    if (g_virgl_conn)
+        IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
+                            NULL, NULL, NULL, NULL);
+    return r;
+}
+
 long gldInitDispatch(void* ctx, unsigned long* dispatch,
                      unsigned* limits, void* a3, void* a4, void* a5)
 {
     (void)ctx; (void)a3; (void)a4; (void)a5;
     char buf[96];
     snprintf(buf, sizeof(buf),
-             "CALL gldInitDispatch ctx=%p dispatch=%p limits=%p (rung 34)",
+             "CALL gldInitDispatch ctx=%p dispatch=%p limits=%p (rung 34/64i)",
              ctx, (void*)dispatch, (void*)limits);
     ep_log(buf);
     if (!dispatch) {
         ep_log("  gldInitDispatch -> -1 (no dispatch block)");
         return -1;
+    }
+    /* RUNG 64i — FLOAT DISPATCH FIRST: the float fills the table with
+     * its REAL entries (draws, textures, clears — the working
+     * software GL). Then we overlay +0x50/+0x48 with OUR wrappers so
+     * the swap gets wrapped after the float's install fills block1,
+     * and the attach keeps our log/pf-side bookkeeping ahead of the
+     * float's. If the float is unavailable, fall through to the
+     * identifying-thunk fill below (the rung-54 behavior). */
+    {
+        static long (*fn)(void*,void*,void*,void*,void*,void*) = 0;
+        if (!fn) fn = (long(*)(void*,void*,void*,void*,void*,void*))
+                     float_sym("gldInitDispatch");
+        if (fn) {
+            long r = (long)fn(ctx, dispatch, limits, a3, a4, a5);
+            g_float_install =
+                (long(*)(void*,void*,void*,void*,void*,void*))
+                *(void**)((char*)dispatch + 0x50);
+            g_float_attach =
+                (long(*)(void*,void*,void*,void*,void*,void*))
+                *(void**)((char*)dispatch + 0x48);
+            *(void**)((char*)dispatch + 0x50) =
+                (void*)&gld_fill_engine_calls;
+            ep_log("  rung64i: float dispatch installed; +0x50/+0x48 "
+                   "wrapped (float install/attach captured)");
+            return r;
+        }
     }
     /* Every offset the float writes (grf.t 0x14da0-0x14f73) — one
      * IDENTIFYING thunk per still-noop slot (rung 54). */
@@ -2289,6 +2494,7 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
 long gldUpdateDispatch(void* ctx, void* template_, void* dirty,
                        void* a3, void* a4, void* a5)
 {
+    GLD_FWD("gldUpdateDispatch", ctx, template_, dirty, a3, a4, a5, 0);
     (void)template_; (void)dirty; (void)a3; (void)a4; (void)a5;
     static long n = 0;
     if (++n <= 5 || (n % 500) == 0) {
