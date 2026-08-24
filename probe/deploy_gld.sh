@@ -33,6 +33,17 @@ SDK="$MACOSX10_6_SDK"
 
 rm -rf /tmp/gld_stage
 mkdir -p "$STAGE"
+# RUNG 75: the bundle carries its own Mesa pair — libOSMesa's one
+# @rpath dep (libglapi) is rewritten to @loader_path so the stub's
+# dlopen needs NO dyld env (runtime setenv can't reach dyld).
+if [ -f "$REPO_ROOT/probe/gld-libs/libOSMesa.8.dylib" ]; then
+  cp "$REPO_ROOT/probe/gld-libs/libOSMesa.8.dylib" \
+     "$REPO_ROOT/probe/gld-libs/libglapi.0.dylib" "$STAGE/"
+  install_name_tool -change "@rpath/libglapi.0.dylib" \
+      "@loader_path/libglapi.0.dylib" "$STAGE/libOSMesa.8.dylib" 2>/dev/null
+else
+  echo "NOTE: probe/gld-libs absent — bundle ships without Mesa (GPU path off)"
+fi
 # The bundle's Info.plist lives in the repo (source of record —
 # /tmp staging dies at boot).
 cp "$REPO_ROOT/probe/VMVirtIOGLEngine.Info.plist" "$STAGE/../Info.plist"

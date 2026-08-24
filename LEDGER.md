@@ -15294,3 +15294,137 @@ fa9752bf → d08c224d → 4c22c4c0, clean final)
   stack arg), located per-program by the
   token's descriptor table — no separate
   uniform channel exists to poll.
+
+---
+
+## RUNG 75 — FIRST GPU PIXELS UNDER THE GLD:
+VISIBLE. The stub renders on the host GPU
+(virgl, Apple M4 Pro) and injects the frame
+into the engine's own present path; the eyes
+confirm non-CPU content on screen (stubs
+80d2fae8 → 93930aba, runs T17-T23)
+
+- **THE CHAIN, ALL LOGGED (T19-T23):**
+```
+rung75: OSMesa GL_VENDOR='Mesa'
+        GL_RENDERER='virgl (Apple M4 Pro)'
+rung37: virgl ctx 266 OPEN (transport live)
+virgl_iokit: get_caps capset_id=2 ver=2 size=1408
+virgl_iokit: 0x6002 CREATE res=1380 ctx=273
+             fmt=53 800x600 bind=0x2
+rung75b: frame N 800x600 hue=X injected->backing
+```
+  Zero app configuration — the stub sets its
+  own GALLIUM_DRIVER before dlopen; the
+  temporary VMGLD_GPUTEST gate is the only
+  env, removal pre-registered.
+- **THREE FIXES THE CHAIN NEEDED (each
+  crash/failure recorded):**
+  1. libOSMesa's one @rpath dep → the pair
+     now ships INSIDE the bundle with the dep
+     rewritten to @loader_path (deploy script
+     copies probe/gld-libs/ + install_name_tool).
+     Runtime setenv of DYLD_* cannot reach
+     dyld.
+  2. plain RTLD_LAZY = RTLD_GLOBAL → Mesa's
+     gl* symbols won the app's runtime dlsym
+     races (glmark's glGenVertexArrays →
+     Mesa, no Mesa ctx current → crash
+     14:12:57). RTLD_LOCAL is load-bearing.
+  3. THE PRESENT PATH: 0x600E GA-surface push
+     is UNDER WindowServer (two-writers; the
+     horse composites over it at 40 Hz —
+     observed). THE VISIBLE ROUTE: inject the
+     GPU frame into the drawbuffer backing
+     (ctx+0x218 → +0x20, rung-69's GLVM
+     target) BEFORE the float's swap — the
+     engine's own presentation carries it.
+- **THE VISUAL VERDICT — CORRECTED (the
+  first recording of T23's observation was a
+  MISREAD and is retracted): what was
+  actually on screen = the NORMAL CPU scenes
+  (the horse, the cube, the cat — the "3
+  shapes running" were the scene meshes) with
+  a BLACK RECTANGLE over the top quarter of
+  the screen. NO GPU content was visible.
+  The claim "THE HORSE IS REPLACED" was
+  FALSE and is struck. Lesson recorded: a
+  secondhand visual summary must be read back
+  against what the content COULD be before
+  being recorded as a confirmation —
+  "3 shapes" fit the triangle because the
+  recorder wanted it to.**
+- **THE BLACK QUARTER (residual, partially
+  attributed): geometry matches a contiguous
+  1.92 MB write at desktop pitch (6720 B/row
+  at 1680x1050 = full width × ~288 rows ≈
+  top quarter) — the injection memcpy's
+  footprint. But T26's COLORED bytes did not
+  replace the black → either the scanout
+  holds a stale frame (backing writes need a
+  push to reach the scanout) or the black's
+  writer is not the memcpy. OPEN.**
+- **RUNG 75c — THE READBACK FIXED AND
+  SELF-CHECKED (sums over the RED channel):
+  glFinish does NOT read the virgl frame
+  into the bound OSMesa buffer (the black =
+  calloc zeros); an EXPLICIT glReadPixels
+  per frame is required (the substitute's
+  present did this all along). With it, the
+  readback is LIVE: red sums track hue
+  exactly (0.02→8000, 0.34→139200,
+  0.66→268800, 0.98→400000 over 1600 px).
+  INSTRUMENT LESSON: the first self-check
+  summed ALL channels — hue-invariant by
+  construction (h+0.25+1−h), a constant sum
+  that masked whether the buffer updated; a
+  check must vary with the thing it watches.**
+- **THE PRESENT PATH, TWO ROUTES FALSIFIED
+  THIS SESSION (kernel-log evidence):
+  1. 0x600E GA-surface write — DEAD THIS
+     BOOT: `gaPushSurface: no GA-bound
+     surface` ×every call; the registry shows
+     VMAccelSurfaceClient !registered,
+     !matched — NO surface was ever bound
+     this boot (the milestone-2/3 boots HAD
+     surface 1 bound with SetIDMode/SetShape
+     traffic). Root question for the next
+     rung: why this boot binds nothing.
+  2. Drawbuffer injection (drw+0x20 memcpy
+     before the float's swap) — the writes
+     land somewhere not on the visible path;
+     the horse persists; +0x20 is the GLVM
+     user-space double buffer (rung 69), not
+     the composited surface.
+  The kext's 0x600E remains the
+  pitch-correct, shape-offset mechanism once
+  a GA surface binds.**
+- **PERF NOTE: dual-render is live as
+  pre-registered — GLVM still rasterizes the
+  CPU frame every span (rung 73's ~20k
+  calls/frame) while the GPU frame renders
+  alongside. Timing comparisons need GLVM's
+  share measured separately.**
+- **THE ARCHITECTURE STATUS: the GLD
+  RENDER half is DONE — the stub drives the
+  host GPU, zero app configuration, animated
+  frames read back per frame (verified by
+  channel-sensitive sums). The PRESENT half
+  is the open frontier: the visible layer is
+  the engine/WindowServer composite chain;
+  the binding of a GA surface (absent this
+  boot) gates both kext present routes. Next
+  rung, pre-registered: diagnose the missing
+  GA binding (boot-time surface-client
+  traffic vs the milestone boots; the
+  IOAccelerator capability axis), then the
+  0x600E shape write is the present.**
+- **BUILD/LINKAGE FACTS FOR REPRODUCIBILITY:
+  the Mesa pair ships INSIDE the GLD bundle
+  (probe/gld-libs/, copied by deploy_gld.sh,
+  libOSMesa's @rpath/libglapi dep rewritten
+  to @loader_path); RTLD_LOCAL is
+  load-bearing (RTLD_GLOBAL leaks Mesa's gl*
+  into the app's dlsym — the 14:12:57
+  crash); the GALLIUM_DRIVER=virgl setenv
+  happens before dlopen, inside the stub.**

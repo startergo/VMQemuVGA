@@ -55,6 +55,7 @@ static void gld_stub_loaded(void)
  * take <= 6 args per the plugin ABI, so the uniform 6-arg void*
  * forward is ABI-safe on x86_64. */
 #include <dlfcn.h>
+#include <mach-o/dyld.h>
 static void* g_float_lib = 0;
 static int g_fwd_armed = 0;   /* RUNG 64i gate: the loader probes
                                * informational entries BEFORE any
@@ -512,15 +513,54 @@ static void (*os_glClear)(unsigned);
 static void (*os_glFinish)(void);
 static void (*os_glReadPixels)(int, int, int, int, unsigned, unsigned, void*);
 static const unsigned char* (*os_glGetString)(unsigned);
+static void (*os_glBegin)(unsigned);
+static void (*os_glEnd)(void);
+static void (*os_glVertex2f)(float, float);
+static void (*os_glColor3f)(float, float, float);
 
 static void osmesa_create_at_load(void)
 {
     if (g_os_created) return;
     g_os_created = 1;
     setenv("GALLIUM_DRIVER", "virgl", 1);
-    g_os_lib = dlopen("/Users/sl/osmesa/libOSMesa.8.dylib", RTLD_LAZY);
+    /* RUNG 75: the bundle carries libOSMesa+libglapi with the dep
+     * rewritten to @loader_path — no dyld env needed (runtime setenv
+     * cannot reach dyld). Resolve our own bundle dir by image walk. */
+    char osglib_path[512];
+    osglib_path[0] = 0;
+    {
+        uint32_t n = _dyld_image_count();
+        for (uint32_t i = 0; i < n; i++) {
+            const char* nm = _dyld_get_image_name(i);
+            if (nm && strstr(nm, "VMVirtIOGLEngine")) {
+                const char* slash = strrchr(nm, '/');
+                if (slash) {
+                    size_t L = (size_t)(slash - nm);
+                    if (L > sizeof(osglib_path) - 40) L = 0;
+                    memcpy(osglib_path, nm, L);
+                    osglib_path[L] = 0;
+                    strcat(osglib_path, "/libOSMesa.8.dylib");
+                }
+                break;
+            }
+        }
+    }
+    char b[256];
+    if (!osglib_path[0]) {
+        ep_log("rung75: bundle dir not found (image walk)");
+        return;
+    }
+    /* RTLD_LOCAL IS LOAD-BEARING: plain RTLD_LAZY is RTLD_GLOBAL —
+     * OSMesa's gl* symbols then win the app's runtime dlsym races
+     * (glmark's GLStateMacOS::valid() dlsym'd glGenVertexArrays,
+     * got Mesa's, and crashed with no Mesa ctx current — 14:12:57
+     * crash). LOCAL keeps the embedded stack private to the stub. */
+    g_os_lib = dlopen(osglib_path, RTLD_LAZY | RTLD_LOCAL);
     if (!g_os_lib) {
-        ep_log("rung59: OSMesa dlopen FAILED (bundle still self-contained)");
+        const char* e = dlerror();
+        snprintf(b, sizeof(b), "rung59/75: OSMesa dlopen FAILED: %s",
+                 e ? e : "(no dlerror)");
+        ep_log(b);
         return;
     }
     void* (*create)(unsigned, int, int, int, void*) =
@@ -538,7 +578,6 @@ static void osmesa_create_at_load(void)
      * surface as a fmt-19 array vrend rejects. FIVE args — the
      * arity bug that crashed two rungs lives here. */
     g_os_ctx = create(0x1908 /*GL_RGBA*/, 0, 0, 0, NULL);
-    char b[80];
     snprintf(b, sizeof(b), "rung59: load-time dlopen+create -> ctx=%p",
              g_os_ctx);
     ep_log(b);
@@ -564,7 +603,21 @@ static int osmesa_link_init(int w, int h)
     os_glFinish = (void (*)(void))getproc("glFinish");
     os_glReadPixels = (void (*)(int, int, int, int, unsigned, unsigned, void*))getproc("glReadPixels");
     os_glGetString = (const unsigned char* (*)(unsigned))getproc("glGetString");
+    os_glBegin   = (void (*)(unsigned))getproc("glBegin");
+    os_glEnd     = (void (*)(void))getproc("glEnd");
+    os_glVertex2f = (void (*)(float, float))getproc("glVertex2f");
+    os_glColor3f  = (void (*)(float, float, float))getproc("glColor3f");
     ep_log("rung59: OSMesa LINKED (dlopen route, ctx + buffer live)");
+    /* RUNG 75: the driver verdict — virgl or software fallback */
+    if (os_glGetString) {
+        const unsigned char* rend = os_glGetString(0x1F01 /*GL_RENDERER*/);
+        const unsigned char* vend = os_glGetString(0x1F00 /*GL_VENDOR*/);
+        char b[192];
+        snprintf(b, sizeof(b), "rung75: OSMesa GL_VENDOR='%s' "
+                 "GL_RENDERER='%s'", vend ? (const char*)vend : "?",
+                 rend ? (const char*)rend : "?");
+        ep_log(b);
+    }
     return 0;
 }
 
@@ -2419,11 +2472,100 @@ static void pp_draw_state(void* ctx, const char* site);
 static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                                   void* a2, void* a3, void* a4, void* a5)
 {
+    /* RUNG 75b — THE INJECTION PRESENT. The 0x600E GA-surface push
+     * is UNDER WindowServer (two-writers architecture; the horse
+     * composites over it at 40 Hz — observed 14:4x). The VISIBLE
+     * path is the drawbuffer: overwrite ctx+0x218's backing
+     * (rung-69's GLVM target, +0x20) with the GPU frame BEFORE the
+     * float's swap, and the engine's own presentation carries it. */
+    {
+        static int s_r75 = -1;
+        if (s_r75 < 0) s_r75 = getenv("VMGLD_GPUTEST") ? 1 : 0;
+        if (s_r75 && !g_virgl_conn)
+            virgl_transport_init();
+        if (s_r75 && dctx) {
+            unsigned char* drw = *(unsigned char**)
+                ((char*)dctx + 0x218);
+            if (drw && (uintptr_t)drw > 0x10000
+                    && (uintptr_t)drw < 0x800000000000ull) {
+                int w75 = *(int*)(drw + 0x8);
+                int h75 = *(int*)(drw + 0xc);
+                unsigned char* backing = *(unsigned char**)
+                    (drw + 0x20);
+                if (w75 > 16 && h75 > 16 && backing
+                        && osmesa_link_init(w75, h75) == 0
+                        && os_glClear && os_glFinish) {
+                    /* RUNG 75c: the sum self-check caught the buffer
+                     * FROZEN at frame 1 (constant 918400 across the
+                     * hue cycle) — the thread's Mesa current-context
+                     * does not survive between swaps. Re-bind every
+                     * frame before rendering. */
+                    {
+                        static int (*s_mk)(void*, void*, unsigned,
+                                           int, int);
+                        if (!s_mk) s_mk = (int (*)(void*, void*,
+                            unsigned, int, int))dlsym(
+                                g_os_lib, "OSMesaMakeCurrent");
+                        if (s_mk) s_mk(g_os_ctx, g_os_buffer,
+                                       0x1401, w75, h75);
+                    }
+                    static float s_hue;
+                    static long s_n;
+                    s_hue += 0.02f; if (s_hue > 1.0f) s_hue -= 1.0f;
+                    os_glClearColor(s_hue, 0.25f, 1.0f - s_hue, 1.0f);
+                    os_glClear(0x4000);
+                    if (os_glBegin && os_glEnd && os_glVertex2f
+                            && os_glColor3f) {
+                        os_glBegin(4);
+                        os_glColor3f(1, 1, 1);
+                        os_glVertex2f(-0.6f, -0.5f);
+                        os_glColor3f(1, 1, 0);
+                        os_glVertex2f(0.6f, -0.5f);
+                        os_glColor3f(0, 1, 1);
+                        os_glVertex2f(0.0f, 0.7f);
+                        os_glEnd();
+                    }
+                    os_glFinish();
+                    /* RUNG 75c: glFinish does NOT read the virgl
+                     * frame back into the bound OSMesa buffer (the
+                     * black-quarter lesson — the bound buffer stayed
+                     * calloc zeros; the substitute's present used an
+                     * EXPLICIT glReadPixels every frame). Read back
+                     * explicitly; self-check the sum so the log says
+                     * whether pixels are real, not black. */
+                    if (os_glReadPixels)
+                        os_glReadPixels(0, 0, w75, h75,
+                                        0x1908 /*GL_RGBA*/,
+                                        0x1401 /*GL_UNSIGNED_BYTE*/,
+                                        g_os_buffer);
+                    /* sum the RED channel only — the all-channel sum
+                     * is hue-invariant by construction (h+0.25+1-h),
+                     * which masked the first readback check */
+                    unsigned long sum = 0;
+                    for (int i = 0; i < w75 * 2; i++)
+                        sum += g_os_buffer[i * 4];
+                    memcpy(backing, g_os_buffer,
+                           (size_t)w75 * h75 * 4);
+                    if ((++s_n & 0xf) == 1) {
+                        char b[160];
+                        snprintf(b, sizeof(b),
+                            "rung75c: frame %ld %dx%d hue=%.2f "
+                            "sum=%lu ->%p", s_n, w75, h75, s_hue,
+                            sum, (void*)backing);
+                        ep_log(b);
+                    }
+                }
+            }
+        }
+    }
     long r = g_site_fn[site]
         ? (long)g_site_fn[site](dctx, a1, a2, a3, a4, a5) : 0;
     if (g_virgl_conn)
         IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
                             NULL, NULL, NULL, NULL);
+    /* RUNG 75 (first form, GA-surface push via 0x600E) is SUPERSEDED
+     * by the 75b injection above: the push lands UNDER WindowServer
+     * and is overpainted — observed as "the horse spins, no hue". */
     pp_draw_state(dctx, "swap");
     /* RUNG 69 — THE DISCRIMINATING EXPERIMENT: watch the drawbuffer
      * (ctx+0x218 → drawable → backing) for GLVM writes. The float's
