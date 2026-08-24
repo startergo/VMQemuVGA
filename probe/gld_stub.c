@@ -2409,6 +2409,13 @@ static void export_census_report(long swapno);   /* fwd: after EPRs */
  * REMOVED at rung 72 — its in-process glpPPDisassemble calls are the
  * banned pattern (.claude/rules/instrumentation.md); the liveness
  * finding it produced is banked in LEDGER.md rung 71b. */
+/* rung 73 NOTE: pp_draw_state(dctx) is forward-declared below the
+ * pipeline instrument; the swap-site ctx is the drawbuffer owner
+ * (rung 69) — poll/wrap HERE as well as at modify, because the
+ * modify-site ctx's +0x188 proved DEAD (0 calls, 0 swaps, zeros
+ * around it) while its texture array lives: the two engine handles
+ * (+0x7120/+0x7128) are different sub-contexts. */
+static void pp_draw_state(void* ctx, const char* site);
 static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                                   void* a2, void* a3, void* a4, void* a5)
 {
@@ -2417,6 +2424,7 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
     if (g_virgl_conn)
         IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
                             NULL, NULL, NULL, NULL);
+    pp_draw_state(dctx, "swap");
     /* RUNG 69 — THE DISCRIMINATING EXPERIMENT: watch the drawbuffer
      * (ctx+0x218 → drawable → backing) for GLVM writes. The float's
      * swap ran above (r); if GLVM executed, the backing changed. */
@@ -2964,10 +2972,132 @@ long gldCreatePipelineProgram(void* a0, void* a1, void* a2, void* a3,
     return -1;
 }
 static long g_ec_gldModifyPipelineProgram;
+/* RUNG 73 — PER-DRAW STATE CAPTURE. Rung 66e proved draws
+ * never cross as entry calls (steady frames = Modify:+2
+ * only): the engine drives the raster through pointers
+ * INSIDE the shared ctx object. Two instruments, both
+ * rule-clean (memcpy-class reads; every allocation freed
+ * before return):
+ *
+ * (a) pp_draw_state(ctx) — the read-only per-poll snapshot
+ *     of the draw contract: +0x188 transform fn (CLASSIFIED
+ *     against the float's own thunk/interpreter addresses,
+ *     resolved by slide for identification only — never
+ *     called), +0x190 current func, +0x198 token, +0x778
+ *     bound prog, raster block @ +0x2e0, texture occupancy
+ *     @ +0x780[32], uniform cache @ +0x538.
+ * (b) pp_transform_hook — best-effort wrap of ctx+0x188;
+ *     logs the first 4 calls' six args per poll window plus
+ *     a running count, then passes through to the previous
+ *     slot value. Bypass window: the float's
+ *     glvmRequestFunctionPointerWrite swaps the slot to the
+ *     JIT after its build, which happens AFTER our poll —
+ *     those calls are counted as bypass at the next poll.
+ *     Acceptable for capture; noted in the ledger. */
+#include <mach-o/dyld.h>
+long pp_transform_hook(void*, void*, void*, void*, void*, void*);
+static void* pp_r73_floatbase(void)
+{
+    /* the float image's base, for ADDRESS IDENTIFICATION only */
+    static void* base = (void*)1;
+    if (base == (void*)1) {
+        base = 0;
+        uint32_t n = _dyld_image_count();
+        for (uint32_t i = 0; i < n; i++) {
+            const char* nm = _dyld_get_image_name(i);
+            if (nm && strstr(nm, "GLRendererFloat")) {
+                base = (void*)_dyld_get_image_header(i);
+                break;
+            }
+        }
+    }
+    return base;
+}
+static const char* pp_r73_classify(void* fn)
+{
+    void* b = pp_r73_floatbase();
+    if (!b || !fn) return "?";
+    if (fn == (char*)b + 0x1e00) return "SET-thunk";
+    if (fn == (char*)b + 0x1b80) return "interp";
+    if (fn == (char*)b + 0x1860) return "fallback";
+    if (fn == pp_transform_hook)  return "OUR-hook";
+    return "other/JIT";
+}
+static long (*g_r73_prev)(void*,void*,void*,void*,void*,void*) = 0;
+static long g_r73_calls, g_r73_logged, g_r73_bypass;
+long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
+                       void* a4, void* a5)
+{
+    g_r73_calls++;
+    if (g_r73_logged < 4) {
+        g_r73_logged++;
+        char b[256];
+        snprintf(b, sizeof(b),
+            "rung73 DRAW#%lld ctx=%p esi=%ld edx=%ld rcx=%p r8=%p r9d=%u",
+            (long long)g_r73_calls, c0, (long)a1, (long)a2, a3, a4,
+            (unsigned)(uintptr_t)a5);
+        ep_log(b);
+    }
+    if (g_r73_prev) return g_r73_prev(c0, a1, a2, a3, a4, a5);
+    return 0;
+}
+static int pp_r73_sane(void* p)
+{
+    return p && (uintptr_t)p > 0x1000 && (uintptr_t)p < 0x800000000000ull;
+}
+static void pp_draw_state(void* ctx, const char* tagsite)
+{
+    if (!pp_r73_sane(ctx)) return;
+    void** slot188 = (void**)((char*)ctx + 0x188);
+    void* cur = *slot188;
+    /* (b) wrap: install our hook unless the slot already holds it */
+    if (cur != (void*)pp_transform_hook) {
+        g_r73_prev = cur;
+        *slot188 = (void*)pp_transform_hook;
+    }
+    char b[320];
+    int o = snprintf(b, sizeof(b),
+        "rung73[%s] POLL ctx=%p: 188=%s(%p) 190=%p 198=%p", tagsite, ctx,
+        pp_r73_classify(cur), cur,
+        pp_r73_sane(*(void**)((char*)ctx + 0x190))
+            ? *(void**)((char*)ctx + 0x190) : 0,
+        pp_r73_sane(*(void**)((char*)ctx + 0x198))
+            ? *(void**)((char*)ctx + 0x198) : 0);
+    /* the token's word count, if the pointer is real */
+    void* tok = *(void**)((char*)ctx + 0x198);
+    if (pp_r73_sane(tok))
+        o += snprintf(b + o, sizeof(b) - o, "(w=%u)",
+            *(unsigned*)((char*)tok + 0x10));
+    /* bound prog + its stream type */
+    void* prog = *(void**)((char*)ctx + 0x778);
+    if (pp_r73_sane(prog)) {
+        void* desc = *(void**)prog;
+        if (pp_r73_sane(desc))
+            o += snprintf(b + o, sizeof(b) - o, " prog=%p t=0x%04x",
+                prog, *(unsigned short*)desc);
+    }
+    /* texture occupancy: nonzero entries in ctx+0x780[32] */
+    int tex = 0;
+    void** ta = (void**)((char*)ctx + 0x780);
+    for (int i = 0; i < 32; i++) if (pp_r73_sane(ta[i])) tex++;
+    o += snprintf(b + o, sizeof(b) - o, " tex=%d/32", tex);
+    /* raster block head @ +0x2e0 (8 words) */
+    unsigned long* rb = (unsigned long*)((char*)ctx + 0x2e0);
+    o += snprintf(b + o, sizeof(b) - o, " rb:");
+    for (int i = 0; i < 4 && o < 300; i++)
+        o += snprintf(b + o, sizeof(b) - o, " %llx", rb[i]);
+    o += snprintf(b + o, sizeof(b) - o,
+        " calls=%lld(logged %lld)", (long long)g_r73_calls,
+        (long long)g_r73_logged);
+    ep_log(b);
+    /* reset the per-poll window; total kept in calls */
+    g_r73_logged = 0;
+}
 long gldModifyPipelineProgram(void* a0, void* a1, void* a2, void* a3,
                               void* a4, void* a5)
 {
     g_ec_gldModifyPipelineProgram++;
+    pp_draw_state(a0, "modify");          /* per-poll draw-state + wrap */
     if (a1 && a1 != (void*)0x123) {      /* rsi = GLD program obj */
         void* desc = *(void**)a1;        /* prog->+0x00 */
         if (desc) pp_dump_desc(desc, "modify");

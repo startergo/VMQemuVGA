@@ -16,7 +16,20 @@ SRC="$REPO_ROOT/probe/gld_stub.c"
 STAGE="/tmp/gld_stage/VMVirtIOGLEngine.bundle/Contents/MacOS"
 OUT="$STAGE/VMVirtIOGLEngine"
 LAST_MD5="/tmp/gld_last_deploy.md5"
-SDK="${MACOSX10_6_SDK:-$HOME/Downloads/MacOSX10.6.sdk}"
+# SDK search order: env override, then the Xcode Platforms SDKs dir
+# (canonical — a Downloads copy vanished mid-session once), then the
+# leopard-webkit cross-toolchain copy. First hit with stdio.h wins.
+if [ -z "$MACOSX10_6_SDK" ]; then
+  for c in \
+    "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.6.sdk" \
+    "$HOME/Downloads/MacOSX10.6.sdk" \
+    "$HOME/leopard-webkit-build/sdk/MacOSX-SDKs/MacOSX10.6.sdk"; do
+    if [ -f "$c/usr/include/stdio.h" ]; then MACOSX10_6_SDK="$c"; break; fi
+  done
+fi
+SDK="$MACOSX10_6_SDK"
+[ -f "$SDK/usr/include/stdio.h" ] || {
+  echo "DEPLOY ABORT: no MacOSX10.6 SDK found (set MACOSX10_6_SDK)"; exit 1; }
 
 rm -rf /tmp/gld_stage
 mkdir -p "$STAGE"

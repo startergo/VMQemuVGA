@@ -15150,3 +15150,66 @@ in the IR (stub 4a86f460, corpus run pid 2773)
   r9d count, raster block, texture array,
   uniform cache — and the geometry-feed
   entry identification.
+
+---
+
+## RUNG 73 — THE PER-DRAW CAPTURE CONTRACT
+LANDED: the transform slot fires ~20k×/frame
+at the SWAP-site ctx; the draw ABI args are
+live and readable; the modify-ctx's +0x188 is
+DEAD (stub 6c52933c, scenes build+texture+
+shading, clean exit, no crash reports)
+
+- **THE TWO-CONTEXT SPLIT (runtime):** the
+  modify-site ctx (a0 = engine+0x7128) holds
+  LIVE TEXTURES (+0x780 occupancy grows 3→6)
+  but its +0x188/+0x190/+0x198 are all ZERO
+  and NEVER swap — 202 polls, 0 calls. The
+  SWAP-site ctx (dctx, 0x104800000) is the
+  raster ctx: +0x188 holds a REAL JIT function
+  (0x1000ef250, classified other/JIT), +0x190
+  = current compiled fn (0x100624be0), +0x198
+  = the 40-word fragment stream, prog bound
+  t=0x8B30, raster-block head = 800|600
+  packed dims. The engine's two handles
+  (0x7120/0x7128) are different sub-contexts;
+  the ABI doc's "ctx" is the swap-site one.
+- **THE WRAP:** installing OUR hook at
+  dctx+0x188 at each swap poll — the first
+  poll catches the float's own value (the
+  JIT), the hook passes through to it;
+  rendering continued (all 3 scenes, clean
+  exit). Bypass window exists between the
+  float's build-swap and our next poll;
+  observed harmless for capture.
+- **THE DRAW ABI, LIVE (build scene, per
+  call):**
+```
+ctx   = 0x104800000 (fixed)
+rcx   = ctx+0x0e00 (fixed state block)
+r8    = ctx+0x0f50 (fixed state block)
+esi   ≈ 392-400    (x-run length)
+edx   = 448,449,450,451 … (+1 per call —
+                      the 4-wide step)
+r9d   = 1..6       (rows in this span)
+rate  ≈ 20,000 calls per frame-window
+```
+  The transform fires per FRAGMENT-SPAN with
+  (run-length, 4-wide x position, row count)
+  — the float's per-fragment CPU cost in one
+  number (20k spans/frame at 800x600).
+- **THE STATE SNAPSHOT (per poll, same run):**
+  texture occupancy at the SWAP ctx's +0x780,
+  token word count, bound prog type, raster
+  block — all populated and stable per scene.
+- **CAVEAT (honest):** the esi/edx/r9d
+  interpretation (run-length/x-step/rows) is
+  inferred from the value patterns, not from
+  a decoded producer; the definitive naming
+  waits on the interpreter-side decode
+  (glvmInterpretFPTransformFour's arg use).
+- **NEXT (rung 74, unchanged):** the uniform
+  read — program.local[] slots from
+  prog+0x110 param tables at draw time; the
+  corpus already showed the IR binding form
+  (PARAM prm0:1I = program.local[0]).
