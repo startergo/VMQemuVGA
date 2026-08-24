@@ -2996,6 +2996,7 @@ static long g_ec_gldModifyPipelineProgram;
  *     Acceptable for capture; noted in the ledger. */
 #include <mach-o/dyld.h>
 long pp_transform_hook(void*, void*, void*, void*, void*, void*);
+static int pp_r73_sane(void*);
 static void* pp_r73_floatbase(void)
 {
     /* the float image's base, for ADDRESS IDENTIFICATION only */
@@ -3037,6 +3038,16 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
             (long long)g_r73_calls, c0, (long)a1, (long)a2, a3, a4,
             (unsigned)(uintptr_t)a5);
         ep_log(b);
+        /* RUNG 74b: the draw-time body deref was REMOVED with the
+         * poll-path chained derefs (same crash class — reads through
+         * pointers whose lifetime the stub doesn't control). The
+         * pointer VALUES alone are logged with the draw line. */
+        if (g_r73_logged == 1 && pp_r73_sane(c0)) {
+            void** uc = (void**)((char*)c0 + 0x538);
+            snprintf(b, sizeof(b), "rung74[draw] u:[%p %p %p %p]",
+                     uc[0], uc[1], uc[2], uc[3]);
+            ep_log(b);
+        }
     }
     if (g_r73_prev) return g_r73_prev(c0, a1, a2, a3, a4, a5);
     return 0;
@@ -3050,38 +3061,42 @@ static void pp_draw_state(void* ctx, const char* tagsite)
     if (!pp_r73_sane(ctx)) return;
     void** slot188 = (void**)((char*)ctx + 0x188);
     void* cur = *slot188;
-    /* (b) wrap: install our hook unless the slot already holds it */
-    if (cur != (void*)pp_transform_hook) {
+    /* (b) wrap — SWAP SITE ONLY. The modify-site sub-context is a
+     * different object class; its +0x188 was 0 and writing the hook
+     * there (rung 74b first attempt) preceded a BUS error — the
+     * field may not be a function slot in that object at all.
+     * Rung 73's three clean scenes wrapped both sites: luck. */
+    if (cur != (void*)pp_transform_hook && !strcmp(tagsite, "swap")) {
         g_r73_prev = cur;
         *slot188 = (void*)pp_transform_hook;
     }
+    /* RUNG 74b STABILITY FIX: a modify poll fired during glClear's
+     * deferred-state update at scene RESET and pp_draw_state crashed
+     * the process (pp_draw_state+533, chained deref through a ctx
+     * mid-mutation — 13:52:47 crash report). ALL chained derefs are
+     * removed from the poll path; only DIRECT ctx-field reads and
+     * the pointer VALUES remain. The uniform-value location moves
+     * to the consumer-side decode (glvmPreloadFPTransformFour) —
+     * static, zero guest risk. */
     char b[320];
     int o = snprintf(b, sizeof(b),
-        "rung73[%s] POLL ctx=%p: 188=%s(%p) 190=%p 198=%p", tagsite, ctx,
+        "rung73[%s] POLL ctx=%p: 188=%s(%p) 190=%p 198=%p",
+        tagsite, ctx,
         pp_r73_classify(cur), cur,
-        pp_r73_sane(*(void**)((char*)ctx + 0x190))
-            ? *(void**)((char*)ctx + 0x190) : 0,
-        pp_r73_sane(*(void**)((char*)ctx + 0x198))
-            ? *(void**)((char*)ctx + 0x198) : 0);
-    /* the token's word count, if the pointer is real */
-    void* tok = *(void**)((char*)ctx + 0x198);
-    if (pp_r73_sane(tok))
-        o += snprintf(b + o, sizeof(b) - o, "(w=%u)",
-            *(unsigned*)((char*)tok + 0x10));
-    /* bound prog + its stream type */
+        *(void**)((char*)ctx + 0x190),
+        *(void**)((char*)ctx + 0x198));
     void* prog = *(void**)((char*)ctx + 0x778);
-    if (pp_r73_sane(prog)) {
-        void* desc = *(void**)prog;
-        if (pp_r73_sane(desc))
-            o += snprintf(b + o, sizeof(b) - o, " prog=%p t=0x%04x",
-                prog, *(unsigned short*)desc);
-    }
+    o += snprintf(b + o, sizeof(b) - o, " prog=%p", prog);
+    /* uniform-cache POINTER VALUES only (no deref): */
+    void** uc = (void**)((char*)ctx + 0x538);
+    o += snprintf(b + o, sizeof(b) - o, " u:[%p %p %p %p]",
+        uc[0], uc[1], uc[2], uc[3]);
     /* texture occupancy: nonzero entries in ctx+0x780[32] */
     int tex = 0;
     void** ta = (void**)((char*)ctx + 0x780);
     for (int i = 0; i < 32; i++) if (pp_r73_sane(ta[i])) tex++;
     o += snprintf(b + o, sizeof(b) - o, " tex=%d/32", tex);
-    /* raster block head @ +0x2e0 (8 words) */
+    /* raster block head @ +0x2e0 (direct ctx fields) */
     unsigned long* rb = (unsigned long*)((char*)ctx + 0x2e0);
     o += snprintf(b + o, sizeof(b) - o, " rb:");
     for (int i = 0; i < 4 && o < 300; i++)

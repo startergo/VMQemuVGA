@@ -15213,3 +15213,84 @@ rate  ≈ 20,000 calls per frame-window
   prog+0x110 param tables at draw time; the
   corpus already showed the IR binding form
   (PARAM prm0:1I = program.local[0]).
+
+---
+
+## RUNG 74 — THE UNIFORM MECHANISM DECODED:
+live values flow through the DRAW CALL'S
+operation-stack blocks; the token carries
+packed locators; two instrument crashes
+bought a wrap-site rule (stubs 8ef1d296 →
+fa9752bf → d08c224d → 4c22c4c0, clean final)
+
+- **THE UNIFORM VALUE LOCATION (consumer-side
+  decode, zero guest risk):**
+  `glvmPreloadFPTransformFour` (glp 0xb6d30)
+  reads the TOKEN's `+0x08` flags word — bits
+  `0x4000<<k` select param classes — and for
+  each set bit takes the entry at token word
+  index `n(+0x7c)+1+k`, passing it to
+  `glvmOperationStackPreloadBuffer` (glp
+  0xafa80) — a pure ADDRESS CALCULATOR: the
+  entry is a PACKED DESCRIPTOR (type nibble at
+  bits 16-19, counts in bits 32-63), and the
+  result is an address INSIDE the operation-
+  stack block (rdi = the transform call's
+  stack args). **The shader's live uniform
+  values live in the per-draw operation-stack
+  blocks — rung 73's fixed args `rcx=ctx+0xe00`
+  and `r8=ctx+0xf50` — exactly where the
+  transform hook already sits.**
+- **CORRECTION to the ABI doc:** the "+0x78/
+  +0x7c sampler-key arrays" are the token's
+  EMBEDDED PARAM DESCRIPTOR TABLE (+0x7c = the
+  index base; entries = packed descriptors) —
+  which is why the float's cache keys memcmp
+  them: they locate every param class the JIT
+  will read.
+- **THE ENGINE-SIDE SOURCE (runtime, jellyfish
+  clean run 4c22c4c0):** the modify-ctx's
+  +0x538 entries are uniform-buffer NODES
+  ({0, tag, counter<<32|slotid, 0x100000003,
+  next} — 0x380-byte stride) whose header
+  counter TICKS PER FRAME (slot 3: 1→2) — the
+  engine's per-frame uniform buffer cache that
+  fills the operation stack at draw time.
+- **LIVE SIGHTING (same run):** the raster
+  ctx's +0x188 reads SET-thunk EVERY FRAME
+  with 190=0 and the two jellyfish tokens
+  alternating at +0x198 — the per-frame
+  program switch resets the slot before the
+  wrap can catch calls (calls=0 under
+  jellyfish; the rung-73 scenes accumulated
+  20k calls because their programs stayed
+  bound). First live confirmation of
+  gldSetFPTransformFunc on the slot.
+- **TWO INSTRUMENT CRASHES, ONE NEW RULE:**
+  1. 13:52:47 SIGSEGV at pp_draw_state+533 —
+     chained derefs during a modify that fires
+     inside glClear's deferred-state update at
+     scene reset (gleUpdateFragmentStateProgram
+     ← gleUpdateDeferredState ← glClear_Exec).
+     Fix: ALL chained derefs removed from poll
+     paths (direct ctx-field reads and pointer
+     VALUES only).
+  2. Bus error under the trimmed build — the
+     remaining write: the wrap wrote the hook
+     into the MODIFY-ctx's +0x188, where the
+     field was 0 and may not be a function
+     slot at all (different object class).
+     Rung 73's both-sites wrap surviving three
+     scenes was luck. **RULE: the wrap is
+     SWAP-SITE ONLY.**
+  Both crashes recovered cleanly (single
+  process; the reuse-context binary's teardown
+  skip held). Final build 4c22c4c0: clean
+  jellyfish run, exit 0.
+- **TRANSLATOR CONSEQUENCE (rung 75's capture
+  set):** uniforms are captured AT DRAW TIME
+  from the operation-stack blocks (fixed
+  offsets ctx+0xe00/+0xf50 + the rasterBlock
+  stack arg), located per-program by the
+  token's descriptor table — no separate
+  uniform channel exists to poll.
