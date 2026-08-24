@@ -13412,3 +13412,35 @@ cube" — scenes on screen through the whole chain
   63-64 the frame path — and now the engine's OWN
   content, on screen, by delegating the renderer
   contract to the renderer that wrote it.
+
+---
+
+## RUNG 66 PRE-REGISTERED — FORK B, STEP 1: THE DRAW
+DOOR CENSUS — which dispatch slots carry the draws
+(now observable: the float's dispatch makes them
+flow)
+
+**The question:** the float's dispatch entries render
+the scenes; which slots fire PER FRAME (the draw
+pipeline) vs once (setup)? Those slots' arguments are
+the ABI to decode for Mesa replay.
+
+**The instrument:** counting wrappers over EVERY
+dispatch slot the float fills (save its pointer,
+install a counter thunk); the swap wrapper logs
+per-frame deltas. Run build (vertex-lit) vs texture
+(textured) — the slots that differ name the
+draw/texture ABI surface.
+
+**Predictions:**
+- (i) A SMALL draw set: 2-4 slots with large per-
+  frame deltas (a draw + state slots), stable across
+  scenes; their args decode to vertex/state records.
+- (ii) ONE mega-slot: the flush/batch entry carries
+  everything (GLVM's whole batch) — the ABI is one
+  record, decode once.
+- (iii) MANY slots per frame (the full GL replay at
+  gld level) — Mesa replay means a wide ABI; the
+  census sizes the work.
+
+**Exposure:** stub-only (live swap), no boot.
