@@ -13942,3 +13942,30 @@ presenter
     path; the presenter's readback is the per-frame
     cost — terrain's pixels cross once per frame
     either way).
+
+---
+
+## THE FINAL MEASUREMENT — TERRAIN VISIBLE AT 37
+FPS: the arc closes with the best number on the
+only path that shows pixels
+
+```
+CPU float raster        24,826 ms/frame     visible
+GPU zero-copy (wire)       35.8 ms  28 FPS   black (UTM import)
+GPU window path (visible)  27.6 ms  37 FPS   VISIBLE — in the window
+```
+
+- The visible GPU path is the FASTEST measured —
+  terrain at ~900× the CPU raster, pixels in the
+  app's window, clean exit, desktop intact.
+- **THE SESSION'S COMPLETE RESULT SET:** GPU
+  rendering live (Mesa→virgl→Apple M4 Pro); a
+  visible presenter (the window path); a
+  transport-proven zero-copy fallback banked with
+  full lifecycle (bind/flush/release/watchdog) for
+  the day a display stack imports the scanout fd;
+  the float trampoline giving the engine's own
+  renderer with visible CPU content; and the whole
+  diagnostic ladder — capsets, format codes, the
+  draw-door census, the UTM debug log — in the
+  ledger.
