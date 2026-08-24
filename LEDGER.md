@@ -15563,3 +15563,43 @@ validated (host-only rung, zero guest risk)
   differential-verified 22/22 against
   ppdecode's banked text; then embedded in
   the stub for runtime translation.
+
+---
+
+## RUNG 77 (SECOND THIRD) — THE OPERAND WORD
+DECODED: register class, index, flags; the
+class jump table bound to its handlers
+(static + Rosetta, host-only)
+
+- **THE CLASS MAP (jump table at glp 0xd2c90,
+  base+{0x101,0x14,0x12f,0x206,0x230}):**
+  `(operand_word0 >> 6) & 7`:
+```
+0 = att   → 0xd2d91 "att"
+1 = tmp   → 0xd2ca4 (inline 't','m','p')
+2 = prm   → 0xd2dbf "prm"
+3 = res   → 0xd2e96 "res"
+4 = adr   → 0xd2ec0 "adr"
+5-7       → immediate/constant path (0xd2f02;
+            '{-1}'/'{0}'/float literals)
+```
+- **THE OPERAND WORD LAYOUT (banked:
+  probe/pp-word-format.md):**
+  - w0 bits 0-2: width/type (`:4F/:1I`)
+  - w0 bits 3-5: sign/saturation flags
+    (per-component "-x..-w" at 0xd3308+)
+  - w0 bits 6-8: register class (above)
+  - w0 bits 12-13: abs/negate (testb
+    $0x10/$0x20 at 0xd2c00/0xd2c34)
+  - +0x06 u16: REGISTER INDEX — indexes the
+    per-class NAME TABLE (pretty names;
+    -1/missing → numeric fallback 0xd30cf)
+  - swizzle: post-class-name decode
+    (.x/.y/.z/.w loop at 0xd2f9e+; exact
+    word1 bit positions still unverified)
+- **REMAINING (renumbered):** per-opcode
+  lengths; swizzle bits; immediate encoding
+  (F vs I); the TEX sampler descriptor
+  (0xd5152, kinds 1D/2D/3D/CUBE/SHADOW*);
+  declaration-table formats. Then
+  probe/ppdec.c, differential-verified 22/22.
