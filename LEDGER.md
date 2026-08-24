@@ -13775,3 +13775,34 @@ scanoutPresent3D: RELEASED res=261
 - **OPERATIONAL RULE LIFTED:** zero-copy runs are no
   longer reboot-to-recover (pending the eyes' final
   confirmation of the restored desktop).
+
+---
+
+## RUNG 67c RESULT — THE WATCHDOG: SIGKILL death
+auto-recovered; all death classes closed
+
+- **THE TEST (this boot, live):** GLMark launched →
+  zero-copy frames flowing → `kill -9` → 10.6 IOKit
+  skipped the teardown (clientClose never fired —
+  the observed gap) → within ~2 s:
+```
+VMVirtIOFramebuffer: 3D scanout STALE (no flush)
+  — watchdog RELEASE
+```
+  The refresh tick noticed the silence and forced
+  the release — the desktop recovered WITHOUT
+  manual action. The complete death-class matrix:
+  clean exit (clientClose), crash (clientDied →
+  clientClose), kill/hang/teardown-skip (the
+  watchdog) — all land in restore2DScanout.
+- **THE MECHANISM:** scanoutPresent3D stamps
+  m_scanout3d_last_flush per frame; the framebuffer's
+  existing refresh tick (already running, stood down
+  during 3D) polls scanout3dStale() — bound AND
+  silent past ~2 s → releaseScanout3D(). Raw
+  mach_absolute_time delta (TCG ≈ 1 GHz; coarse is
+  fine at 10-30 FPS flush rates).
+- **THE ZERO-COPY SYSTEM IS COMPLETE:** GPU
+  rendering, fullscreen scanout presentation, and
+  release on every death class. The operational
+  rule is lifted.
