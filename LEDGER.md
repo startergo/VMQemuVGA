@@ -15642,3 +15642,36 @@ INSTRUCTION BOUNDARIES
   ppcorpus-2026-08-24.txt) is checkable.
 - Differential state: NOT MET (structure
   walk only). No claim of completion.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 2) — THE SIMPLE
+LENGTH MODEL FALSIFIED; operands pack denser
+than one word each
+
+- **THE CONSTRAINT SOLVE (22 files, text-arity
+  model L=1+arity):** every file's walk fails
+  or over/undershoots — no file lands exactly
+  at word_count. The model is FALSIFIED as
+  stated.
+- **THE w30 EVIDENCE for why:** consecutive
+  MOV op words at words 15 AND 16 (both w0
+  decode to opcode 0) — no 2 operand words
+  fit between them. `MOV dst, src` must pack
+  BOTH registers into fewer than 3 words —
+  most plausibly registers pack into the op
+  word's upper 32 bits (w1) and/or two
+  registers share one word. RET at w26
+  confirmed (op 77) with 3 trailing words.
+- **THE AUTHORITATIVE NEXT READ (named):**
+  the per-opcode HANDLERS in
+  glpDisassemble1Op's jump table — each
+  handler's pointer arithmetic states its
+  instruction's word count and operand
+  packing directly. Read MOV (handler for
+  opcode 0), ADD (31), TEX (66), RET (77)
+  first: four handlers pin the pattern.
+- Differential: still NOT MET. The scaffold
+  and the falsified model are both banked —
+  the next session starts from the handlers,
+  not from guesses.
