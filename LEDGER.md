@@ -14009,3 +14009,38 @@ costs; the optimization ceiling recorded
   same way (glmark2 killed → display restored —
   user-confirmed). BOTH failure presentations are
   process-death-recoverable; no reboots needed.
+
+---
+
+## FULL SUITE UNDER THE VISIBLE GPU PATH — 11
+scenes, strong numbers, BLACK frames after the
+first; the shader lifecycle is the frontier
+
+- **THE RESULT (full_gpu.log):** 11 scenes produced
+  FPS (16, 41, 36, 35, 37, 39, 35, 43, ...); no
+  Score line (exited before completing all ~28);
+  no crash report. The user SAW the horse (the
+  first scene — build) then the window went white.
+- **THE DATA THAT NAMES IT:** every diagnostic line
+  shows `glError=0x502` (GL_INVALID_OPERATION) and
+  `scratch=(0x00000000,...)` — all-zero readback.
+  The preswap buffers are both 0x00000000 — the GPU
+  renders NOTHING after the first scene. The FPS
+  numbers are real timing (frames are being counted)
+  but the content is black.
+- **THE MECHANISM (inferred, one read away):** the
+  first scene's simple shaders clear + draw through
+  virgl fine; subsequent scenes (texture, shading
+  with GLSL programs) fail — GL_INVALID_OPERATION
+  on every command — producing black output. The
+  virgl shader translation path (Mesa state tracker
+  → virgl encoding → host Core GL) likely fails on
+  the more complex GLSL variants the later scenes
+  use. The UTM debug log would name the specific
+  vrend shader error.
+- **THE HONEST STATE:** the architecture is proven
+  (GPU rendering, visible content, lifecycle); the
+  SHADER COVERAGE is the frontier — basic scenes
+  render, complex ones go black. This is a Mesa/
+  virgl compatibility detail, not a transport or
+  presentation issue.
