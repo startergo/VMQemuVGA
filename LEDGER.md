@@ -14144,3 +14144,51 @@ diag[2..5] scratch=(0xff000000,...) glError=0x502
   log the virgl command stream's opcodes; the first
   command that the host rejects (visible as the
   first GL error after MakeCurrent) is the seed.
+
+---
+
+## RUNG 66 CORRECTED — the draw mechanism decoded:
+the renderer is the SHADER COMPILER, the engine is
+the RASTERIZER; the draw door is the pipeline
+program, not a draw call
+
+- **THE FLOAT'S OWN PRIMITIVE ENTRIES (+0xb8
+  BeginPrimitiveBuffer, +0xc0 EndPrimitiveBuffer,
+  +0xf8 RenderVertexArray) are EIGHT-BYTE STUBS
+  (`xor eax,eax; ret`) — even the float doesn't
+  draw through them.** The dispatch table is state
+  management; the primitive slots are registration
+  markers only.
+- **THE ACTUAL MECHANISM (the float's imports):**
+  `gldModifyPipelineProgram` calls
+  `glvmCreateModularFunction` +
+  `glvmBuildModularFunctionDeferred` — compiling
+  the shader into LLVM JIT functions — and the
+  ENGINE executes them via
+  `glvmInterpretFPTransformFour` per draw, writing
+  pixels directly into the drawbuffer.
+  The renderer plugin NEVER receives a draw call;
+  it receives shader compilations. The ENGINE
+  rasterizes.
+- **THE GLD DRAW DOOR (corrected from rung 66):**
+  it exists — at the PIPELINE PROGRAM level. The
+  stub receives `gldModifyPipelineProgram` per
+  frame (the census showed +2 per frame). To route
+  draws to the GPU from the GLD path:
+  1. Intercept the pipeline program compilation
+  2. Translate the program state (shaders,
+     uniforms, textures, vertex layout) into Mesa
+     GL calls on the embedded virgl context
+  3. Handle vertex state through the same path
+  This is writing a virgl pipeline-program
+  backend — the stub becomes a translator from
+  the GLD's pipeline-program ABI to Mesa.
+- **THE RUNG-66 CENSUS RE-READ (user's correction
+  applied):** "draws never cross the renderer
+  boundary" was measured under a stub whose
+  preconditions may not have been satisfied. The
+  corrected statement: the DISPATCH TABLE carries
+  no draws (proven by the float's own stubs at the
+  primitive slots); the PIPELINE PROGRAM entry is
+  the renderer's per-frame touchpoint — and it
+  fires (+2 per frame, stable).
