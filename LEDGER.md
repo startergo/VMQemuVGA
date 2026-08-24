@@ -14498,3 +14498,477 @@ is a development tool, not the destination
      or window path)
   5. Zero env vars, zero configuration — the GLD
      IS the GPU driver
+
+---
+
+## 2026-08-24 — THE PIPELINE-PROGRAM ABI DECODED
+(static disassembly, x86_64 slices of the guest's
+GLRendererFloat / GLEngine / libGLProgrammability /
+libGLVMPlugin; full document:
+`docs/pipeline-program-abi.md`)
+
+- **CORRECTION of the rung-66 statement
+  "`gldModifyPipelineProgram` calls
+  glvmCreateModularFunction +
+  glvmBuildModularFunctionDeferred": FALSE.**
+  `gldModifyPipelineProgram` (float `0x1a60e`) is
+  invalidate-only: `--program->0x20` (serial bump)
+  on flags&2, token-free + GLVM-list release only
+  on flags&1 — the engine's every observed call
+  site passes `edx=2`, so the release path never
+  fires from those sites. The compile lives in
+  `gldBuildFPTransformFunc` (float `0x1470`),
+  reached only through the lazy thunk
+  `gldSetFPTransformFunc` installed at
+  `renderctx+0x188`.
+- **`glvmCreateModularFunction` IGNORES ALL
+  ARGUMENTS** (glp `0x454c`: bare
+  `glvm_function_new`). Its `(0x10, &fpKey, 1)`
+  call shape carries no data.
+  `glvmBuildModularFunctionDeferred(func, 0,
+  stream, 8*stream->0x10)` memcpy's that many
+  bytes of the PPStream into `func->0x98` and
+  queues `glvm_deferred_build_modular` — the
+  stream IS the compile input.
+- **The PPStream (a.k.a. PPStreamToken) is a flat
+  8-byte-word IR**: `+0x00` u16 type (0x8B30
+  fragment / 0x8B31 vertex), `+0x02` u16 refcount,
+  `+0x03` flags (bit0 immutable), `+0x10` u32 word
+  count, binding tables at `+0x50` (16-byte
+  attrib entries) / `+0x54` / `+0x78` / `+0x7c`.
+  GLEngine compiles GLSL with the Khronos **Sh**
+  compiler inside libGLProgrammability (fully
+  symbolized, 4981 externals); no GLSL text
+  crosses below GLEngine.
+- **THE TEXT BRIDGE EXISTS: `glpPPDisassemble`
+  (glp `0xd5ba5`, non-exported) takes a PPStream
+  and returns malloc'd disassembly text**, used
+  per-stage by `TGenericLinker::getPPStreamString`
+  (glp `0x96484`). Callable by slide+offset on
+  this fixed 10.6.8 target. The exported
+  `PPStreamTokenPrint` (glp `0x9ec8f`) is an
+  EMPTY STUB — do not use.
+- **The dispatch slots**: `+0x2b8` create
+  `(engine+0x7128, &prog->0x20[i], prog+0xfe0)`,
+  `+0x2c8` modify `(engine+0x7128, prog->0x20[i],
+  flags)`, `+0x2d0` unbind `(engine+0x7120,
+  old->0x18[i])`; renderer count at
+  `engine+0x799a`; per-renderer records stride
+  0x888. The +2/frame census = one modify per
+  program array, two arrays (target 0 and 2).
+- **Two lazy-thunk compilers, one per stage**:
+  vertex ENGINE-side (`engine+0x58f0` ←
+  `gleSetVPTransformFuncAll`, token
+  `engine+0x5900`, func `engine+0x58f8` — all
+  reset on rebind); fragment RENDERER-side
+  (`renderctx+0x188` ← `gldSetFPTransformFunc`,
+  token `renderctx+0x198`, func
+  `renderctx+0x190`). Draws cross at the
+  transform slots (~40 indirect `*0x188(` call
+  sites inside the float), NOT at Modify.
+- **The transform-call ABI decoded**
+  (`gldLLVMFPTransform` float `0x1b80`): r9d =
+  4-stepped count; raster block from
+  `renderctx+0x2e0` (+0x470 when `+0xc0c` set);
+  textures `renderctx+0x780[32]`; uniforms
+  `renderctx+0x538`; state `renderctx+0x740`;
+  one `glvmPreloadFPTransformFour` then
+  `glvmInterpretFPTransformFour` per step.
+- **The GLD program object (0x28 B)**:
+  `+0x00` desc, `+0x08` PPStream, `+0x10` ctx,
+  `+0x18` GLVM cache list (nodes 0x1c8, ≤32,
+  LRU), `+0x20` serial. Create (float `0x1a6b0`)
+  accepts ONLY descriptors with target byte
+  (`desc+0x2`) == 2; else writes sentinel 0x123.
+- **EVIDENCE CLASS: all static. Nothing above has
+  been runtime-verified** — no instrument has yet
+  dumped a descriptor or disassembled a live
+  stream.
+- **THE CORRECTION IN ITS STRONG FORM — the
+  rung-66 family has now been wrong twice, both
+  times the same way.** First: "draws never
+  reach the renderer" (true, but not for the
+  reason inferred — the primitive slots are
+  stubs; the draws cross at the transform
+  slots). Second: "ModifyPipelineProgram is the
+  draw door / carries the program state" (false
+  — it is a serial-bump ping; the state arrived
+  at create and the draws cross elsewhere). Both
+  errors were reasoning about what an entry
+  point SHOULD do from its name and census
+  position, and both died by reading the
+  disassembly. Rule reaffirmed: for any GLD
+  entry point, the first description written
+  down is the float's own instructions, not the
+  call's name.
+- **glpPPDisassemble changes the translator's
+  cost class:** the first working translator
+  reads TEXT and emits GLSL; the binary word
+  format need not be understood at all, only
+  parsed. Decoding the word IR is an
+  optimization, not a prerequisite.
+- **THE THUNK-TIMING HAZARD (why runtime
+  verification is not a formality):**
+  `glvmRequestFunctionPointerWrite` swaps
+  `ctx->0x188` after the first call. A per-draw
+  hook installed late sees a slot that has
+  already moved; a hook ON `gldSetFPTransformFunc`
+  sees only the first call unless the thunk is
+  never allowed to install the JIT function. The
+  dump instrument must therefore capture at
+  create/modify time (before any build runs),
+  and a future per-draw translator must choose
+  deliberately: keep the thunk (intercept the
+  setter, never forward the build) or hook the
+  interpreter entries.
+- **NEXT (pre-registered):** instrument the
+  stub's `gldCreatePipelineProgram`/`gldLoad`
+  path — dump `desc+0x00` (type), `desc+0x02`
+  (target), `desc+0x08` (stream), `stream+0x10`
+  (word count), and call `glpPPDisassemble` by
+  slide+0xd5ba5 on the stream. Prediction: under
+  GLMark, streams with type 0x8B31 and 0x8B30
+  arrive with nonzero counts and the dump is
+  readable shader text. If `desc+0x08` is 0 at
+  create (link later), the dump hook moves to the
+  first modify after a nonzero `desc+0xfe8`.
+- **EXTENT CROSS-CHECK added to the same run
+  (two readings of one artifact, the max_samples
+  discipline):** `glvmCreateModularFunction`
+  ignoring its arguments means the payload
+  enters only at `glvmBuildModularFunctionDeferred`,
+  whose `ecx = 8*stream->0x10` is the float's own
+  statement of the stream's byte extent. The
+  stub cannot see that call directly, but
+  `glpPPDisassemble` traverses the stream with
+  its own parser: if the dump completes and
+  returns well-formed text without reading past
+  the allocation, that is the second reading.
+  Prediction: dumped text length scales with the
+  header count, and both readings agree. A
+  mismatch (dump stops early / overruns) kills
+  the `+0x10` interpretation and the word-format
+  decode moves from optimization to blocker.
+
+---
+
+## RUNG 71 RESULT — THE DUMP INSTRUMENT RAN;
+ALL FOUR PREDICTIONS RESOLVED; the shader text
+is REAL and READABLE (stub b7e34cfd, guest
+run 10:56:41-10:57:48, pid 1180, 7 scenes)
+
+- **THE RUN:** `gldCreatePipelineProgram` and
+  `gldModifyPipelineProgram` instrumented in the
+  stub (dump at call time, forward intact);
+  GLMark launched bare (GLD route, no env);
+  214 rung71 lines. Scenes completed: build×2,
+  texture×3, shading gouraud + blinn-phong-inf
+  (5-11 FPS, the CPU-float rate).
+- **PREDICTION 1 (0x8B30 + readable text):
+  CONFIRMED 7/7 scenes.** Every scene's fragment
+  stream arrived at MODIFY with nonzero count
+  and disassembled cleanly. Sample (blinn-phong,
+  words=110 → 1135 chars):
+```
+!!ARBfragmentshader
+TEMP tmp0:3F, ... tmp12:4F;
+ATTRIB att0:3F = fragment.texcoord[0];
+PARAM prm0:3F = {20.0, 20.0, 10.0, 0.0};
+OUTPUT res0:4F = result.color;
+main:
+  MOV:3F tmp1.xyz:3, att0.xyz:3;
+  NRM:3F tmp0.xyz:3, tmp1.xyz:3;
+  DOT:3F tmp5.x:1, tmp0.xyz:3, tmp2.xyz:3;
+  MAX:1F tmp6.x:1, tmp5.x:1, prm2.x:1;
+  POW:1F tmp11.x:1, tmp10.x:1, prm4.x:1;
+  ...
+  RET (TR.xxxx);
+END
+```
+  The opcode set is ARB_fragment_program's
+  (MOV/NRM/DOT/MAX/MUL/ADD/POW + swizzles
+  `res0.___x`). **UNIFORMS ARE BAKED IN as PARAM
+  literals** ({20,20,10} = light dir, {100.0} =
+  shininess, material colors) — per-frame
+  uniform updates must flow another way
+  (ctx+0x538 cache / relink).
+- **PREDICTION 2 (0x8B31 also arrives): REFUTED
+  AS STATED — STRUCTURALLY.** Vertex descs
+  (target 0) arrive at create with stream=0x0
+  and NEVER receive a stream — the float's
+  create rejects target≠2 with the 0x123
+  sentinel, and no modify-dump ever fired for
+  them. Runtime-CONFIRMS the static decode:
+  vertex is wholly engine-side
+  (gleSetVPTransformFuncAll, engine+0x58f0);
+  the renderer sees only fragment (0x8B30) +
+  raster-op (0x8804) programs.
+- **PREDICTION 3 (fallback hook): CONFIRMED
+  NEEDED AND SUFFICIENT.** Creates always
+  arrive stream=0x0; the stream first appears
+  at the first modify after link (desc+0x08 ==
+  engine prog+0xfe8 going nonzero).
+- **PREDICTION 4 (extent cross-check):
+  CONFIRMED ACROSS THE RANGE** — words 30→197
+  chars, 42→385, 110→1135; the disassembler's
+  own traversal ends at a clean `END` every
+  time. Header count and parser extent agree;
+  the `+0x10` field interpretation stands and
+  the word-format decode stays an optimization.
+- **THE TYPE TAXONOMY (runtime, wider than the
+  static decode):** target 2 carries BOTH
+  `0x8B30` (GLSL fragment) and `0x8804`
+  (RASTER-OP programs, always words=24 — the
+  gldAddRasterOpsToPPStream output); target 1 =
+  `0x8DD9` (the transform-feedback constant);
+  target 0 = `0x8B31` vertex (stream never
+  sent). The instrument's type guard skipped
+  disasm for 0x8804/0x8DD9 — relaxing it dumps
+  the raster-op stream (a translator input,
+  next instrument pass if needed).
+- **THE SLIDE ARITHMETIC VERIFIED LIVE:** glp
+  image base 0x7fff80d9a000; disasm entry
+  resolved at 0x7fff80e6fba5 = base+0xd5ba5;
+  returned malloc'd text, freed cleanly.
+- **THE TEARDOWN CRASH — SETTLED SAME DAY by a
+  three-run isolation protocol (below): the
+  glMapBuffer path corrupts the guest heap; the
+  crash is the context-destroy walk over the
+  damage. The rung-71 entry above is superseded
+  by the RUNG 71c results.**
+
+---
+
+## RUNG 71b RESULT — THE PARAM-LIVENESS TEST:
+the stream is FROZEN after link; live uniform
+values flow OUTSIDE the PP stream (tick stub
+71675da2/ec789bb3, scenes bump + jellyfish)
+
+- **THE TICK INSTRUMENT:** `VMGLD_PPTICK=1`
+  re-disassembles the bound fragment stream
+  EVERY SWAP (decoupled from modify traffic —
+  the per-frame modifies carry only the 0x8804
+  raster-op programs; the fragment program is
+  not re-modified per frame).
+- **bump (light is a source-level const
+  {20,20,10} in scene-bump.cpp — confirmed by
+  reading the source, NOT a discriminator):**
+  74 SAME / 1 CHANGED (the adoption itself).
+  Stream byte-frozen across ~75 frames.
+- **jellyfish (THE discriminator —
+  `program_["uCurrentTime"] = currentTime_`
+  written EVERY FRAME, scene-jellyfish.cpp:570):
+  12 creates total, ALL at setup; ZERO creates
+  across 13 s of animation. Same-program
+  re-visits: SAME every time, including a
+  1635-char program read SAME across a 2-second
+  span while currentTime advanced ~2 s/frame
+  (~0.5 FPS — huge deltas).**
+- **VERDICT: the baked PARAM literals are
+  LINK-TIME DEFAULTS. Live uniform values flow
+  through the engine's param table
+  (engine+0x4868[target] → prog+0x110) read at
+  draw time (ctx+0x538 /
+  gldResetUniformBufferCachePointers) — the
+  engine never relinks on uniform change and
+  never patches the stream in place.**
+- **TRANSLATOR CONSEQUENCE (the design fork
+  resolved):** a stream-keyed cache IS viable
+  for the shader BODY (the stream is stable per
+  link — cache on stream bytes), but the
+  translation must map each baked literal to
+  its param-table slot (the binding tables at
+  stream+0x50/+0x54/+0x78/+0x7c carry the
+  mapping) and emit a REAL uniform, fed per
+  frame from the param table. Emitting the
+  literals freezes every animating value.
+- **Jellyfish side datum:** two fragment
+  programs alternate per frame (447 and 1635
+  chars — two passes); the tick's single
+  compare buffer made every adoption log
+  CHANGED; the signal is same-program
+  consecutive re-visits, all SAME.
+
+---
+
+## RUNG 71c — THE CRASH CLASS ISOLATED: the
+glMapBuffer path corrupts the guest heap; the
+abort fires wherever the next context destroy
+walks the damage (three-run protocol, all same
+boot, tick stub ec789bb3, binary 12:12
+76d4dca8)
+
+- **THE CRASH LEDGER (all under GLMark full
+  suite, guest pid varies):**
+  - 08:10, 09:37 (old binary): `WaveMesh::update`
+    → `Mesh::update_vbo` memcpy — the wave bug,
+    FIXED in the glmark2 repo; the 09:53 binary
+    already carries the fix (full suite clean
+    under the HEAD stub, wave scene included).
+  - 10:57 (09:53 binary + dump stub):
+    `gleFreeTextureState+115` at scene-8 reset.
+  - 11:27 (09:53 binary + tick stub): heap
+    ABORT in `free` from `gleFreePixelMap+89`.
+  - 11:36 (12:12 binary + tick stub):
+    `gleDestroyEnableHashTable` after shadow.
+  Three different GLEngine per-context structs,
+  all destroyed at `gliDestroyContext` ←
+  `CGLReleaseContext` ← `GLStateMacOS::reset()`
+  — random heap corruption discovered at the
+  destroy walk. glmark2 never calls glPixelMap.
+- **THE THREE-RUN PROTOCOL (pre-registered,
+  then executed verbatim):**
+```
+1. --reuse-context (full suite, context
+   destroyed once at exit):   CLEAN, Score 4
+2. -b buffer:update-method=map (single
+   scene):                    SEGFAULT
+   (delayed: crash AT the scene-end reset,
+   gleDestroyEnableHashTable — not in the
+   write)
+3. -b buffer:update-method=subdata (same
+   scene):                     exit 0 CLEAN
+```
+  **Verdict: (2) crashes / (3) clean / (1)
+  clean = the map path damages the heap; the
+  per-scene context destroy is where it becomes
+  fatal; reuse-context masks it.**
+- **THE ONLY raw-pointer write in glmark2 is
+  the map path** (mesh.cpp:456-476,
+  Mesh::update_single_vbo — the two
+  update-method=map variants); everything else
+  is sized uploads. This path already produced
+  the glMapBuffer-returns-NULL crash class
+  (commit 1289280 added the NULL fallback).
+- **THE FLOAT'S BUFFER ABI (why this topology):
+  `gldCreateBuffer` mallocs a 16-BYTE HEADER
+  {engine-ptr at +0, engine-value at +8};
+  `gldDestroyBuffer` frees the header;
+  `gldLoadBuffer`/`gldFlushBuffer`/
+  `gldPageoffBuffer`/`gldSyncBufferObject` are
+  NO-OP STUBS returning success (float 0x11b02-
+  0x11b36). The mapping is ENGINE-side
+  bookkeeping over engine-owned storage — the
+  corruption is in the engine's map path on
+  this stack, NOT in kext or stub code.**
+- **THE INSTRUMENT'S ROLE (negative control
+  re-read):** HEAD stub full suite CLEAN vs
+  instrumented crashes = the instrument's
+  disasm malloc/free churn perturbs the heap
+  layout and turns the latent map corruption
+  fatal — a layout perturbator, not the
+  corruptor. **SUPERSEDED same day by TEST 4 +
+  the r71f scene log — see the corrected
+  attribution below.**
+- **TEST 4 (single-scene map under the HEAD
+  stub, 12:12 binary): CLEAN — exit 0,
+  Score 1.** The layout-luck question is
+  closed by observation, and the answer kills
+  the perturbator hypothesis in both
+  directions:
+  - map + no-disasm + destroy (test 4): CLEAN
+  - map + disasm + destroy (test 2): CRASH
+  - subdata + disasm + destroy (test 3): CLEAN
+  - disasm, NO map, 8 scenes of destroys
+    (r71f — its log ends after [shading]
+    phong, BEFORE any buffer scene): CRASH
+  - disasm + map + NO destroys (test 1,
+    --reuse-context): CLEAN
+- **THE CORRECTED ATTRIBUTION: the stub's
+  in-process `glpPPDisassemble` calls are the
+  damaging agent — present in EVERY crashing
+  run, absent from every clean HEAD run —
+  dose-dependent (one scene's calls under
+  subdata: survivable; ~8 scenes' calls: fatal
+  at the 8th destroy), with the map path an
+  AGGRAVATOR that lowers the threshold to a
+  single scene. The exact glp-internal
+  mechanism is unknown (candidate: the global
+  atom/string tables GLEngine shares with glp
+  and frees at context destroy).**
+- **INSTRUMENT DESIGN RULE (from the
+  correction): never call `glpPPDisassemble`
+  in-process from the stub. Future capture
+  designs dump the RAW STREAM WORDS (pure
+  memcpy read) and decode OFFLINE — the host
+  holds the md5-identical libGLProgrammability
+  (a0185546b98c1a020bb9474391155c75) for a
+  host-side decode tool.**
+- **FIX DIRECTION (glmark2-side, not
+  VMQemuVGA):** force update-method=subdata on
+  this platform, or sanity-verify the mapping
+  (size/lifetime) before writing. No kext or
+  stub change is indicated by the evidence.
+- **STATE NOTE: everything in the GLD route
+  today is PURE SOFTWARE GL — the CPU float
+  (GLVM rasterization), stub strings
+  "software, no rendering", no GPU traffic. The
+  GPU participates only under the parked
+  substitute route. The observed CPU load under
+  GLMark is the float rasterizing; that is the
+  pre-translator baseline, not a defect.**
+- **GUEST BINARY STATE:** /Users/glmark/
+  glmark2-macos = the 12:12 repo build
+  (md5 76d4dca8bdc83bf3ada726bee8dcaee2,
+  verified host==guest). **SUPERSEDED same
+  day: the map-disable build shipped after
+  (see below).**
+
+---
+
+## GLMARK2-SIDE FIX LANDED — the map path is
+disabled on 10.6-SDK builds (glmark2 repo,
+same day)
+
+- **`src/gl-state-macos.mm` —
+  init_gl_extensions() gates map resolution on
+  the SDK:** builds against the 10.6 SDK
+  (`__MAC_OS_X_VERSION_MAX_ALLOWED < 1070`,
+  which includes this cross-build) leave
+  `GLExtensions::MapBuffer/UnmapBuffer` null
+  with a one-time warning; modern-SDK builds
+  resolve them as before.
+- **`src/mesh.cpp` — update_single_vbo falls
+  back to glBufferSubData when the map entry
+  points are null** (every flavor guarded, not
+  just macOS) — a forced
+  `-b buffer:update-method=map` can no longer
+  reach a null call.
+- **BEHAVIOR ON THE FLOAT STACK: the two
+  update-method=map variants report
+  Unsupported (honest — SceneBuffer::
+  supported() fails on null map) instead of
+  silently timing subdata under a map label;
+  subdata/interleave variants and all other
+  scenes run normally; per-scene context
+  destroy stays (no --reuse-context
+  workaround needed for the BINARY).**
+- **WHAT THE FIX DOES AND DOES NOT CLOSE:**
+  the map aggravator is gone from the binary —
+  but the r71f crash class (stub disasm calls
+  + per-scene destroys, NO map involved) is
+  STUB-side and untouched by it. Full-suite
+  runs under the INSTRUMENTED stub remain
+  suspect; stable configs: HEAD stub (any
+  run), instrumented stub + single scenes, or
+  instrumented + --reuse-context (test 1
+  clean).
+- **Verified by the glmark2 repo's own builds:
+  the 10.6 path compiles, the modern-SDK path
+  syntax-checks clean with map resolution
+  intact. DEPLOYED AND OBSERVED on the guest:
+  binary c016aa40615a96268ee9c195a563fb35
+  (12:57 build) — the one-time warning fires
+  ("glMapBuffer disabled on this stack; VBO
+  updates use glBufferSubData"),
+  `[buffer] …update-method=map: Unsupported`,
+  exit 0. GUEST NOW RUNS THIS BINARY.**
+- **THE ARCHITECTURE STATUS:** the translator's
+  input contract is now VERIFIED — fragment
+  shaders arrive as text-recoverable PP streams
+  at modify time; uniforms bake in as literals;
+  raster ops arrive as separate 0x8804 streams.
+  Remaining before a first translator: the
+  raster-op stream dump (guard relaxation),
+  per-draw state capture (the transform-slot
+  hook), and the Mesa emit side.
