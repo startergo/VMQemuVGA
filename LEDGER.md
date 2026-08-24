@@ -13226,3 +13226,56 @@ surface's stride and shape offset, never the window's.
 KPI symbols — existing user-client machinery) + GLD
 swap entry change (live-swap); no config, no reboot
 beyond the kext install.
+
+---
+
+## RUNG 64 CHECKPOINT — THE PUSH LEG BUILT AND PROVEN;
+prediction (iii) FIRED: the engine does NOT write the
+GA surface; the frame's location is the open frontier
+(three hypotheses eliminated by instrument)
+
+- **0x600D gaPushSurface: LIVE** (commit 6e9e29f) —
+  the kernel reads the GA-bound surface's own backing
+  and runs the relay's flush+push tail; every swap
+  returns 0x0. Geometry banked:
+  **surf 800x622 stride 3600 shape (100,328)**.
+  This leg needs no changes when the frame source is
+  found — it composes.
+- **THE CENSUS VERDICT (in-kernel, first 5 swaps):
+  ALL ZERO — nonzero=0 distinct_head=0.** The engine
+  does NOT rasterize into the GA surface backing.
+  Prediction (iii) fires: the frames live in a
+  private buffer (the float's swap would have
+  blitted them — the slot our stub replaced).
+- **THE POINTER HUNT — all negative, each by
+  instrument:**
+  - ctx[0..0x800] and shared[0..0x4000]: no
+    0x105-band pointer (the GA lock mapping).
+  - engine+0x65c8 / +0x66d0 (first 0x100): dispatch
+    tables and float constants (0x4000,0x4000 pairs;
+    1.0f consts; table pointers) — content banked in
+    the stub log.
+  - **ctx+0x218 (the drawable object): ABSENT.** Our
+    attach mirror stores the type at +0x210 but never
+    assigns the drawable — the float's attach would
+    have. The engine renders with NO renderer
+    drawable: the raster target is GLVM-internal.
+- **NEXT LEAD (named):** the GLVM drawbuffer — find
+  via gliSwapBuffers' caller (gle) or the float's own
+  swap (grf) reading its SOURCE pointer; one
+  disassembly read names the buffer's home, then the
+  frame blit = copy rows → TRANSFER_TO_HOST_3D →
+  0x600B → existing present.
+- **STANDING PROCEDURES BORN THIS ARC (each cost a
+  run):**
+  1. **Post-boot: `chmod 666 /tmp/vm_gld_stub.log`**
+     — the first root GL process re-creates the log
+     root-owned at EVERY boot; sl's appends then fail
+     silently (hit twice; the marker's exit-1 is the
+     tell).
+  2. **`MACOSX10_6_SDK=<sdk> sh probe/deploy_gld.sh`**
+     when the shell loses HOME (empty $HOME breaks
+     the script's SDK fallback, twice this arc).
+  3. **Deploy verdicts grep DEPLOYED** — a piped
+     deploy failure is masked by tail's exit 0; a
+     silently-stale binary ran GLMark once this arc.

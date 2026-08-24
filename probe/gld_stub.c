@@ -83,6 +83,12 @@ static unsigned long g_proc_stand_in[64];
  * engine context base = sub-block − 0x79b8 (renderer idx 0). */
 static void* g_engine_subblock = NULL;
 
+/* RUNG 64 — the engine-side blocks the install entry receives (a2/a3
+ * = &engine[0x65c8]/&engine[0x66d0]); the swap scan follows them
+ * (deriving from the sub-block when the direct install ran). */
+static void* g_engine_block1 = 0;
+static void* g_engine_block2 = 0;
+
 /* RUNG 52 — THE CAPSET: virgl_hw.h's structs, copied verbatim
  * (same x86_64 layout rules as the host's producer; v1 = 77 words
  * = 308 bytes = the boot-logged VIRGL size exactly). */
@@ -1084,6 +1090,97 @@ long gld_swap_entry(void* dctx, void* a1, void* a2, void* a3,
             }
             if (!hits)
                 ep_log("rung64: SCAN — no 0x105-band pointer in ctx/shared");
+            /* RUNG 64c — THE DRAWABLE OBJECT at ctx+0x218 (rung 33's
+             * decode: the float computes buffer sizes from it — the
+             * renderer-surface home our attach mirror skipped). Dump
+             * its words; content-check every heap-band pointer it
+             * holds (a raster buffer reads VARIED; objects read
+             * pointers/zeros). */
+            {
+                unsigned char* drw = NULL;
+                if (dctx) drw = *(unsigned char**)
+                                ((char*)dctx + 0x218);
+                if (drw && (uintptr_t)drw > 0x10000
+                        && (uintptr_t)drw < 0x800000000000ull) {
+                    char db[512]; int dO = 0;
+                    dO += snprintf(db + dO, sizeof(db) - dO,
+                                   "rung64: drawable[0x218 -> %llx]:",
+                                   (unsigned long long)(uintptr_t)drw);
+                    for (int i = 0; i < 24 && dO < 470; i++)
+                        dO += snprintf(db + dO, sizeof(db) - dO,
+                                       " %llx",
+                                       *(unsigned long*)(drw + i * 8));
+                    ep_log(db);
+                    int content_dumps = 0;
+                    for (size_t off = 0; off < 0xC0
+                                        && content_dumps < 3;
+                         off += 8) {
+                        uint64_t v = *(unsigned long*)(drw + off);
+                        if (v >= 0x100000000ull && v < 0x110000000ull
+                            && (v & 0xFFF) == 0) {
+                            char hb[80]; int ho = 0;
+                            unsigned char* p =
+                                (unsigned char*)(uintptr_t)v;
+                            for (int c = 0; c < 16 && ho < 60; c++)
+                                ho += snprintf(hb + ho,
+                                               sizeof(hb) - ho,
+                                               "%02x", p[c]);
+                            char sb[224];
+                            snprintf(sb, sizeof(sb),
+                                     "rung64: drawable+0x%llx -> "
+                                     "0x%llx bytes:%s",
+                                     (unsigned long long)off,
+                                     (unsigned long long)v, hb);
+                            ep_log(sb);
+                            content_dumps++;
+                        }
+                    }
+                } else {
+                    ep_log("rung64: drawable[0x218] absent");
+                }
+            }
+            /* RUNG 64b — the engine blocks from the install entry
+             * (&engine[0x65c8], &engine[0x66d0]): dump both, and
+             * follow every app-heap-band pointer found in them with a
+             * 16-byte content read (the engine's raster buffer shows
+             * VARIED bytes; object headers show pointers). */
+            for (int bi = 0; bi < 2; bi++) {
+                unsigned char* blk = bi ? (unsigned char*)g_engine_block2
+                                        : (unsigned char*)g_engine_block1;
+                if (!blk && g_engine_subblock) {
+                    /* derive from the create-time sub-block (the
+                     * direct-install path never passes the blocks) */
+                    unsigned char* eng = (unsigned char*)g_engine_subblock
+                                        - 0x79b8;
+                    blk = eng + (bi ? 0x66d0 : 0x65c8);
+                }
+                if (!blk) continue;
+                char db[288]; int dO = 0;
+                dO += snprintf(db + dO, sizeof(db) - dO,
+                               "rung64: block%d[%llx]:", bi,
+                               (unsigned long long)(uintptr_t)blk);
+                for (int i = 0; i < 16 && dO < 250; i++)
+                    dO += snprintf(db + dO, sizeof(db) - dO, " %llx",
+                                   *(unsigned long*)(blk + i * 8));
+                ep_log(db);
+                for (size_t off = 0; off < 0x100; off += 8) {
+                    uint64_t v = *(unsigned long*)(blk + off);
+                    if (v >= 0x100000000ull && v < 0x110000000ull
+                        && (v & 0xFFF) == 0) {
+                        char hb[80]; int ho = 0;
+                        unsigned char* p = (unsigned char*)(uintptr_t)v;
+                        for (int c = 0; c < 16 && ho < 60; c++)
+                            ho += snprintf(hb + ho, sizeof(hb) - ho,
+                                           "%02x", p[c]);
+                        char sb[208];
+                        snprintf(sb, sizeof(sb),
+                                 "rung64: block%d+0x%llx -> 0x%llx bytes:%s",
+                                 bi, (unsigned long long)off,
+                                 (unsigned long long)v, hb);
+                        ep_log(sb);
+                    }
+                }
+            }
         }
     }
     virgl_read_app_clear_color(dctx);   /* RUNG 49: the app's color */
@@ -1158,7 +1255,9 @@ long gld_flush_entry(void* dctx, void* a1, void* a2, void* a3,
 long gld_fill_engine_calls(void* dctx, void* block1, void* block2,
                            void* a3, void* a4, void* a5)
 {
-    (void)dctx; (void)block2; (void)a3; (void)a4; (void)a5;
+    (void)dctx; (void)a3; (void)a4; (void)a5;
+    g_engine_block1 = block1;
+    g_engine_block2 = block2;
     char b[96];
     snprintf(b, sizeof(b),
              "rung46: install entry +0x50 CALLED (dctx=%p block1=%p)",
