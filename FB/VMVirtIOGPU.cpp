@@ -3815,6 +3815,74 @@ void CLASS::fenceDrop(uint32_t res_id)
 //   the guest backing write — the host's own iov path;
 //   transferToHost2D + flush — the desktop refresh's native path.
 
+IOReturn CLASS::gaPushSurface()
+{
+    uint32_t ga_id = vmSurfaceRegistryGetGABound();
+    VMAccelSurface* surf = ga_id ? vmSurfaceRegistryFind(ga_id) : NULL;
+    if (!surf || !surf->backing_memory || !surf->bytes_per_row) {
+        IOLog("gaPushSurface: no GA-bound surface\n");
+        return kIOReturnNotReady;
+    }
+    uint32_t dst_res = m_hblit_dst_res;
+    if (!dst_res) dst_res = m_display_resource_id;
+    gpu_resource* dst = dst_res ? findResource(dst_res) : NULL;
+    IOMemoryDescriptor* dst_mem = dst ? dst->backing_memory : NULL;
+    if (!dst_mem) {
+        IOLog("gaPushSurface: desktop backing missing\n");
+        return kIOReturnNotReady;
+    }
+    uint32_t dw = dst->width, dh = dst->height;
+
+    /* RUNG 64 census (first calls only): is there ENGINE content in
+     * the locked backing, or only our clear? Sample dwords across the
+     * shape-rect rows; count nonzero and distinct values. A clear-only
+     * surface is uniform; a rasterized frame is anything but. */
+    static uint32_t s_census = 0;
+    if (s_census < 5) {
+        s_census++;
+        const uint32_t stride = surf->bytes_per_row;
+        const uint64_t off = (uint64_t)surf->shape_y * stride
+                           + (uint64_t)surf->shape_x * 4;
+        uint32_t nonzero = 0, distinct_head = 0;
+        uint32_t first_words[4] = { 0, 0, 0, 0 };
+        const uint32_t rows = surf->height < 600 ? surf->height : 600;
+        for (uint32_t j = 0; j < rows; j += 37) {        /* sparse rows */
+            for (uint32_t c = 0; c + 4 <= surf->width; c += 53) { /* sparse cols */
+                uint32_t v = 0;
+                surf->backing_memory->readBytes(
+                    off + (uint64_t)j * stride + (uint32_t)c * 4,
+                    &v, 4);
+                if (v) nonzero++;
+                if (j == 0 && c / 53 < 4) first_words[c / 53] = v;
+            }
+        }
+        /* distinct count over the first row's samples */
+        for (int a = 0; a < 4; a++)
+            for (int b = a + 1; b < 4; b++)
+                if (first_words[a] != first_words[b]) distinct_head++;
+        IOLog("gaPushSurface: census %u — surf %ux%u stride %u shape "
+              "(%u,%u) sampled nonzero=%u distinct_head=%u head="
+              "%08x %08x %08x %08x\n",
+              s_census, surf->width, surf->height, stride,
+              surf->shape_x, surf->shape_y, nonzero, distinct_head,
+              first_words[0], first_words[1], first_words[2],
+              first_words[3]);
+    }
+
+    /* The relay's tail, verbatim: surface -> desktop backing at the
+     * LIVE shape rect, then push that rect to the host. */
+    vmSurfaceFlushToFramebuffer(surf, dst_mem, dw, dh);
+    uint32_t fx = surf->shape_x, fy = surf->shape_y;
+    uint32_t fw = surf->width, fh = surf->height;
+    if (fx + fw > dw) fw = dw - fx;
+    if (fy + fh > dh) fh = dh - fy;
+    if (fw && fh) {
+        transferToHost2D(dst_res, 0, fx, fy, fw, fh);
+        flushResource(dst_res, fx, fy, fw, fh);
+    }
+    return kIOReturnSuccess;
+}
+
 IOReturn CLASS::hostRelayBlit(uint32_t res3d, uint32_t ctx_id,
                               uint32_t src_fmt, uint32_t src_w, uint32_t src_h,
                               IOMemoryDescriptor* src_backing,
@@ -8102,6 +8170,14 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                                                    backing, x, y, w, h);
             }
             return kIOReturnBadArgument;
+        }
+
+        case 0x600D: { // gaPushSurface — RUNG 64: present the GA
+            // surface's OWN content (the engine's frames, if it writes
+            // the locked backing). No inputs; the kernel finds the
+            // GA-bound surface and runs the flush+push tail.
+            if (!m_gpu_device) return kIOReturnNotReady;
+            return m_gpu_device->gaPushSurface();
         }
 
         default:

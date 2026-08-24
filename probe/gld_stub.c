@@ -1040,9 +1040,80 @@ static long g_swap_count = 0;
 long gld_swap_entry(void* dctx, void* a1, void* a2, void* a3,
                     void* a4, void* a5)
 {
-    (void)dctx; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
     if (++g_swap_count > 5 && (g_swap_count % 500) != 0) return 0;
+    /* RUNG 64 — WHERE IS THE ENGINE'S FRAME? The GA lock mapped the
+     * drawable surface in the 0x105_000000 band (LockSurface
+     * addr=0x105100000 row=3600, kernel log). Scan the gli ctx and
+     * its +0x740 shared block for pointers into that band; dump 16
+     * bytes at the FIRST hit — clear-color bytes mean nothing but our
+     * relay ever wrote there; VARIED bytes mean the engine's frames. */
+    {
+        static int s_scan_left = 3;
+        if (dctx && s_scan_left > 0) {
+            s_scan_left--;
+            unsigned char* shared = *(unsigned char**)
+                                    ((char*)dctx + 0x740);
+            struct { const char* tag; unsigned char* base; size_t span; }
+            regs[2] = {
+                { "ctx",    (unsigned char*)dctx, 0x800 },
+                { "shared", shared,               0x4000 },
+            };
+            int hits = 0;
+            for (int r = 0; r < 2 && hits < 2; r++) {
+                if (!regs[r].base) continue;
+                for (size_t off = 0; off + 8 <= regs[r].span && hits < 2;
+                     off += 8) {
+                    uint64_t v;
+                    memcpy(&v, regs[r].base + off, 8);
+                    if (v >= 0x105000000ull && v < 0x106000000ull) {
+                        char hb[80]; int ho = 0;
+                        unsigned char* p = (unsigned char*)(uintptr_t)v;
+                        for (int c = 0; c < 16 && ho < 60; c++)
+                            ho += snprintf(hb + ho, sizeof(hb) - ho,
+                                           "%02x", p[c]);
+                        char sb[224];
+                        snprintf(sb, sizeof(sb),
+                                 "rung64: SCAN %s+0x%llx -> 0x%llx bytes:%s",
+                                 regs[r].tag, (unsigned long long)off,
+                                 (unsigned long long)v, hb);
+                        ep_log(sb);
+                        hits++;
+                    }
+                }
+            }
+            if (!hits)
+                ep_log("rung64: SCAN — no 0x105-band pointer in ctx/shared");
+        }
+    }
     virgl_read_app_clear_color(dctx);   /* RUNG 49: the app's color */
+    if (getenv("GLD_SWAP_RELAY_OFF")) {
+        /* RUNG 64 instrument: present NOTHING — the engine's own
+         * writes (if any) stay untouched for the scan and the eye. */
+        static int s_off = 0;
+        if (!s_off) { s_off = 1;
+            ep_log("rung64: SWAP relay OFF (GLD_SWAP_RELAY_OFF)"); }
+        return 0;
+    }
+    if (!getenv("GLD_SWAP_LEGACY")) {
+        /* RUNG 64 — THE FRAME PUSH: the engine rasterizes into the
+         * GA-locked backing (the kernel maps THAT memory into the
+         * app); the kernel reads it directly and runs the relay's
+         * flush+push tail. No host round trip, no clear. The census
+         * in gaPushSurface answers whether the engine truly writes
+         * there; GLD_SWAP_LEGACY=1 restores the rung-46 path. */
+        static int s_push_logged = 0;
+        kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x600D,
+                                               NULL, 0, NULL, 0,
+                                               NULL, NULL, NULL, NULL);
+        if (!s_push_logged || (g_swap_count % 500) == 0) {
+            s_push_logged = 1;
+            char b[80];
+            snprintf(b, sizeof(b), "rung64: SWAP push (0x600D) -> 0x%x", kr);
+            ep_log(b);
+        }
+        return 0;
+    }
     ep_log("rung46: SWAP fired (engine [0x66b0]) — presenting");
     if (virgl_ensure_fb() < 0) {
         ep_log("rung46: swap — ensure_fb FAILED"); return 0;
@@ -1775,6 +1846,30 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
         for (int i = 0; i < 16; i++)
             o += snprintf(b2 + o, sizeof(b2) - o, " %x", d[i]);
         ep_log(b2);
+        /* RUNG 64 — follow the descriptor's +0x30 pointer (the only
+         * pointer-shaped field; a CGS surface record?): dump 16 words
+         * at it. One dump per attach call is noisy — gate to the
+         * first few. */
+        {
+            static int s_dumped = 0;
+            if (s_dumped < 3) {
+                uint64_t pv;
+                memcpy(&pv, (unsigned char*)d + 0x30, 8);
+                if (pv > 0x10000 && pv < 0x800000000000ull) {
+                    uint32_t* q = (uint32_t*)(uintptr_t)pv;
+                    char b3[288];
+                    int o3 = 0;
+                    o3 += snprintf(b3 + o3, sizeof(b3) - o3,
+                                   "  desc+0x30 -> %llx:",
+                                   (unsigned long long)pv);
+                    for (int i = 0; i < 16 && o3 < 260; i++)
+                        o3 += snprintf(b3 + o3, sizeof(b3) - o3,
+                                       " %x", q[i]);
+                    ep_log(b3);
+                    s_dumped++;
+                }
+            }
+        }
     }
     if (!ctx) {
         ep_log("  gldAttachDrawable -> -1 (no ctx)");

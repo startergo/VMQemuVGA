@@ -543,6 +543,12 @@ public:
                            uint32_t src_w, uint32_t src_h,
                            IOMemoryDescriptor* src_backing,
                            uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+    // RUNG 64 — present the GA-bound surface's OWN content: the
+    // engine's frames, if it rasterizes into the locked backing (the
+    // GA lock maps THIS backing into the app). No host round trip —
+    // the relay's flush+push tail only. First calls log a content
+    // census at the shape offset (engine writes vs clear-only).
+    IOReturn gaPushSurface();
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
