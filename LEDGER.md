@@ -14465,3 +14465,36 @@ Linux GPU:      ~1500 FPS  (zero pixel traffic)
      animation + white window class)
   2. The readback present (the 40×)
   3. The wave-scene app crash (glmark2's own bug)
+
+---
+
+## REDIRECT — THE GLD IS THE ARCHITECTURE; the shim
+is a development tool, not the destination
+
+- **THE USER'S CORRECTION:** the goal is the GLD
+  system-wide (no env vars, no substitute, no
+  shim). The substitute requires DYLD_FRAMEWORK_PATH
+  — not transparent. The GLD is the transparent
+  path every app gets without configuration.
+- **THE SHIM-SPECIFIC ISSUES (do not apply to the
+  GLD):**
+  - The compat profile (GL 2.1 limit on macOS):
+    substitute-specific; the GLD's embedded Mesa
+    controls its own profile
+  - The drawRect re-fire (white screen): the GLD
+    uses the engine's own presentation (the float's
+    swap), already working and visible
+  - The non-VBO array error: the GLD's Mesa
+    instance can request the right profile
+- **THE GLD PATH (the architecture, from the
+  session's decode):**
+  1. The stub receives ModifyPipelineProgram (+2
+     per frame, stable)
+  2. Translate the pipeline program state to Mesa
+     GL calls on the embedded virgl context
+  3. GLVM runs unconditionally (CPU cost) but its
+     output is the drawbuffer — redirect to dummy
+  4. The stub presents from Mesa's output (relay
+     or window path)
+  5. Zero env vars, zero configuration — the GLD
+     IS the GPU driver
