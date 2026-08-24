@@ -13906,3 +13906,39 @@ fd import's last inch inside UTM's display stack
   black under all = the relay (readback) stays the
   presenter and the ~15 ms readback is the honest
   cost of stock UTM.
+
+---
+
+## THE BACKEND VERDICT — black under ANGLE Metal
+too: the GL-scanout import fails under EVERY stock
+UTM display backend; the readback path is the
+presenter
+
+- **THE TEST (user-switched backend, one run):**
+  ANGLE (Metal) display renderer — 18 FPS wire,
+  flushes OK, clean release — and the SAME visual
+  signature: display blackens fullscreen, the ARD
+  view shows the window un-blitted. Core GL and
+  ANGLE Metal BOTH black: the fd import boundary is
+  unconditional in stock UTM. Host-side; off our
+  table.
+- **THE ARCHITECTURE VERDICT (the fork's honest
+  close):**
+  - ZERO-COPY (0x600F): transport-proven, complete
+    lifecycle (bind/flush/release/watchdog), and
+    display-blind in stock UTM — banked as
+    infrastructure, not a presenter. Its numbers
+    were wire measurements.
+  - **THE PRESENTER: the readback paths.** The
+    RELAY (0x600C, desktop rect — the "double
+    horse") and the SHIM WINDOW path (drawRect,
+    single horse in-window at ~15-16 FPS) — both
+    visually proven. The practical visible-GPU
+    configuration: substitute + NO host-present env
+    + NO zero-copy = GPU-rendered content in the
+    app's window.
+  - THE UNMEASURED FINAL NUMBER: terrain under the
+    VISIBLE path (the raster is host-side in every
+    path; the presenter's readback is the per-frame
+    cost — terrain's pixels cross once per frame
+    either way).
