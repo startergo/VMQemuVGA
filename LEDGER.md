@@ -14192,3 +14192,47 @@ program, not a draw call
   primitive slots); the PIPELINE PROGRAM entry is
   the renderer's per-frame touchpoint — and it
   fires (+2 per frame, stable).
+
+---
+
+## THE IMPLEMENTATION SHAPE (pre-registered before
+any code) — the two settling questions and the
+lever
+
+- **VERTEX TIMING (the export census answers it):**
+  the buffer entries (gldAllocVertexBuffer,
+  gldLoadBuffer, gldCompleteVertexBuffer) fire in
+  the SETUP wave (swap 1); ModifyPipelineProgram
+  fires PER FRAME after. The geometry is staged
+  BEFORE the pipeline program arrives — the
+  translator reads state at call time, no lazy
+  capture needed.
+- **THE GLVM BYPASS LEVER: the hardware claim bit
+  (+0x100, rung 47 — already unconditional in the
+  pf flags).** The question: does the engine SKIP
+  GLVM execution for hardware-classified contexts?
+  If yes, the architecture is:
+  1. pf flags claim hardware (already done)
+  2. ModifyPipelineProgram → translate to Mesa
+  3. Engine skips its rasterization
+  4. Mesa renders on the GPU; the stub presents
+  5. Zero env vars, zero substitution
+  If no (the engine rasterizes regardless), the
+  drawbuffer at ctx+0x218 must be pointed at a
+  dummy so GLVM's writes are harmless while Mesa
+  does the real work.
+- **THE DISCRIMINATING EXPERIMENT:** with the
+  hardware bit set and the float trampoline
+  active, watch the drawbuffer for writes — if the
+  engine writes into it, GLVM is executing (bypass
+  needed); if not, the engine is deferring to the
+  renderer (the clean path).
+- **THE ABI SURFACE (named from the float's
+  imports):** ModifyPipelineProgram receives the
+  shader state that the float passes to
+  glvmCreateModularFunction +
+  glvmBuildModularFunctionDeferred. The translator
+  needs: the shader's TGSI/GLSL source or state,
+  the uniform bindings, the sampler bindings, and
+  the vertex layout — all present in the call's
+  arguments (the same data the float compiles).
