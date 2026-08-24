@@ -227,6 +227,9 @@ public:
     
     // 3D scanout management - called by VMVirtIOGPU when 3D resources take over display
     void setScanoutTakenOverBy3D(bool taken_over);
+    // RUNG 67b — the release path: rebind the 2D desktop scanout and
+    // stand the 2D refresh back up (the 3D owner exited/died).
+    void restore2DScanout();
     
     // Power management
     virtual IOReturn setPowerState(unsigned long powerStateOrdinal, IOService* whatDevice) override;

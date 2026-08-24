@@ -3957,6 +3957,59 @@ IOReturn CLASS::gaPresentUserBuffer(IOMemoryDescriptor* src,
     return kIOReturnSuccess;
 }
 
+IOReturn CLASS::scanoutPresent3D(uint32_t res3d, uint32_t w, uint32_t h)
+{
+    /* RUNG 67 — the Linux guest's present path: the 3D resource
+     * scanout-bound, host-composited. First call (or size change)
+     * binds; every call flushes the resource rect so virglrenderer
+     * re-composites. The framebuffer's 2D refresh stands down via
+     * setScanoutTakenOverBy3D while we own the scanout. */
+    static uint32_t s_log = 0;
+
+    if (res3d != m_scanout3d_res || w != m_scanout3d_w
+                                       || h != m_scanout3d_h) {
+        IOReturn ret = setscanout(0, res3d, 0, 0, w, h);
+        if (ret != kIOReturnSuccess) {
+            IOLog("scanoutPresent3D: SET_SCANOUT res=%u %ux%u FAIL 0x%x\n",
+                  res3d, w, h, ret);
+            return ret;
+        }
+        m_scanout3d_res = res3d;
+        m_scanout3d_w = w; m_scanout3d_h = h;
+        if (m_framebuffer)
+            m_framebuffer->setScanoutTakenOverBy3D(true);
+        IOLog("scanoutPresent3D: res=%u %ux%u BOUND to scanout "
+              "(2D refresh stood down)\n", res3d, w, h);
+    }
+    IOReturn fret = flushResource(res3d, 0, 0, w, h);
+    if (fret != kIOReturnSuccess) {
+        IOLog("scanoutPresent3D: FLUSH res=%u FAIL 0x%x\n", res3d, fret);
+        return fret;
+    }
+    if (s_log < 6) {
+        s_log++;
+        IOLog("scanoutPresent3D: flush res=%u %ux%u OK (zero-copy)\n",
+              res3d, w, h);
+    }
+    return kIOReturnSuccess;
+}
+
+void CLASS::releaseScanout3D()
+{
+    /* RUNG 67b — the release path: the 3D owner is gone; hand the
+     * scanout back to the 2D desktop. Covers clean exits and crashes
+     * (called from the user client's clientClose, which both reach).
+     * Idempotent: no-op when no 3D resource holds the scanout. */
+    if (!m_scanout3d_res)
+        return;
+    uint32_t r = m_scanout3d_res;
+    m_scanout3d_res = 0;
+    m_scanout3d_w = 0; m_scanout3d_h = 0;
+    if (m_framebuffer)
+        m_framebuffer->restore2DScanout();
+    IOLog("scanoutPresent3D: RELEASED res=%u — 2D scanout restored\n", r);
+}
+
 IOReturn CLASS::hostRelayBlit(uint32_t res3d, uint32_t ctx_id,
                               uint32_t src_fmt, uint32_t src_w, uint32_t src_h,
                               IOMemoryDescriptor* src_backing,
@@ -7348,6 +7401,12 @@ IOReturn VMVirtIOGPUUserClient::clientClose()
 {
     IOLog("VMVirtIOGPUUserClient::clientClose()\n");
 
+    /* RUNG 67b — if this client's 3D resource owns the scanout, hand
+     * it back to the 2D desktop NOW (clean exits AND crashes both
+     * land here). Without this the display stays black until reboot. */
+    if (m_gpu_device)
+        m_gpu_device->releaseScanout3D();
+
     // Release any held probe descriptor — client is closing (may have died).
     // Idempotent: probeAttachBackingUserCleanup() checks m_probe_in_progress.
     probeAttachBackingUserCleanup();
@@ -8279,6 +8338,26 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
                 md->complete();
                 md->release();
                 return ret;
+            }
+            return kIOReturnBadArgument;
+        }
+
+        case 0x600F: { // scanoutPresent3D — RUNG 67: the zero-copy
+            // present. scalar [0]=3D resource, [1]=w, [2]=h. The
+            // resource must be in the geometry table (like 0x600C).
+            if (args->scalarInputCount >= 3 && args->scalarInput) {
+                uint32_t res = (uint32_t)args->scalarInput[0];
+                uint32_t w   = (uint32_t)args->scalarInput[1];
+                uint32_t h   = (uint32_t)args->scalarInput[2];
+                uint32_t fmt = 0, sw = 0, sh = 0;
+                if (!m_gpu_device) return kIOReturnNotReady;
+                if (!userResourceDims(res, &sw, &sh)) {
+                    IOLog("VMVirtIOGPUUserClient: 0x600F res=0x%x NOT in "
+                          "geometry table\n", res);
+                    return kIOReturnUnsupported;
+                }
+                if (!w || !h) { w = sw; h = sh; }
+                return m_gpu_device->scanoutPresent3D(res, w, h);
             }
             return kIOReturnBadArgument;
         }

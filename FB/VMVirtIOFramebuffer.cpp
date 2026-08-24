@@ -2663,8 +2663,30 @@ void VMVirtIOFramebuffer::refreshDisplay()
 void VMVirtIOFramebuffer::setScanoutTakenOverBy3D(bool taken_over)
 {
     if (taken_over != m_scanout_taken_over_by_3d) {
-        IOLog("VMVirtIOFramebuffer: Scanout control %s by 3D application\n", 
+        IOLog("VMVirtIOFramebuffer: Scanout control %s by 3D application\n",
               taken_over ? "taken over" : "returned to 2D");
         m_scanout_taken_over_by_3d = taken_over;
     }
+}
+
+/* RUNG 67b — THE RELEASE PATH: the 3D owner is gone (clean exit or
+ * crash); rebind the 2D desktop scanout and stand the refresh back
+ * up. Without this, app exit leaves the scanout bound to a dead
+ * resource — the whole display goes black until reboot (observed
+ * 2026-08-24, restored by reboot). */
+void VMVirtIOFramebuffer::restore2DScanout()
+{
+    if (!m_gpu_driver || !m_scanout_resource_id) {
+        m_scanout_taken_over_by_3d = false;   /* at least resume 2D */
+        return;
+    }
+    IOReturn ret = m_gpu_driver->setscanout(0, m_scanout_resource_id,
+                                            0, 0, m_width, m_height);
+    m_scanout_taken_over_by_3d = false;
+    /* force one immediate refresh so the desktop reappears at once */
+    refreshDisplay();
+    IOLog("VMVirtIOFramebuffer: 2D scanout RESTORED (res=%u %ux%u "
+          "setscanout=0x%x) after 3D release\n",
+          (unsigned)m_scanout_resource_id, (unsigned)m_width,
+          (unsigned)m_height, ret);
 }

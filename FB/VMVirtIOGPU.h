@@ -554,6 +554,18 @@ public:
     // the shape offset (stride converted), then the flush+push tail.
     IOReturn gaPresentUserBuffer(IOMemoryDescriptor* src,
                                  uint32_t src_row, uint32_t w, uint32_t h);
+    // RUNG 67 — the zero-copy scanout present: bind the 3D resource to
+    // the scanout (SET_SCANOUT) once, RESOURCE_FLUSH per frame; the
+    // host composites it directly. NO readback, no guest pixel
+    // traffic. SET_SCANOUT maps a resource rect to the WHOLE display —
+    // presentation is fullscreen (the windowed composite is a later
+    // WindowServer problem). The 2D refresh stands down while active.
+    IOReturn scanoutPresent3D(uint32_t res3d, uint32_t w, uint32_t h);
+    // RUNG 67b — the release path: the 3D owner exited/died; rebind
+    // the 2D desktop scanout via the framebuffer. Idempotent.
+    void releaseScanout3D();
+    uint32_t m_scanout3d_res = 0;    /* the scanout-bound 3D resource */
+    uint32_t m_scanout3d_w = 0, m_scanout3d_h = 0;
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);
