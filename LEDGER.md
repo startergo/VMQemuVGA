@@ -14972,3 +14972,102 @@ same day)
   raster-op stream dump (guard relaxation),
   per-draw state capture (the transform-slot
   hook), and the Mesa emit side.
+
+---
+
+## RUNG 71d — THE CRASH CLASS CLOSED
+GLMARK2-SIDE: reuse-context forced, teardown
+skipped, map disabled — one macro
+(GLMARK2_106_FLOAT_STACK); the float's
+ownership bug never exercised anymore
+
+- **THE TWO FULL-SUITE CRASHES UNDER THE TICK
+  STUB + MAP-DISABLED BINARY (both same
+  config, intermittent):**
+  - **Run 1 (12:08:55): SIGBUS
+    KERN_PROTECTION_FAILURE at 0x1004a5a40 —
+    `gleVPEnable+19` ← `gleUpdateCurrentProgramState`
+    ← `gleUseProgramObject` ←
+    `SceneTexture::setup()` — the crash is at
+    scene-2 SETUP, i.e. AFTER scene 1's
+    context destroy: the destroy poisons state
+    the NEXT context's first program bind
+    writes.**
+  - **Run 2 (12:15:55): free abort
+    (`pointer being freed was not allocated`,
+    0x1004a5850) — `gfxFreeTextureLevel`
+    (libGFXShared) ← `gleFreeTextureObject` ←
+    `gleFreeTextureState` — the crash is IN
+    the FINAL teardown, after the COMPLETE
+    scene list (the gl41 Unsupported entries
+    are the list's end).**
+  - **THE ADDRESS CLUSTER (single-root-cause
+    evidence): 0x1004a5a40 (run 1, WRITTEN
+    under protection) and 0x1004a5850 (run 2,
+    FREED as unallocated) are the same
+    allocation cluster — written-then-freed
+    across two runs. One specific engine/
+    libGFXShared texture-level-region
+    allocation is mishandled by the float's
+    destroy path; symptom timing varies.**
+- **THE THREE-RUN ISOLATION PROTOCOL (all on
+  the tick stub + map-disabled binary):**
+```
+P1 texture alone (one context, no cycling):
+   CLEAN exit 0 (Score 6)
+P2 build:duration=3 + texture:duration=3
+   (one destroy/create cycle before texture):
+   CLEAN exit 0 — ×3 trials
+P3 --reuse-context full suite:
+   CLEAN exit 0 (Score 4) — second
+   confirmation of the stable config
+```
+  **Verdict: INTERMITTENT (the user's branch
+  3). The minimal cycling prefix does not
+  reproduce in 3 trials; the failures came
+  only in full-suite runs (default 10s
+  durations — a dose correlation is plausible
+  but unsplit at N=1 per crash).**
+- **THE FLOAT-SIDE OWNERSHIP DATA POINT (for
+  the float notes; no kext/stub change
+  indicated):** destroys BOTH abort directly
+  (run 2: bad free inside gfxFreeTextureLevel
+  at the final destroy after 15+ drawn scenes)
+  AND poison the successor (run 1: scene-1
+  destroy → next context's first VP enable
+  writes a protected page). A context that
+  drew one short scene destroyed cleanly ×4
+  (P1, P2×3). Virgin-context destroy: no data
+  (never isolated).
+- **THE NEW BINARY (all guards under
+  GLMARK2_106_FLOAT_STACK, SDK-gated,
+  modern-SDK builds unchanged):**
+  1. init_display() forces
+     Options::reuse_context = true + one-time
+     warning
+  2. reset() skips teardown entirely on this
+     build (context + pixel format leaked by
+     design; only the destructor at exit holds
+     a live context → clean exit 0 after the
+     score)
+  3. map stays disabled (80bccd4), same macro
+  **DEPLOYED AND OBSERVED: md5
+  2700b290ee857474538e81ed821119f0 — both
+  warnings fire ("Forcing --reuse-context…",
+  "glMapBuffer disabled…"), full suite
+  running single-context. T6 RESULT: the
+  DEFAULT run (no flags) completed the whole
+  suite, Score 4, clean termination — the
+  exit-time teardown-skip warning fired
+  ("Skipping GL context teardown on this
+  stack (leaked by design; process exit
+  reclaims it)"), ZERO new crash reports.**
+- **STABLE TEST CONFIG FROM HERE:** the
+  DEFAULT glmark2 run on this target (no
+  flags) is now the stable configuration —
+  single context, teardown skipped, map
+  disabled. The instrumented stub's disasm
+  calls no longer share a process with
+  context destroys (the r71f-class risk
+  surface); the raw-words-offline-decode
+  instrument design rule stands regardless.
