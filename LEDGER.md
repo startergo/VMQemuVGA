@@ -13514,3 +13514,33 @@ glmark2 Score: 4     (0 setup failures)
   The 26 was never rendering; the 4 is.
 - terrain at 24.8 s/frame — the fragment-heaviest
   scene; the GPU-routing case in one number.
+
+---
+
+## RUNG 66 RESULT — THE BLOCK1 HOOK LANDED; the draw
+door NAMED: the EXPORTED entries, not the dispatch
+table
+
+- **THE HOOK (both sites, working):** engine base
+  captured at the create forward (sub-block −
+  0x79b8); one-shot dumps + dual-slot poll; SITE0
+  (ctx+0x66b0) and SITE1 (engine+0x66b0) both
+  wrapped — swaps now flow through our wrapper
+  (census reports per swap, 12 FPS maintained).
+- **THE ENGINE DECODE (bonus from the dump):**
+  engine+0x66d0 = 0x258_00000320 — the 600/800
+  window DIMENSIONS live at a named offset;
+  flush-class entries at engine+0x6680/0x6688/
+  0x66b8/0x66c0/0x66c8.
+- **THE DECISIVE NEGATIVE — the draw door is NOT the
+  dispatch table:** per-frame deltas across all 33
+  float-filled dispatch slots = ZERO. The draws and
+  state flow through the EXPORTED gld* entries (the
+  EPR forwards — the path the old census saw hot:
+  ModifyPipelineProgram ×9788, FinishObject ×2994).
+  The 33-slot table serves another purpose in the
+  float architecture.
+- **NEXT (one macro edit):** counters on the EPR
+  forwards — the per-frame delta census rerun on the
+  export table names the draw slots' offsets in the
+  ABI decode order.

@@ -2075,6 +2075,7 @@ long gldDestroyShared(void* obj, void* a1, void* a2, void* a3, void* a4, void* a
 long gldCreateContext(void** out, void* pf, void* shared,
                       void* a4, void* a5, void* a6)
 {
+    if (a4) g_engine_subblock = a4;   /* RUNG 66: engine = a4 - 0x79b8 */
     {
         static long (*fn)(void*,void*,void*,void*,void*,void*) = 0;
         if (!fn) fn = (long(*)(void*,void*,void*,void*,void*,void*))
@@ -2084,7 +2085,7 @@ long gldCreateContext(void** out, void* pf, void* shared,
             char fb[128];
             snprintf(fb, sizeof(fb),
                      "rung64i: float CreateContext -> 0x%lx (*out=%p "
-                     "pf=%p)", r, out ? *out : (void*)0, pf);
+                     "pf=%p sub=%p)", r, out ? *out : (void*)0, pf, a4);
             ep_log(fb);
             return r;
         }
@@ -2379,25 +2380,83 @@ FSLOT(90) FSLOT(98) FSLOT(a0) FSLOT(a8) FSLOT(b0) FSLOT(b8)
 FSLOT(c0) FSLOT(c8) FSLOT(d0) FSLOT(d8) FSLOT(e0) FSLOT(e8)
 FSLOT(f0) FSLOT(f8) FSLOT(100)
 
-/* RUNG 66 correction: the float's flush/swap selection runs AFTER
- * the attaches (the slot reads 0x0 at attach time) and silently
- * displaces any wrap. Poll the slot from the hot dispatch thunks —
- * each carries the ctx as a0 — and wrap on first non-NULL sighting. */
+/* RUNG 66c — THE BLOCK1 HOOK: capture the engine base (sub-block at
+ * the create forward; engine = sub − 0x79b8), one-shot dump the
+ * flush/swap neighborhood on BOTH the ctx and the engine, then poll
+ * the two candidate slots (ctx+0x66b0, engine+0x66b0) until the
+ * float's late selection lands; wrap on first sighting, per-site. */
+static long (*g_site_fn[2])(void*,void*,void*,void*,void*,void*);
+static int g_site_done[2] = { 0, 0 };
+static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
+                                  void* a2, void* a3, void* a4, void* a5);
+static long gld_swap_wrapper_a(void* d, void* a1, void* a2, void* a3,
+                               void* a4, void* a5)
+{ return gld_swap_wrapper_impl(0, d, a1, a2, a3, a4, a5); }
+static long gld_swap_wrapper_b(void* d, void* a1, void* a2, void* a3,
+                               void* a4, void* a5)
+{ return gld_swap_wrapper_impl(1, d, a1, a2, a3, a4, a5); }
+static void census_report(long swapno);   /* fwd */
+static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
+                                  void* a2, void* a3, void* a4, void* a5)
+{
+    long r = g_site_fn[site]
+        ? (long)g_site_fn[site](dctx, a1, a2, a3, a4, a5) : 0;
+    if (g_virgl_conn)
+        IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
+                            NULL, NULL, NULL, NULL);
+    {
+        static long s_swaps = 0;
+        s_swaps++;
+        if (s_swaps <= 5 || (s_swaps % 500) == 0)
+            census_report(s_swaps);
+    }
+    return r;
+}
 static void fw_poll(void* ctx)
 {
-    static int s_poll_off = 0;
-    if (s_poll_off || !ctx) return;
-    void** slot = (void**)((char*)ctx + 0x66b0);
-    if (*slot && *slot != (void*)&gld_swap_wrapper) {
-        g_float_swap_fn =
-            (long(*)(void*,void*,void*,void*,void*,void*))*slot;
-        *slot = (void*)&gld_swap_wrapper;
-        char w[128];
-        snprintf(w, sizeof(w),
-                 "rung66: poll-wrap at %p: float swap %p WRAPPED",
-                 ctx, (void*)g_float_swap_fn);
-        ep_log(w);
-        s_poll_off = 1;              /* re-wrap only if displaced */
+    static int s_dumped = 0;
+    if (ctx && !s_dumped) {
+        s_dumped = 1;
+        char b[760]; int o = 0;
+        o += snprintf(b + o, sizeof(b) - o, "rung66: ctx%+[0x6580..]:",
+                      0);
+        for (size_t off = 0x6580; off < 0x6700 && o < 700; off += 8)
+            o += snprintf(b + o, sizeof(b) - o, " %llx",
+                (unsigned long long)*(unsigned long*)((char*)ctx + off));
+        ep_log(b);
+        if (g_engine_subblock) {
+            unsigned char* eng = (unsigned char*)g_engine_subblock
+                                - 0x79b8;
+            char e[520]; int eo = 0;
+            eo += snprintf(e + eo, sizeof(e) - eo,
+                           "rung66: eng %p[0x6680..]:", (void*)eng);
+            for (size_t off = 0x6680; off < 0x66e0 && eo < 470; off += 8)
+                eo += snprintf(e + eo, sizeof(e) - eo, " %llx",
+                    (unsigned long long)*(unsigned long*)(eng + off));
+            ep_log(e);
+        }
+    }
+    if (!ctx) return;
+    void** slots[2] = { (void**)((char*)ctx + 0x66b0), NULL };
+    if (g_engine_subblock)
+        slots[1] = (void**)((unsigned char*)g_engine_subblock
+                            - 0x79b8 + 0x66b0);
+    static void* const wraps[2] = { (void*)&gld_swap_wrapper_a,
+                                    (void*)&gld_swap_wrapper_b };
+    for (int s = 0; s < 2; s++) {
+        if (!slots[s] || g_site_done[s]) continue;
+        void* p = *slots[s];
+        if (p && p != wraps[s]) {
+            g_site_fn[s] =
+                (long(*)(void*,void*,void*,void*,void*,void*))p;
+            *slots[s] = wraps[s];
+            g_site_done[s] = 1;
+            char w[144];
+            snprintf(w, sizeof(w),
+                     "rung66: SITE%d WRAPPED: float swap %p at %p",
+                     s, p, (void*)slots[s]);
+            ep_log(w);
+        }
     }
 }
 static void census_install(unsigned long* dispatch)
