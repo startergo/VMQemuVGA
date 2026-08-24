@@ -13012,3 +13012,82 @@ question registered open
   dormant), so this boot's live variables are the
   two watchdog args — one-variable discipline
   preserved by construction, not by luck.
+
+---
+
+## RUNG 62 RESULT — THE CGL BISECT: NS INNOCENT, the
+failure is OUR pf object's; mode10 ruled out by
+bisect; the +0x1c/+0x20 semantics the new prime
+suspect (bit sizes vs FORMAT CODES)
+
+**The instrument:** /tmp/cglrepro.c — 6 attr sets ×
+[plain, +4] × [option-late, option-pre]; plus the
+GLD_PF_MODE10 env bisect through it. Guest runs
+20:44-20:50; stub log writable (the earlier
+root-owned /tmp/vm_gld_stub.log DENIED sl's appends —
+run 1's markers failed with exit 1, initially
+misread).
+
+- **FINDING 1 — NS IS INNOCENT (prediction ii dead,
+  and rung 60's split DEAD):** CGL-direct
+  `[5,12,24]` and `[5,12,1]` → **npix=0, err=0** —
+  IDENTICAL to the NS failure, stable across two
+  reruns (pids 265/285). Every choose reaches our
+  stub (`gldChoosePixelFormat` logged per cell). The
+  NS layer forwards the caller's attrs unmodified to
+  the same entry (disassembly) and adds nothing that
+  matters. The NS-vs-CGL "split" of rung 60 does not
+  reproduce under working instrumentation.
+- **FINDING 2 — the option 0x1F9 is DEAD in both
+  orderings:** after-first-use AND before-first-choose
+  — matrices byte-identical.
+- **FINDING 3 — attr 4 is INTERNAL, and the earlier
+  label WRONG:** explicit attr 4 → err=10000
+  (kCGLBadAttribute) — public callers cannot pass it.
+  The stub log shows the CGL pipeline appending the
+  trailing 4 itself on BOTH paths ([0x5 0x4] for
+  plain db). And kCGLPFAWindow = 80 per the SDK
+  header — the rung-62 checkpoint's "attr 4 =
+  kCGLPFAWindow" was a wrong inference, corrected.
+  The walk truncates at 4 universally ("build
+  anyway") — harmless.
+- **FINDING 4 — MODE10 RULED OUT:** GLD_PF_MODE10 ∈
+  {0x18, 0x48, 0x88, 0xc, 0x108, 0x208, 0x2008} —
+  every one npix=0 on `db d24`. The depth gate is NOT
+  the +0x10 echo. (Rung 51's "depth composes bits
+  into +0x10" hypothesis: falsified by bisect.)
+- **FINDING 5 — THE NEW PRIME SUSPECT, from the
+  float's own tail (grf.t 0x17b5e/0x17b82/0x17d01/
+  0x17d04):** the float's pf object gets
+  `+0x1c = -0x78` (default **0x1000**) and
+  `+0x20 = -0x7c` (default **0x80**) — FORMAT-CODE-
+  shaped values, NOT bit counts. Our stub writes
+  decimal bit sizes (24/8) at the same offsets
+  (rung 59's mapping, never scorer-validated for
+  depth). If the scorer compares +0x1c as a format
+  code, EVERY depth size fails regardless of number —
+  exactly the all-sizes-fail signature. The float's
+  switch also carries cases for attrs 4, 0x20, 0x80,
+  0x100 the walk region shows at its tail.
+- **RESIDUAL (unexplained, bounded):** run 1 (log
+  unwritable) returned npix=1 for `db d24`/`db d1`
+  where runs 2/3 return 0 — same binary, same sets;
+  the only known difference is the log file's
+  existence/permissions. Not resolved; runs 2/3
+  (instrumented, twice) carry the result.
+- **INSTRUMENT LESSON (the class again):** a
+  permission-denied log append fails SILENTLY — the
+  marker's exit 1 was the visible tell and was
+  initially attributed to the wrong command. The
+  stub log must be checked WRITABLE by the probe user
+  before any run whose reading depends on it.
+
+**NEXT (registered): the float-reference dump** —
+with our GLD bundle moved aside same-session, choose
+`[5,12,24]` through the float and dump the returned
+CGLPixelFormatObj's first 0x40 bytes: that object is
+the scorer-ACCEPTED composition for a depth request,
+empirical, no jump-table archaeology. Mirror its
++0x1c/+0x20 (and neighbors) in the stub, redeploy,
+re-run cglrepro: `db d24` → npix=1 is the
+pre-registered pass line.
