@@ -89,6 +89,69 @@ static void* g_engine_subblock = NULL;
 static void* g_engine_block1 = 0;
 static void* g_engine_block2 = 0;
 
+/* RUNG 64d — THE HEAP HUNT: with our stub as renderer (no renderer
+ * side buffer), the engine's raster target is SOME malloc'd block.
+ * Enumerate the zones at swap, log every >=1MB block's head twice;
+ * the block whose bytes CHANGE between swaps is the live frame. */
+static int g_fb_w = 4, g_fb_h = 4;   /* rung 39: window-sized when attached */
+#include <malloc/malloc.h>
+static kern_return_t heap_reader(task_t t, vm_address_t a, vm_size_t s,
+                                 void** p)
+{
+    (void)t; (void)s; (void)a;
+    *p = (void*)a;                    /* in-process: identity reader */
+    return KERN_SUCCESS;
+}
+static void heap_recorder(task_t t, void* ctx, unsigned type,
+                          vm_range_t* ranges, unsigned count)
+{
+    (void)t; (void)ctx; (void)type;
+    /* RUNG 64e: capture the frame-sized blocks (w*h*4) — the GLVM
+     * double buffer pair; the swap presents the live one. */
+    extern unsigned char* g_frame_bufs[2];
+    extern int g_frame_buf_count;
+    for (unsigned i = 0; i < count; i++) {
+        size_t want = (size_t)g_fb_w * g_fb_h * 4;
+        if (g_frame_buf_count < 2 && want
+            && ranges[i].size >= want && ranges[i].size <= want + 0x1000) {
+            g_frame_bufs[g_frame_buf_count++] =
+                (unsigned char*)ranges[i].address;
+        }
+        if (ranges[i].size < 0x100000 || ranges[i].size > 0x800000)
+            continue;
+        char hb[80]; int ho = 0;
+        unsigned char* p = (unsigned char*)ranges[i].address;
+        for (int c = 0; c < 16 && ho < 60; c++)
+            ho += snprintf(hb + ho, sizeof(hb) - ho, "%02x", p[c]);
+        char sb[208];
+        snprintf(sb, sizeof(sb), "rung64: HEAP %llx sz=%llx b:%s",
+                 (unsigned long long)ranges[i].address,
+                 (unsigned long long)ranges[i].size, hb);
+        ep_log(sb);
+    }
+}
+unsigned char* g_frame_bufs[2] = { 0, 0 };
+int g_frame_buf_count = 0;
+static void heap_hunt_pass(int passno)
+{
+    vm_address_t* zones = NULL;
+    unsigned nz = 0;
+    kern_return_t kr = malloc_get_all_zones(mach_task_self(),
+                                            heap_reader, &zones, &nz);
+    char zb[80];
+    snprintf(zb, sizeof(zb), "rung64: HEAP pass %d zones=%u kr=0x%x",
+             passno, nz, kr);
+    ep_log(zb);
+    for (unsigned i = 0; zones && i < nz; i++) {
+        malloc_zone_t* z = (malloc_zone_t*)zones[i];
+        if (z && z->introspect && z->introspect->enumerator)
+            z->introspect->enumerator(mach_task_self(), NULL,
+                                      MALLOC_PTR_IN_USE_RANGE_TYPE,
+                                      (vm_address_t)z, heap_reader,
+                                      heap_recorder);
+    }
+}
+
 /* RUNG 52 — THE CAPSET: virgl_hw.h's structs, copied verbatim
  * (same x86_64 layout rules as the host's producer; v1 = 77 words
  * = 308 bytes = the boot-logged VIRGL size exactly). */
@@ -381,7 +444,7 @@ static void glFinish_shim(void) { if (os_glFinish) os_glFinish(); }
 /* RUNG 39 — the saved window triple + the lazy bounds query */
 static unsigned g_sid_cid = 0, g_sid_wid = 0, g_sid_sid = 0;
 static int g_bounds_locked = 0;
-static int g_fb_w = 4, g_fb_h = 4;      /* rung 39: window-sized when attached */
+/* g_fb_w/g_fb_h defined with the rung-64d heap hunt (top of file) */
 static void virgl_set_window_target(int w, int h);   /* fwd (lazy bounds call) */
 
 /* RUNG 40 — THE GA BIND WIRE (the milestone-2 machinery, integrated):
@@ -1048,6 +1111,11 @@ long gld_swap_entry(void* dctx, void* a1, void* a2, void* a3,
 {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
     if (++g_swap_count > 5 && (g_swap_count % 500) != 0) return 0;
+    {
+        static int s_heap_left = 2;
+        if (s_heap_left > 0)
+            heap_hunt_pass(3 - s_heap_left--);
+    }
     /* RUNG 64 — WHERE IS THE ENGINE'S FRAME? The GA lock mapped the
      * drawable surface in the 0x105_000000 band (LockSurface
      * addr=0x105100000 row=3600, kernel log). Scan the gli ctx and
@@ -1193,20 +1261,47 @@ long gld_swap_entry(void* dctx, void* a1, void* a2, void* a3,
         return 0;
     }
     if (!getenv("GLD_SWAP_LEGACY")) {
-        /* RUNG 64 — THE FRAME PUSH: the engine rasterizes into the
-         * GA-locked backing (the kernel maps THAT memory into the
-         * app); the kernel reads it directly and runs the relay's
-         * flush+push tail. No host round trip, no clear. The census
-         * in gaPushSurface answers whether the engine truly writes
-         * there; GLD_SWAP_LEGACY=1 restores the rung-46 path. */
+        /* RUNG 64 — THE FRAME PRESENT, in order of preference:
+         *   1. 0x600E: the engine's raster frame — the heap hunt
+         *      captured the GLVM double buffer (two adjacent w*h*4
+         *      mallocs); present the one whose midpoint changed since
+         *      the last swap (the live buffer).
+         *   2. 0x600D: push-only (no frame found — the proven
+         *      fallback; a no-op unless something wrote the surface).
+         * GLD_SWAP_LEGACY=1 restores the rung-46 clear+relay. */
         static int s_push_logged = 0;
-        kern_return_t kr = IOConnectCallMethod(g_virgl_conn, 0x600D,
-                                               NULL, 0, NULL, 0,
-                                               NULL, NULL, NULL, NULL);
+        kern_return_t kr;
+        const char* how = "0x600D push";
+        if (g_frame_buf_count == 2 && g_fb_w > 1 && g_fb_h > 1) {
+            size_t fsz = (size_t)g_fb_w * g_fb_h * 4;
+            static unsigned char snap[2][16];
+            static int snapped = 0;
+            int pick = -1;
+            for (int b = 0; b < 2; b++) {
+                if (snapped && memcmp(snap[b], g_frame_bufs[b] + fsz / 2,
+                                      16) != 0)
+                    pick = b;
+                memcpy(snap[b], g_frame_bufs[b] + fsz / 2, 16);
+            }
+            snapped = 1;
+            if (pick < 0) pick = 0;    /* first swap / no change: buf 0 */
+            uint64_t in[4] = {
+                (uint64_t)(uintptr_t)g_frame_bufs[pick],
+                (uint64_t)(g_fb_w * 4),
+                (uint64_t)g_fb_w, (uint64_t)g_fb_h };
+            kr = IOConnectCallMethod(g_virgl_conn, 0x600E,
+                                     in, 4, NULL, 0,
+                                     NULL, NULL, NULL, NULL);
+            how = pick ? "0x600E frame[1]" : "0x600E frame[0]";
+        } else {
+            kr = IOConnectCallMethod(g_virgl_conn, 0x600D,
+                                     NULL, 0, NULL, 0,
+                                     NULL, NULL, NULL, NULL);
+        }
         if (!s_push_logged || (g_swap_count % 500) == 0) {
             s_push_logged = 1;
-            char b[80];
-            snprintf(b, sizeof(b), "rung64: SWAP push (0x600D) -> 0x%x", kr);
+            char b[96];
+            snprintf(b, sizeof(b), "rung64: SWAP %s -> 0x%x", how, kr);
             ep_log(b);
         }
         return 0;

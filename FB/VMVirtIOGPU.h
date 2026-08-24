@@ -549,6 +549,11 @@ public:
     // the relay's flush+push tail only. First calls log a content
     // census at the shape offset (engine writes vs clear-only).
     IOReturn gaPushSurface();
+    // RUNG 64 — present a USER buffer (the engine's raster frame):
+    // rows copied from the caller's memory into the GA surface at
+    // the shape offset (stride converted), then the flush+push tail.
+    IOReturn gaPresentUserBuffer(IOMemoryDescriptor* src,
+                                 uint32_t src_row, uint32_t w, uint32_t h);
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);

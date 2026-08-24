@@ -3883,6 +3883,80 @@ IOReturn CLASS::gaPushSurface()
     return kIOReturnSuccess;
 }
 
+IOReturn CLASS::gaPresentUserBuffer(IOMemoryDescriptor* src,
+                                    uint32_t src_row, uint32_t w, uint32_t h)
+{
+    /* RUNG 64 — the engine's raster frame (a user-space malloc, the
+     * GLVM double buffer) written into the GA surface at the shape
+     * offset, then the relay's flush+push tail. Pure guest-side
+     * copies plus the proven 2D push; no virtio round trip. */
+    uint32_t ga_id = vmSurfaceRegistryGetGABound();
+    VMAccelSurface* surf = ga_id ? vmSurfaceRegistryFind(ga_id) : NULL;
+    if (!surf || !surf->backing_memory || !surf->bytes_per_row) {
+        IOLog("gaPresentUserBuffer: no GA-bound surface\n");
+        return kIOReturnNotReady;
+    }
+    uint32_t dst_res = m_hblit_dst_res;
+    if (!dst_res) dst_res = m_display_resource_id;
+    gpu_resource* dst = dst_res ? findResource(dst_res) : NULL;
+    IOMemoryDescriptor* dst_mem = dst ? dst->backing_memory : NULL;
+    if (!dst_mem) {
+        IOLog("gaPresentUserBuffer: desktop backing missing\n");
+        return kIOReturnNotReady;
+    }
+    uint32_t dw = dst->width, dh = dst->height;
+    const uint32_t row_bytes = w * 4;
+    const uint32_t surf_stride = surf->bytes_per_row;
+    const uint64_t shape_off = (uint64_t)surf->shape_y * surf_stride
+                             + (uint64_t)surf->shape_x * 4;
+    if (shape_off + (uint64_t)(h - 1) * surf_stride + row_bytes >
+        surf->backing_memory->getLength()) {
+        IOLog("gaPresentUserBuffer: write exceeds surface — SKIP\n");
+        return kIOReturnSuccess;
+    }
+    IOLockLock(m_relay_lock);
+    if (m_relay_row_cap < row_bytes) {
+        if (m_relay_row) IOFree(m_relay_row, m_relay_row_cap);
+        m_relay_row_cap = 0;
+        m_relay_row = (uint8_t*)IOMalloc(row_bytes);
+        if (!m_relay_row) {
+            m_relay_row_cap = 0;
+            IOLockUnlock(m_relay_lock);
+            return kIOReturnNoMemory;
+        }
+        m_relay_row_cap = row_bytes;
+    }
+    uint32_t rows_done = 0;
+    for (uint32_t j = 0; j < h; j++) {
+        IOByteCount got = src->readBytes((IOByteCount)j * src_row,
+                                         m_relay_row, row_bytes);
+        if (got != row_bytes) break;
+        IOByteCount put = surf->backing_memory->writeBytes(
+            shape_off + (IOByteCount)j * surf_stride,
+            m_relay_row, row_bytes);
+        if (put != row_bytes) break;
+        rows_done++;
+    }
+    IOLockUnlock(m_relay_lock);
+    static uint32_t s_pub_log = 0;
+    if (s_pub_log < 6) {
+        s_pub_log++;
+        IOLog("gaPresentUserBuffer: %u/%u rows %ux%u src_row %u "
+              "stride %u shape (%u,%u)\n", rows_done, h, w, h,
+              src_row, surf_stride, surf->shape_x, surf->shape_y);
+    }
+    vmSurfaceFlushToFramebuffer(surf, dst_mem, dw, dh);
+    uint32_t fx = surf->shape_x, fy = surf->shape_y;
+    uint32_t fw = surf->width, fh = surf->height;
+    if (fx + fw > dw) fw = dw - fx;
+    if (fy + fh > dh) fh = dh - fy;
+    if (fw && fh) {
+        transferToHost2D(dst_res, 0, fx, fy, fw, fh);
+        flushResource(dst_res, fx, fy, fw, fh);
+    }
+    return kIOReturnSuccess;
+}
+
 IOReturn CLASS::hostRelayBlit(uint32_t res3d, uint32_t ctx_id,
                               uint32_t src_fmt, uint32_t src_w, uint32_t src_h,
                               IOMemoryDescriptor* src_backing,
@@ -8178,6 +8252,35 @@ IOReturn VMVirtIOGPUUserClient::externalMethod(uint32_t selector, IOExternalMeth
             // GA-bound surface and runs the flush+push tail.
             if (!m_gpu_device) return kIOReturnNotReady;
             return m_gpu_device->gaPushSurface();
+        }
+
+        case 0x600E: { // gaPresentUserBuffer — RUNG 64: present the
+            // caller's raster frame. scalar [0]=user address of a
+            // packed w*h*4 buffer, [1]=src row bytes, [2]=w, [3]=h.
+            if (args->scalarInputCount >= 4 && args->scalarInput) {
+                uint64_t uaddr = args->scalarInput[0];
+                uint32_t srow = (uint32_t)args->scalarInput[1];
+                uint32_t w    = (uint32_t)args->scalarInput[2];
+                uint32_t h    = (uint32_t)args->scalarInput[3];
+                if (!m_gpu_device) return kIOReturnNotReady;
+                if (!uaddr || !srow || !w || !h)
+                    return kIOReturnBadArgument;
+                IOMemoryDescriptor* md = IOMemoryDescriptor::
+                    withAddressRange((mach_vm_address_t)uaddr,
+                                     (mach_vm_size_t)srow * h,
+                                     kIODirectionOut, m_owning_task);
+                if (!md) return kIOReturnNoMemory;
+                IOReturn ret;
+                if (md->prepare() != kIOReturnSuccess) {
+                    md->release();
+                    return kIOReturnVMError;
+                }
+                ret = m_gpu_device->gaPresentUserBuffer(md, srow, w, h);
+                md->complete();
+                md->release();
+                return ret;
+            }
+            return kIOReturnBadArgument;
         }
 
         default:
