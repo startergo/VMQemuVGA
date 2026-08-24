@@ -2362,6 +2362,87 @@ NOOP_FN(gld_noop_100, 0x100)
 
 /* our swap WRAPPER: the float's swap blits the frame into the GA
  * surface; we then push the surface to the desktop (0x600D). */
+/* RUNG 66 — THE DRAW DOOR CENSUS: counting wrappers over every
+ * dispatch slot the float fills. Per-frame deltas (logged at swap)
+ * name the draw pipeline's slots — the ABI surface for Mesa replay. */
+#define FSLOT(i) \
+    static long (*g_fs_##i)(void*,void*,void*,void*,void*,void*); \
+    static long g_fc_##i; \
+    static long fw_##i(void* a0, void* a1, void* a2, void* a3, \
+                       void* a4, void* a5) { \
+        g_fc_##i++; \
+        return g_fs_##i ? (long)g_fs_##i(a0,a1,a2,a3,a4,a5) : 0; }
+FSLOT(00) FSLOT(08) FSLOT(10) FSLOT(18) FSLOT(20) FSLOT(28)
+FSLOT(30) FSLOT(38) FSLOT(40) FSLOT(48) FSLOT(50) FSLOT(58)
+FSLOT(60) FSLOT(68) FSLOT(70) FSLOT(78) FSLOT(80) FSLOT(88)
+FSLOT(90) FSLOT(98) FSLOT(a0) FSLOT(a8) FSLOT(b0) FSLOT(b8)
+FSLOT(c0) FSLOT(c8) FSLOT(d0) FSLOT(d8) FSLOT(e0) FSLOT(e8)
+FSLOT(f0) FSLOT(f8) FSLOT(100)
+
+/* RUNG 66 correction: the float's flush/swap selection runs AFTER
+ * the attaches (the slot reads 0x0 at attach time) and silently
+ * displaces any wrap. Poll the slot from the hot dispatch thunks —
+ * each carries the ctx as a0 — and wrap on first non-NULL sighting. */
+static void fw_poll(void* ctx)
+{
+    static int s_poll_off = 0;
+    if (s_poll_off || !ctx) return;
+    void** slot = (void**)((char*)ctx + 0x66b0);
+    if (*slot && *slot != (void*)&gld_swap_wrapper) {
+        g_float_swap_fn =
+            (long(*)(void*,void*,void*,void*,void*,void*))*slot;
+        *slot = (void*)&gld_swap_wrapper;
+        char w[128];
+        snprintf(w, sizeof(w),
+                 "rung66: poll-wrap at %p: float swap %p WRAPPED",
+                 ctx, (void*)g_float_swap_fn);
+        ep_log(w);
+        s_poll_off = 1;              /* re-wrap only if displaced */
+    }
+}
+static void census_install(unsigned long* dispatch)
+{
+    struct { int off; void** save; long** cnt; void* wrap; } S[] = {
+#define SE(nm, off) { off, &g_fs_##nm, &g_fc_##nm, (void*)&fw_##nm }
+        SE(00, 0x00), SE(08, 0x08), SE(10, 0x10), SE(18, 0x18),
+        SE(20, 0x20), SE(28, 0x28), SE(30, 0x30), SE(38, 0x38),
+        SE(40, 0x40), SE(48, 0x48), SE(50, 0x50), SE(58, 0x58),
+        SE(60, 0x60), SE(68, 0x68), SE(70, 0x70), SE(78, 0x78),
+        SE(80, 0x80), SE(88, 0x88), SE(90, 0x90), SE(98, 0x98),
+        SE(a0, 0xa0), SE(a8, 0xa8), SE(b0, 0xb0), SE(b8, 0xb8),
+        SE(c0, 0xc0), SE(c8, 0xc8), SE(d0, 0xd0), SE(d8, 0xd8),
+        SE(e0, 0xe0), SE(e8, 0xe8), SE(f0, 0xf0), SE(f8, 0xf8),
+        SE(100, 0x100),
+#undef SE
+    };
+    for (unsigned k = 0; k < sizeof(S) / sizeof(S[0]); k++) {
+        void* p = *(void**)((char*)dispatch + S[k].off);
+        if (!p) continue;
+        if (p == S[k].wrap) continue;         /* already wrapped */
+        *S[k].save = p;
+        *S[k].cnt = 0;
+        *(void**)((char*)dispatch + S[k].off) = S[k].wrap;
+    }
+}
+static void census_report(long swapno)
+{
+    char b[640]; int o = 0;
+    o += snprintf(b + o, sizeof(b) - o, "rung66 swap %ld deltas:", swapno);
+#define CR(nm, off) if (g_fc_##nm) o += snprintf(b + o, sizeof(b) - o, \
+        " %03x:+%ld", off, g_fc_##nm), g_fc_##nm = 0
+    CR(00, 0x00); CR(08, 0x08); CR(10, 0x10); CR(18, 0x18);
+    CR(20, 0x20); CR(28, 0x28); CR(30, 0x30); CR(38, 0x38);
+    CR(40, 0x40); CR(48, 0x48); CR(50, 0x50); CR(58, 0x58);
+    CR(60, 0x60); CR(68, 0x68); CR(70, 0x70); CR(78, 0x78);
+    CR(80, 0x80); CR(88, 0x88); CR(90, 0x90); CR(98, 0x98);
+    CR(a0, 0xa0); CR(a8, 0xa8); CR(b0, 0xb0); CR(b8, 0xb8);
+    CR(c0, 0xc0); CR(c8, 0xc8); CR(d0, 0xd0); CR(d8, 0xd8);
+    CR(e0, 0xe0); CR(e8, 0xe8); CR(f0, 0xf0); CR(f8, 0xf8);
+    CR(100, 0x100);
+#undef CR
+    ep_log(b);
+}
+
 long gld_swap_wrapper(void* dctx, void* a1, void* a2, void* a3,
                       void* a4, void* a5)
 {
@@ -2370,6 +2451,12 @@ long gld_swap_wrapper(void* dctx, void* a1, void* a2, void* a3,
     if (g_virgl_conn)
         IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
                             NULL, NULL, NULL, NULL);
+    {
+        static long s_swaps = 0;
+        s_swaps++;
+        if (s_swaps <= 5 || (s_swaps % 500) == 0)
+            census_report(s_swaps);
+    }
     return r;
 }
 
@@ -2405,10 +2492,13 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
             g_float_attach =
                 (long(*)(void*,void*,void*,void*,void*,void*))
                 *(void**)((char*)dispatch + 0x48);
+            census_install(dispatch);        /* RUNG 66: count draws */
             *(void**)((char*)dispatch + 0x50) =
                 (void*)&gld_fill_engine_calls;
-            ep_log("  rung64i: float dispatch installed; +0x50/+0x48 "
-                   "wrapped (float install/attach captured)");
+            *(void**)((char*)dispatch + 0x48) =
+                (void*)&gld_table_attach;
+            ep_log("  rung64i: float dispatch installed; census on; "
+                   "+0x50/+0x48 wrapped");
             return r;
         }
     }
@@ -2494,6 +2584,7 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
 long gldUpdateDispatch(void* ctx, void* template_, void* dirty,
                        void* a3, void* a4, void* a5)
 {
+    fw_poll(ctx);            /* RUNG 66: BEFORE the forward (it returns) */
     GLD_FWD("gldUpdateDispatch", ctx, template_, dirty, a3, a4, a5, 0);
     (void)template_; (void)dirty; (void)a3; (void)a4; (void)a5;
     static long n = 0;

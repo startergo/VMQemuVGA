@@ -13444,3 +13444,44 @@ draw/texture ABI surface.
   census sizes the work.
 
 **Exposure:** stub-only (live swap), no boot.
+
+---
+
+## RUNG 66 CHECKPOINT — FORK B STEP 1 INSTRUMENTED;
+the wrap-point falsified (ctx+0x66b0 is a NO-OP slot
+in the float engine); the real slot = engine+0x66b0
+via block1; a teardown crash class recorded
+
+- **THE INSTRUMENT (built, deploying clean):** counting
+  wrappers over all 33 float-filled dispatch slots;
+  per-frame delta report at swap. Awaiting its hook.
+- **THE WRAP-POINT FALSIFICATION (three runs of
+  evidence):** wraps at ctx+0x65c8+0xE8 read 0x0 at
+  attach (the float's selection runs LATER) and the
+  wrapper NEVER fires — while scenes render and swap
+  float-native. Conclusion: [gli_ctx+0x66b0] is not
+  the live swap slot in the float configuration; the
+  selection (grf 0x1f7e0) writes block1 = ENGINE+
+  0x65c8, so the live slot is ENGINE+0x66b0 —
+  reachable only with block1 in hand (the +0x50
+  install entry's own a2), which this engine
+  configuration does not call. NEXT: capture the
+  engine base at InitDispatch (the dispatch block and
+  block1 are both engine-side; rung-34's kSlots
+  region holds the offset relationship) or hook the
+  selection's write site.
+- **A CRASH CLASS TAKEN (the trampoline's debt):**
+  teardown dies at gliDestroyContext →
+  gleDestroyEnableHashTable → gleFreeEnableHashObject
+  (during NSOpenGLContext dealloc) — mixed ownership:
+  float-created objects in engine hash tables with
+  our destroy forwards. Post-content (scenes complete
+  first); a cleanup rung of its own.
+- **INSTRUMENT LESSON (the class, third time):** a
+  forward macro that RETURNS makes any statement
+  after it dead code — the poll-after-forward bug;
+  and a poll through a0 across all thunks faults on
+  integer-handle args (a0 is not always a pointer).
+- **STATE:** CPU rendering (the float's raster) with
+  visible content stands; GPU routing awaits the
+  census read, which awaits the block1 hook.
