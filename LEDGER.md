@@ -13846,3 +13846,24 @@ transport truth, not pixels-on-screen
   format. The RELAY path remains the
   visually-proven fallback; zero-copy stays
   experimental until the eyes say yes.
+
+---
+
+## CORRECTION (user-observed): the screen cleared
+BEFORE the reboot — glmark2's OWN exit restored the
+display
+
+- The black fullscreen was a LIVE presentation (the
+  process alive, flushing black frames); when it
+  exited, the release path restored the desktop —
+  a THIRD confirmed restore, this one observed
+  directly at app exit. The "dead window needs
+  reboot" read was WRONG; the reboot was
+  unnecessary over-recovery. The lifecycle is
+  solid: live-black presents, exit → restore.
+- **THE OPEN ITEM IS PURELY CONTENT:** black frames
+  flush fine, the release works — what's missing is
+  the 3D picture on screen. The zero-copy present's
+  content question stands exactly as registered
+  (UTM debug log the arbiter; relay the
+  visually-proven fallback).
