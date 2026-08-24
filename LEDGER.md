@@ -14821,6 +14821,8 @@ boot, tick stub ec789bb3, binary 12:12
 ```
 1. --reuse-context (full suite, context
    destroyed once at exit):   CLEAN, Score 4
+   (STABILITY number — CPU float rasterizing,
+   not comparable to substitute/Linux FPS)
 2. -b buffer:update-method=map (single
    scene):                    SEGFAULT
    (delayed: crash AT the scene-end reset,
@@ -15014,12 +15016,13 @@ ownership bug never exercised anymore
   the tick stub + map-disabled binary):**
 ```
 P1 texture alone (one context, no cycling):
-   CLEAN exit 0 (Score 6)
+   CLEAN exit 0 (Score 6 — stability number)
 P2 build:duration=3 + texture:duration=3
    (one destroy/create cycle before texture):
    CLEAN exit 0 — ×3 trials
 P3 --reuse-context full suite:
-   CLEAN exit 0 (Score 4) — second
+   CLEAN exit 0 (Score 4 — stability number,
+   CPU float rasterizing) — second
    confirmation of the stable config
 ```
   **Verdict: INTERMITTENT (the user's branch
@@ -15057,7 +15060,11 @@ P3 --reuse-context full suite:
   "glMapBuffer disabled…"), full suite
   running single-context. T6 RESULT: the
   DEFAULT run (no flags) completed the whole
-  suite, Score 4, clean termination — the
+  suite — Score 4, a STABILITY number (CPU
+  float rasterizing; NOT comparable to the
+  substitute's 27-40 FPS GPU figures or
+  Linux's ~1500 FPS — different measurement
+  entirely), clean termination — the
   exit-time teardown-skip warning fired
   ("Skipping GL context teardown on this
   stack (leaked by design; process exit
