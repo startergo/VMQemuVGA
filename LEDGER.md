@@ -13279,3 +13279,31 @@ GA surface; the frame's location is the open frontier
   3. **Deploy verdicts grep DEPLOYED** — a piped
      deploy failure is masked by tail's exit 0; a
      silently-stale binary ran GLMark once this arc.
+
+---
+
+## RUNG 65 PRE-REGISTERED — THE FORMAT-QUERY CHECK:
+does OUR Mesa share the defect the clamp works
+around? (a measurement to end an argument)
+
+**PROVENANCE (recorded before the check, the part
+most likely to be lost):** the clamp exists for
+LINUX-GUEST Mesa — a format-query mis-detection
+that zeroed MaxSamples there. Whether it applies
+HERE is an empirical question about THIS cross-
+compiled Mesa build, not a property of the host or
+the device. Anyone reading samples=1 in six months
+without this note will take it for a hardware limit
+— the reading that already cost this arc four rungs.
+
+**The decision rule (the whole question):** exercise
+the format query through our Mesa build (the GLD's
+virgl embed — RB + RenderbufferStorageMultisample at
+samples=4, GL error the observable). If the pipe
+accepts/queries 4 correctly → the workaround is for
+someone else's bug; declining it and taking v1's
+honest 4 is right. If it reports 0 / rejects → the
+clamp's premise holds here too and 1 stands.
+
+**Exposure:** GLD-side env-gated check (no boot);
+log the verdict; no config change either way.
