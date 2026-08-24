@@ -14308,3 +14308,61 @@ unreachable without modifying GLEngine itself
   frame — any timing is NOT comparable to the
   substitute's 37 FPS. Measure GLVM's CPU share
   separately, or the comparison misleads.
+
+---
+
+## THE BACK-TO-BACK MEASUREMENT + THE LINUX
+BASELINE — the 40× is in the PRESENT PATH, not the
+front end; fix presentation first, then choose the
+driver
+
+- **THE MEASUREMENT (same boot, same scenes):**
+```
+              build      terrain
+Trampoline     10 FPS    22,878 ms/frame (GLVM CPU)
+Substitute     12 FPS        32 ms/frame (GPU + readback)
+Linux (DRI3)   —             ~0.67 ms/frame (GPU, zero traffic)
+```
+  The substitute's terrain number (32 ms) vs
+  Linux (~0.67 ms) = **the 40× is entirely in the
+  guest-side present path** — the readback
+  (glReadPixels pulling every frame into guest
+  memory, then blitting, then re-transferring to
+  the host). Linux's DRI3 passes a buffer handle;
+  pixels never leave the host.
+
+- **THE REFRAMING (the decision tree's honest
+  order):** all four rows — trampoline, substitute,
+  dual-render, suppressed — pay the SAME readback
+  because none of them change how pixels reach the
+  screen. Row 3's dual-render tax sits on top of
+  the 40× penalty. The front-end choice is
+  architecture, not performance; the PRESENT
+  choice is performance.
+
+- **THE ORDERING (the goal is hardware
+  acceleration, not architecture):**
+  1. **FIX PRESENTATION** — make the zero-copy
+     present work (the scanout fd was transport-
+     proven but display-blind in stock UTM; the
+     import failure is host-side), or find another
+     no-readback path
+  2. **THEN choose the front end** — GLD or
+     substitute over a zero-readback present is
+     worth building; either one over a per-frame
+     readback caps at tens of FPS regardless of
+     how elegantly the calls arrive
+
+- **WHAT'S UNFINISHED ON PRESENTATION:**
+  virgl_iokit_flush_frontbuffer is an empty stub;
+  the relay design RELOCATED the readback rather
+  than removing it. The zero-copy scanout (0x600F)
+  was transport-proven but virglrenderer's GL→
+  Metal fd import fails in stock UTM's display
+  (both Core GL and ANGLE Metal — the boundary is
+  unconditional).
+
+- **THE LINUX GUEST IS NOW THE REFERENCE:** same
+  hardware, known-good stack, 1500 FPS — the
+  number to close against. The gap is the guest-
+  side present path, and it is measurable.
