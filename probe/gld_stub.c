@@ -2405,19 +2405,15 @@ static long gld_swap_wrapper_b(void* d, void* a1, void* a2, void* a3,
 { return gld_swap_wrapper_impl(1, d, a1, a2, a3, a4, a5); }
 static void census_report(long swapno);   /* fwd */
 static void export_census_report(long swapno);   /* fwd: after EPRs */
-/* rung 71b forward decls (definitions live with the pipeline
- * instrument below): the per-frame stream re-watch */
-static void pp_tick_modify(void* desc);
-static void* g_pp_tick_desc;
+/* rung 71b NOTE: the per-frame stream re-watch (VMGLD_PPTICK) was
+ * REMOVED at rung 72 — its in-process glpPPDisassemble calls are the
+ * banned pattern (.claude/rules/instrumentation.md); the liveness
+ * finding it produced is banked in LEDGER.md rung 71b. */
 static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                                   void* a2, void* a3, void* a4, void* a5)
 {
     long r = g_site_fn[site]
         ? (long)g_site_fn[site](dctx, a1, a2, a3, a4, a5) : 0;
-    /* RUNG 71b: re-disassemble the adopted fragment stream EVERY SWAP
-     * (per frame, decoupled from modify traffic) — catches in-place
-     * stream patching that never calls back into the GLD */
-    if (g_pp_tick_desc) pp_tick_modify(g_pp_tick_desc);
     if (g_virgl_conn)
         IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
                             NULL, NULL, NULL, NULL);
@@ -2876,124 +2872,33 @@ EPR(gldDestroyFramebuffer)
  *     __TEXT vmaddr 0, so runtime addr = image_header + 0xd5ba5.
  * The thunk-timing hazard is why capture is at create/modify: by draw
  * time ctx->0x188 has been swapped by glvmRequestFunctionPointerWrite. */
-#include <mach-o/dyld.h>
-static void* g_glp_img = 0;      /* in-memory header of libGLProgrammability */
-static char* (*g_glp_disasm)(void*) = 0;
-static void pp_disasm_resolve(void)
-{
-    if (g_glp_disasm) return;
-    if (!g_glp_img) {
-        uint32_t n = _dyld_image_count();
-        for (uint32_t i = 0; i < n; i++) {
-            const char* nm = _dyld_get_image_name(i);
-            if (nm && strstr(nm, "libGLProgrammability")) {
-                g_glp_img = (void*)_dyld_get_image_header(i);
-                break;
-            }
-        }
-    }
-    if (g_glp_img)
-        g_glp_disasm = (char* (*)(void*))((char*)g_glp_img + 0xd5ba5);
-    char b[160];
-    snprintf(b, sizeof(b), "rung71: glp image=%p disasm=%p%s",
-             g_glp_img, (void*)g_glp_disasm,
-             g_glp_disasm ? "" : " (NOT LOADED YET)");
-    ep_log(b);
-}
-/* dump-once per descriptor; the modify loop fires ~2/frame so an
- * undeduped log floods. 64 slots of (desc, dumped_stream). A desc
- * first seen pre-link (stream 0) retries on later modify calls until
- * the stream goes nonzero, then dumps exactly once. */
-static struct { void* desc; int dumped; } g_pp_seen[64];
-/* RUNG 71b — THE PARAM-LIVENESS TICK (discriminates the two uniform
- * mechanisms the baked-in PARAM literals allow): with VMGLD_PPTICK=1
- * in the app's env, every modify of the most recent 0x8B30 stream
- * re-disassembles it and logs SAME/CHANGED against the previous
- * text; every create logs (a relink would mint new descriptors).
- * Scene: bump (glmark2 animates the light-position uniform per
- * frame in its update()). Outcomes:
- *   SAME while the light animates  -> literals are defaults, live
- *     values flow via ctx+0x538; the translator must re-extract
- *     the literals into real uniforms
- *   CHANGED (or new creates)       -> relink per uniform change;
- *     a stream-keyed cache suffices */
-static int g_pp_tick = -1;              /* -1 unset, 0 off, 1 on */
-static int g_pp_tick_n;
-static void* g_pp_tick_desc;            /* the tracked 0x8B30 desc */
-static char g_pp_tick_last[8192];
-static int  g_pp_tick_lastlen = -1;
-static void pp_tick(void* desc)
-{
-    if (g_pp_tick < 0) g_pp_tick = getenv("VMGLD_PPTICK") ? 1 : 0;
-    if (!g_pp_tick) return;
-    /* every create visible — a relink mints new descs */
-    unsigned stype = *(unsigned short*)desc;
-    char b[160];
-    snprintf(b, sizeof(b), "rung71b TICK%d create desc=%p type=0x%04x",
-             g_pp_tick_n, desc, stype);
-    ep_log(b);
-}
-static void pp_tick_modify(void* desc)
-{
-    if (g_pp_tick <= 0 || !desc) return;
-    void* stream = *(void**)((char*)desc + 8);
-    if (!stream) return;
-    unsigned rtype = *(unsigned short*)stream;
-    if (rtype != 0x8b30) return;        /* track the GLSL fragment only */
-    if (desc != g_pp_tick_desc) {       /* new shader under tick: adopt */
-        g_pp_tick_desc = desc;
-        g_pp_tick_lastlen = -1;
-        char b[160];
-        snprintf(b, sizeof(b), "rung71b TICK%d adopt desc=%p", ++g_pp_tick_n, desc);
-        ep_log(b);
-    }
-    pp_disasm_resolve();
-    if (!g_glp_disasm) return;
-    char* txt = g_glp_disasm(stream);
-    if (!txt) return;
-    int n = (int)strlen(txt);
-    g_pp_tick_n++;
-    char b[224];
-    int same = (n == g_pp_tick_lastlen) &&
-               (n == 0 || !memcmp(txt, g_pp_tick_last, n));
-    snprintf(b, sizeof(b), "rung71b TICK%d len=%d %s",
-             g_pp_tick_n, n, same ? "SAME" : "CHANGED");
-    ep_log(b);
-    if (!same) {
-        /* log the PARAM declarations — the literals in question */
-        int pos = 0, line = 0;
-        while (pos < n && line < 30) {
-            int e = pos; while (e < n && txt[e] != '\n') e++;
-            int l = e - pos; if (l > 180) l = 180;
-            if (l > 5 && (txt[pos]=='P'||txt[pos]=='T'||txt[pos]=='A'||txt[pos]=='O')) {
-                char chunk[192]; memcpy(chunk, txt + pos, l); chunk[l] = 0;
-                snprintf(b, sizeof(b), "rung71b+ %s", chunk);
-                ep_log(b); line++;
-            }
-            pos = (e < n) ? e + 1 : n;
-        }
-        if (n < (int)sizeof(g_pp_tick_last)) {
-            memcpy(g_pp_tick_last, txt, n + 1);
-            g_pp_tick_lastlen = n;
-        } else g_pp_tick_lastlen = -1;
-    }
-    free(txt);
-}
+#include <sys/stat.h>
+/* RUNG 72 — THE RAW-WORD CAPTURE CORPUS. Per
+ * .claude/rules/instrumentation.md: capture copies bytes to a file;
+ * decoding happens OFFLINE in a host tool (ppdecode). No in-process
+ * disassembler — the rung-71b lesson. The dump extent is exactly
+ * what the float's own compiler consumes:
+ * glvmBuildModularFunctionDeferred's memcpy of 8*stream->0x10 bytes
+ * from the stream start (header words included — word 0 carries the
+ * type, so each file self-identifies).
+ * Both target-2 types are captured: 0x8B30 (GLSL fragment) and
+ * 0x8804 (raster-op — the gldAddRasterOpsToPPStream merge). 0x8B31
+ * never arrives (rung 71), but is accepted if it ever does. */
+static int g_ppdump_seq;
 static void pp_dump_desc(void* desc, const char* site)
 {
+    static struct { void* desc; int dumped; } seen[64];
     if (!desc || desc == (void*)0x123) return;
     int slot = -1, freeb = -1;
     for (int i = 0; i < 64; i++) {
-        if (g_pp_seen[i].desc == desc) { slot = i; break; }
-        if (!g_pp_seen[i].desc && freeb < 0) freeb = i;
+        if (seen[i].desc == desc) { slot = i; break; }
+        if (!seen[i].desc && freeb < 0) freeb = i;
     }
-    if (!strcmp(site, "create")) pp_tick(desc);
-    if (!strcmp(site, "modify")) pp_tick_modify(desc);
-    if (slot >= 0 && g_pp_seen[slot].dumped) return;   /* already dumped */
+    if (slot >= 0 && seen[slot].dumped) return;   /* already dumped */
     if (slot < 0) {
         if (freeb < 0) return;          /* table full: drop silently */
-        g_pp_seen[freeb].desc = desc;
-        g_pp_seen[freeb].dumped = 0;
+        seen[freeb].desc = desc;
+        seen[freeb].dumped = 0;
         slot = freeb;
     }
     unsigned stype = *(unsigned short*)desc;
@@ -3002,56 +2907,47 @@ static void pp_dump_desc(void* desc, const char* site)
     void* texinfo = *(void**)((char*)desc + 0x18);
     char b[224];
     snprintf(b, sizeof(b),
-        "rung71[%s]: desc=%p type=0x%04x target=%u stream=%p texinfo=%p",
+        "rung72[%s]: desc=%p type=0x%04x target=%u stream=%p texinfo=%p",
         site, desc, stype, target, stream, texinfo);
     ep_log(b);
     if (!stream) return;                /* pre-link: retry next modify */
     unsigned rtype = *(unsigned short*)stream;
     unsigned refc   = *(unsigned short*)((char*)stream + 2);
     unsigned words  = *(unsigned*)((char*)stream + 0x10);
-    g_pp_seen[slot].dumped = 1;         /* claimed: dump happens now */
-    snprintf(b, sizeof(b),
-        "rung71[%s]: stream=%p type=0x%04x refc=%u words=%u bytes=%u",
-        site, stream, rtype, refc, words, words * 8u);
-    ep_log(b);
-    if (rtype != 0x8b30 && rtype != 0x8b31) {
-        snprintf(b, sizeof(b), "rung71[%s]: SKIP disasm (type not "
-                 "0x8B30/0x8B31 — extent cross-check FAILS if real)",
-                 site);
+    if (rtype != 0x8b30 && rtype != 0x8804 && rtype != 0x8b31) {
+        snprintf(b, sizeof(b), "rung72[%s]: SKIP (unknown type 0x%04x)",
+                 site, rtype);
         ep_log(b);
         return;
     }
     if (words == 0 || words > 0x100000u) {
-        snprintf(b, sizeof(b), "rung71[%s]: SKIP disasm (words=%u "
-                 "outside sane range)", site, words);
+        snprintf(b, sizeof(b), "rung72[%s]: SKIP (words=%u outside "
+                 "sane range)", site, words);
         ep_log(b);
         return;
     }
-    pp_disasm_resolve();
-    if (!g_glp_disasm) {
-        ep_log("rung71: disasm unresolved (glp not in image list)");
-        return;
-    }
-    char* txt = g_glp_disasm(stream);
-    if (!txt) { ep_log("rung71: disasm returned NULL"); return; }
-    /* log the dump in <=200-char chunks, first 40 lines worth —
-     * the prediction is READABLE TEXT; keep enough to read a shader */
-    int n = (int)strlen(txt);
-    snprintf(b, sizeof(b), "rung71[%s]: DISASM len=%d", site, n);
+    seen[slot].dumped = 1;
+    snprintf(b, sizeof(b),
+        "rung72[%s]: stream=%p type=0x%04x refc=%u words=%u bytes=%u",
+        site, stream, rtype, refc, words, words * 8u);
     ep_log(b);
-    char chunk[208];
-    int pos = 0, line = 0;
-    while (pos < n && line < 40) {
-        int e = pos, l = 0;
-        while (e < n && txt[e] != '\n') e++;
-        l = e - pos; if (l > 200) l = 200;
-        memcpy(chunk, txt + pos, l); chunk[l] = 0;
-        snprintf(b, sizeof(b), "rung71| %s", chunk);
-        ep_log(b);
-        pos = (e < n) ? e + 1 : n;
-        line++;
-    }
-    free(txt);
+    /* one fopen+fwrite+fclose per stream — allocations freed before
+     * return (the instrumentation rule's lifetime bullet). Files are
+     * per-pid: root (WindowServer) and user processes never collide. */
+    mkdir("/tmp/ppdump", 0777);
+    chmod("/tmp/ppdump", 0777);
+    char path[96];
+    snprintf(path, sizeof(path), "/tmp/ppdump/p%d_s%d_t%04x_w%u.bin",
+             (int)getpid(), ++g_ppdump_seq, rtype, words);
+    FILE* f = fopen(path, "w");
+    if (!f) { ep_log("rung72: fopen FAILED"); return; }
+    size_t n = fwrite(stream, 8u, words, f);
+    fclose(f);
+    snprintf(b, sizeof(b), "rung72: WROTE %s (%llu/%u words)",
+             path, (unsigned long long)n, words);
+    ep_log(b);
+    if (n != words)
+        ep_log("rung72: MISMATCH — short write; corpus file incomplete");
 }
 EPR(gldGetPipelineProgramInfo)
 /* the two instrumented entries: dump BEFORE the forward (the float

@@ -15078,3 +15078,75 @@ P3 --reuse-context full suite:
   context destroys (the r71f-class risk
   surface); the raw-words-offline-decode
   instrument design rule stands regardless.
+
+---
+
+## RUNG 72 — THE CAPTURE CORPUS LANDED: 22
+streams from one clean GLMark run, decoded
+OFFLINE; the raster-op prediction confirmed;
+the live-uniform and sampler channels visible
+in the IR (stub 4a86f460, corpus run pid 2773)
+
+- **THE STUB (per the instrumentation rule):**
+  dump-once per descriptor now writes RAW
+  WORDS — exactly the extent the float's own
+  compiler consumes (8*stream->0x10 bytes
+  from stream start) — to
+  /tmp/ppdump/p<pid>_s<seq>_t<type>_w<words>.bin.
+  The in-process disassembler and the 71b tick
+  are REMOVED from the stub. Both target-2
+  types captured (0x8B30 + 0x8804); 0x8B31
+  accepted if it ever appears.
+- **THE DECODER (probe/ppdecode.c):** loads
+  the system libGLProgrammability, resolves
+  the non-exported glpPPDisassemble at
+  image+0xd5ba5, decodes file buffers.
+  HOST-SIDE DECODE FAILED and why (ledger
+  note): the dylib's dependencies use
+  ABSOLUTE install names and the modern
+  host's libCoreVMClient lacks the 10.6
+  symbol _CVMSBuildModularFunction —
+  DYLD_LIBRARY_PATH cannot redirect absolute
+  paths. The decoder therefore runs AS A
+  STANDALONE GUEST TOOL — not the stub, not
+  a live path, decoding with the very dylib
+  that produced the streams (the md5 caveat
+  disappears). md5 re-verified live both
+  sides this rung: a0185546b98c1a020bb9474391155c75.
+- **THE RUN:** default no-flags GLMark (the
+  stable config — clean exit, teardown-skip
+  warning fired, zero crash reports). 22
+  files: 20 fragment streams (words 30-362)
+  + 2 raster-op streams (24 words each).
+- **PREDICTION CHECK — 0x8804 raster-ops:
+  CONFIRMED and REFINED.** They decode as
+  `!!ARBfp1.0` FIXED-FUNCTION programs —
+  pass-through in these scenes
+  (`ATTRIB att0 = fragment.color.primary;
+  MOV res0, att0`), 24 words constant. The
+  fixed-function path IS an ARBfp1.0
+  program; blend state would appear as ops
+  in blending scenes.
+- **THE IR'S LIVE CHANNELS (new, from the
+  corpus):**
+  - `PARAM prm0:1I = program.local[0]` —
+    INDEXED program-local params: the
+    live-uniform channel in the IR itself
+    (rung 74's read target made concrete)
+  - `TEX:4F tmp0.x___, tmp1.xyyy,
+    texture[prm0.x:1], 2D;` — sampler index
+    carried in a PARAM component
+  - 105 TEX instructions across the corpus;
+    texcoord[0..3]; full op census (MOV/MUL/
+    ADD dominant, TEX heavy, NRM/DOT/MAX/
+    SUB/POW present)
+- **THE ARTIFACT:** probe/ppcorpus-2026-08-24.txt
+  (1171 lines, all 22 streams decoded) — the
+  translator's test corpus. Raw .bins retained
+  at /tmp/ppdump on the guest.
+- **NEXT (rung 73, unchanged from the
+  ladder):** per-draw capture at the
+  transform slot (keep-the-thunk strategy) —
+  r9d count, raster block, texture array,
+  uniform cache — and the geometry-feed
+  entry identification.

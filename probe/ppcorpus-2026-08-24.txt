@@ -1,0 +1,1171 @@
+=== p2773_s10_t8b30_w204.bin: type=0x8b30 refc=0 words=204 file=1632B
+!!ARBfragmentshader
+
+TEMP tmp0:1F, tmp1:2F, tmp2:1F, tmp3:2F, tmp4:2F, tmp5:1F, tmp6:2F, tmp7:2F, tmp8:2F, tmp9:3F, tmp10:3F, tmp11:1F, tmp12:3F, tmp13:3F, tmp14:3F, tmp15:1F, tmp16:3F, tmp17:3F, tmp18:3F, tmp19:3F, tmp20:4F, tmp21:1F, tmp22:1F, tmp23:4F, tmp24:4F, tmp25:1F, tmp26:1F, tmp27:1F, tmp28:4F;
+
+ATTRIB att0:3F = fragment.texcoord[0];
+ATTRIB att1:3F = fragment.texcoord[1];
+ATTRIB att2:3F = fragment.texcoord[2];
+ATTRIB att3:2F = fragment.texcoord[3];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {9.7699999e-4, 0.0, 0.0, 0.0};
+PARAM prm2:2F = {0.0, 9.7699999e-4, 0.0, 0.0};
+PARAM prm3:1F = {13.0, 0.0, 0.0, 0.0};
+PARAM prm4:3F = {20.0, 20.0, 10.0, 0.0};
+PARAM prm5:3F = {0.40824801, 0.40824801, 0.81649703, 0.0};
+PARAM prm6:4F = {0.80000001, 0.80000001, 0.80000001, 1.0};
+PARAM prm7:4F = {0.1, 0.1, 0.1, 1.0};
+PARAM prm8:1F = {100.0, 0.0, 0.0, 0.0};
+PARAM prm9:4F = {0.16000001, 0.16000001, 0.16000001, 1.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att3.xy:2;
+  MOV:3F tmp16.xyz:3, att2.xyz:3;
+  MOV:3F tmp12.xyz:3, att1.xyz:3;
+  MOV:3F tmp10.xyz:3, att0.xyz:3;
+  TEX:4F tmp0.x___, tmp1.xyyy, texture[prm0.x:1], 2D;
+  MOV:2F tmp3.xy:2, prm1.xy:2;
+  ADD:2F tmp4.xy:2, tmp1.xy:2, tmp3.xy:2;
+  TEX:4F tmp2.x___, tmp4.xyyy, texture[prm0.x:1], 2D;
+  MOV:2F tmp6.xy:2, prm2.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp5.x___, tmp7.xyyy, texture[prm0.x:1], 2D;
+  SUB:1F tmp8.x_:2, tmp2.x:1, tmp0.x:1;
+  SUB:1F tmp8._x:2, tmp5.x:1, tmp0.x:1;
+  MUL:1F tmp11.x:1, prm3.x:1, tmp8.x:1;
+  MUL:3F tmp13.xyz:3, tmp11.x:1, tmp12.xyz:3;
+  SUB:3F tmp14.xyz:3, tmp10.xyz:3, tmp13.xyz:3;
+  MUL:1F tmp15.x:1, prm3.x:1, tmp8.y:1;
+  MUL:3F tmp17.xyz:3, tmp15.x:1, tmp16.xyz:3;
+  SUB:3F tmp9.xyz:3, tmp14.xyz:3, tmp17.xyz:3;
+  NRM:3F tmp9.xyz:3, tmp9.xyz:3;
+  NRM:3F tmp18.xyz:3, prm4.xyz:3;
+  NRM:3F tmp19.xyz:3, prm5.xyz:3;
+  DOT:3F tmp21.x:1, tmp9.xyz:3, tmp18.xyz:3;
+  MAX:1F tmp22.x:1, tmp21.x:1, prm2.x:1;
+  MUL:4F tmp20.xyzw, prm6.xyzw, tmp22.x:1;
+  MOV:4F tmp23.xyzw, prm7.xyzw;
+  DOT:3F tmp25.x:1, tmp9.xyz:3, tmp19.xyz:3;
+  MAX:1F tmp26.x:1, tmp25.x:1, prm2.x:1;
+  POW:1F tmp27.x:1, tmp26.x:1, prm8.x:1;
+  MUL:4F tmp24.xyzw, prm9.xyzw, tmp27.x:1;
+  ADD:4F tmp28.xyzw, tmp23.xyzw, tmp24.xyzw;
+  ADD:4F res0.xyzw, tmp28.xyzw, tmp20.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s11_t8b30_w290.bin: type=0x8b30 refc=0 words=290 file=2320B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {-0.00125, 0.001667, 0.0, 0.0};
+PARAM prm2:2F = {0.0, 0.001667, 0.0, 0.0};
+PARAM prm3:1F = {0.25, 0.0, 0.0, 0.0};
+PARAM prm4:2F = {0.00125, 0.001667, 0.0, 0.0};
+PARAM prm5:2F = {-0.00125, 0.0, 0.0, 0.0};
+PARAM prm6:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm7:1F = {-1.0, 0.0, 0.0, 0.0};
+PARAM prm8:2F = {0.00125, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {-0.00125, -0.001667, 0.0, 0.0};
+PARAM prm10:2F = {0.0, -0.001667, 0.0, 0.0};
+PARAM prm11:2F = {0.00125, -0.001667, 0.0, 0.0};
+PARAM prm12:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm2.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm3.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm4.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm2.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm5.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm3.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm6.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm7.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm8.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm3.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm9.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm2.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm10.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm3.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm11.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm2.x:1;
+  ADD:4F tmp0.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm12.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s12_t8b30_w30.bin: type=0x8b30 refc=0 words=30 file=240B
+!!ARBfragmentshader
+
+TEMP tmp0:4F;
+
+ATTRIB att0:4F = fragment.texcoord[0];
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:4F tmp0.xyzw, att0.xyzw;
+  MOV:4F res0.xyzw, tmp0.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s13_t8b30_w36.bin: type=0x8b30 refc=0 words=36 file=288B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  TEX:4F tmp0.xyzw, tmp1.xyyy, texture[prm0.x:1], 2D;
+  MOV:4F res0.xyzw, tmp0.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s14_t8804_w24.bin: type=0x8804 refc=0 words=24 file=192B
+!!ARBfp1.0
+ATTRIB att0 = fragment.color.primary;
+OUTPUT res0 = result.color;
+
+main:
+  MOV res0, att0;
+END
+
+
+=== p2773_s15_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {-0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {-0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {-0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {-0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {-0.00125, 0.0, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.00125, 0.0, 0.0, 0.0};
+PARAM prm14:2F = {0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm15:2F = {0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm16:2F = {0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm17:2F = {0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm11.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s16_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {0.0, -0.0083349999, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {0.0, -0.006668, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {0.0, -0.0050010001, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {0.0, -0.003334, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {0.0, -0.001667, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.0, 0.001667, 0.0, 0.0};
+PARAM prm14:2F = {0.0, 0.003334, 0.0, 0.0};
+PARAM prm15:2F = {0.0, 0.0050010001, 0.0, 0.0};
+PARAM prm16:2F = {0.0, 0.006668, 0.0, 0.0};
+PARAM prm17:2F = {0.0, 0.0083349999, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm1.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s17_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {-0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {-0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {-0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {-0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {-0.00125, 0.0, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.00125, 0.0, 0.0, 0.0};
+PARAM prm14:2F = {0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm15:2F = {0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm16:2F = {0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm17:2F = {0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm11.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s18_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {0.0, -0.0083349999, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {0.0, -0.006668, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {0.0, -0.0050010001, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {0.0, -0.003334, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {0.0, -0.001667, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.0, 0.001667, 0.0, 0.0};
+PARAM prm14:2F = {0.0, 0.003334, 0.0, 0.0};
+PARAM prm15:2F = {0.0, 0.0050010001, 0.0, 0.0};
+PARAM prm16:2F = {0.0, 0.006668, 0.0, 0.0};
+PARAM prm17:2F = {0.0, 0.0083349999, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm1.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s19_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {-0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {-0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {-0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {-0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {-0.00125, 0.0, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.00125, 0.0, 0.0, 0.0};
+PARAM prm14:2F = {0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm15:2F = {0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm16:2F = {0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm17:2F = {0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm11.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s1_t8804_w24.bin: type=0x8804 refc=0 words=24 file=192B
+!!ARBfp1.0
+ATTRIB att0 = fragment.color.primary;
+OUTPUT res0 = result.color;
+
+main:
+  MOV res0, att0;
+END
+
+
+=== p2773_s20_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {0.0, -0.0083349999, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {0.0, -0.006668, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {0.0, -0.0050010001, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {0.0, -0.003334, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {0.0, -0.001667, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.0, 0.001667, 0.0, 0.0};
+PARAM prm14:2F = {0.0, 0.003334, 0.0, 0.0};
+PARAM prm15:2F = {0.0, 0.0050010001, 0.0, 0.0};
+PARAM prm16:2F = {0.0, 0.006668, 0.0, 0.0};
+PARAM prm17:2F = {0.0, 0.0083349999, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm1.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s21_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {-0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {-0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {-0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {-0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {-0.00125, 0.0, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.00125, 0.0, 0.0, 0.0};
+PARAM prm14:2F = {0.0024999999, 0.0, 0.0, 0.0};
+PARAM prm15:2F = {0.0037499999, 0.0, 0.0, 0.0};
+PARAM prm16:2F = {0.0049999999, 0.0, 0.0, 0.0};
+PARAM prm17:2F = {0.0062499996, 0.0, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm11.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s22_t8b30_w362.bin: type=0x8b30 refc=0 words=362 file=2896B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:2F, tmp3:2F, tmp4:4F, tmp5:4F, tmp6:2F, tmp7:2F, tmp8:4F, tmp9:4F, tmp10:4F, tmp11:2F, tmp12:2F, tmp13:4F, tmp14:4F, tmp15:4F, tmp16:2F, tmp17:2F, tmp18:4F, tmp19:4F, tmp20:4F, tmp21:2F, tmp22:2F, tmp23:4F, tmp24:4F, tmp25:4F, tmp26:2F, tmp27:2F, tmp28:4F, tmp29:4F, tmp30:4F, tmp31:2F, tmp32:2F, tmp33:4F, tmp34:4F, tmp35:4F, tmp36:2F, tmp37:2F, tmp38:4F, tmp39:4F, tmp40:4F, tmp41:2F, tmp42:2F, tmp43:4F, tmp44:4F, tmp45:4F, tmp46:2F, tmp47:2F, tmp48:4F, tmp49:4F, tmp50:4F, tmp51:2F, tmp52:2F, tmp53:4F, tmp54:4F, tmp55:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:2F = {0.0, -0.0083349999, 0.0, 0.0};
+PARAM prm2:1F = {0.002659, 0.0, 0.0, 0.0};
+PARAM prm3:2F = {0.0, -0.006668, 0.0, 0.0};
+PARAM prm4:1F = {0.013437, 0.0, 0.0, 0.0};
+PARAM prm5:2F = {0.0, -0.0050010001, 0.0, 0.0};
+PARAM prm6:1F = {0.047370002, 0.0, 0.0, 0.0};
+PARAM prm7:2F = {0.0, -0.003334, 0.0, 0.0};
+PARAM prm8:1F = {0.116512, 0.0, 0.0, 0.0};
+PARAM prm9:2F = {0.0, -0.001667, 0.0, 0.0};
+PARAM prm10:1F = {0.199935, 0.0, 0.0, 0.0};
+PARAM prm11:2F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm12:1F = {0.239365, 0.0, 0.0, 0.0};
+PARAM prm13:2F = {0.0, 0.001667, 0.0, 0.0};
+PARAM prm14:2F = {0.0, 0.003334, 0.0, 0.0};
+PARAM prm15:2F = {0.0, 0.0050010001, 0.0, 0.0};
+PARAM prm16:2F = {0.0, 0.006668, 0.0, 0.0};
+PARAM prm17:2F = {0.0, 0.0083349999, 0.0, 0.0};
+PARAM prm18:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  MOV:2F tmp2.xy:2, prm1.xy:2;
+  ADD:2F tmp3.xy:2, tmp1.xy:2, tmp2.xy:2;
+  TEX:4F tmp4.xyzw, tmp3.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp5.xyzw, tmp4.xyzw, prm2.x:1;
+  MOV:2F tmp6.xy:2, prm3.xy:2;
+  ADD:2F tmp7.xy:2, tmp1.xy:2, tmp6.xy:2;
+  TEX:4F tmp8.xyzw, tmp7.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp9.xyzw, tmp8.xyzw, prm4.x:1;
+  ADD:4F tmp10.xyzw, tmp5.xyzw, tmp9.xyzw;
+  MOV:2F tmp11.xy:2, prm5.xy:2;
+  ADD:2F tmp12.xy:2, tmp1.xy:2, tmp11.xy:2;
+  TEX:4F tmp13.xyzw, tmp12.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp14.xyzw, tmp13.xyzw, prm6.x:1;
+  ADD:4F tmp15.xyzw, tmp10.xyzw, tmp14.xyzw;
+  MOV:2F tmp16.xy:2, prm7.xy:2;
+  ADD:2F tmp17.xy:2, tmp1.xy:2, tmp16.xy:2;
+  TEX:4F tmp18.xyzw, tmp17.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp19.xyzw, tmp18.xyzw, prm8.x:1;
+  ADD:4F tmp20.xyzw, tmp15.xyzw, tmp19.xyzw;
+  MOV:2F tmp21.xy:2, prm9.xy:2;
+  ADD:2F tmp22.xy:2, tmp1.xy:2, tmp21.xy:2;
+  TEX:4F tmp23.xyzw, tmp22.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp24.xyzw, tmp23.xyzw, prm10.x:1;
+  ADD:4F tmp25.xyzw, tmp20.xyzw, tmp24.xyzw;
+  MOV:2F tmp26.xy:2, prm11.xy:2;
+  ADD:2F tmp27.xy:2, tmp1.xy:2, tmp26.xy:2;
+  TEX:4F tmp28.xyzw, tmp27.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp29.xyzw, tmp28.xyzw, prm12.x:1;
+  ADD:4F tmp30.xyzw, tmp25.xyzw, tmp29.xyzw;
+  MOV:2F tmp31.xy:2, prm13.xy:2;
+  ADD:2F tmp32.xy:2, tmp1.xy:2, tmp31.xy:2;
+  TEX:4F tmp33.xyzw, tmp32.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp34.xyzw, tmp33.xyzw, prm10.x:1;
+  ADD:4F tmp35.xyzw, tmp30.xyzw, tmp34.xyzw;
+  MOV:2F tmp36.xy:2, prm14.xy:2;
+  ADD:2F tmp37.xy:2, tmp1.xy:2, tmp36.xy:2;
+  TEX:4F tmp38.xyzw, tmp37.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp39.xyzw, tmp38.xyzw, prm8.x:1;
+  ADD:4F tmp40.xyzw, tmp35.xyzw, tmp39.xyzw;
+  MOV:2F tmp41.xy:2, prm15.xy:2;
+  ADD:2F tmp42.xy:2, tmp1.xy:2, tmp41.xy:2;
+  TEX:4F tmp43.xyzw, tmp42.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp44.xyzw, tmp43.xyzw, prm6.x:1;
+  ADD:4F tmp45.xyzw, tmp40.xyzw, tmp44.xyzw;
+  MOV:2F tmp46.xy:2, prm16.xy:2;
+  ADD:2F tmp47.xy:2, tmp1.xy:2, tmp46.xy:2;
+  TEX:4F tmp48.xyzw, tmp47.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp49.xyzw, tmp48.xyzw, prm4.x:1;
+  ADD:4F tmp50.xyzw, tmp45.xyzw, tmp49.xyzw;
+  MOV:2F tmp51.xy:2, prm17.xy:2;
+  ADD:2F tmp52.xy:2, tmp1.xy:2, tmp51.xy:2;
+  TEX:4F tmp53.xyzw, tmp52.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F tmp54.xyzw, tmp53.xyzw, prm2.x:1;
+  ADD:4F tmp55.xyzw, tmp50.xyzw, tmp54.xyzw;
+  ADD:4F tmp0.xyzw, tmp55.xyzw, prm1.x:1;
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm18.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s2_t8b30_w30.bin: type=0x8b30 refc=0 words=30 file=240B
+!!ARBfragmentshader
+
+TEMP tmp0:4F;
+
+ATTRIB att0:4F = fragment.texcoord[0];
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:4F tmp0.xyzw, att0.xyzw;
+  MOV:4F res0.xyzw, tmp0.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s3_t8b30_w30.bin: type=0x8b30 refc=0 words=30 file=240B
+!!ARBfragmentshader
+
+TEMP tmp0:4F;
+
+ATTRIB att0:4F = fragment.texcoord[0];
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:4F tmp0.xyzw, att0.xyzw;
+  MOV:4F res0.xyzw, tmp0.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s4_t8b30_w42.bin: type=0x8b30 refc=0 words=42 file=336B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:4F;
+
+ATTRIB att0:4F = fragment.texcoord[0];
+ATTRIB att1:2F = fragment.texcoord[1];
+
+PARAM prm0:1I = program.local[0];
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att1.xy:2;
+  MOV:4F tmp2.xyzw, att0.xyzw;
+  TEX:4F tmp0.xyzw, tmp1.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F res0.xyzw, tmp0.xyzw, tmp2.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s5_t8b30_w42.bin: type=0x8b30 refc=0 words=42 file=336B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:4F;
+
+ATTRIB att0:4F = fragment.texcoord[0];
+ATTRIB att1:2F = fragment.texcoord[1];
+
+PARAM prm0:1I = program.local[0];
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att1.xy:2;
+  MOV:4F tmp2.xyzw, att0.xyzw;
+  TEX:4F tmp0.xyzw, tmp1.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F res0.xyzw, tmp0.xyzw, tmp2.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s6_t8b30_w42.bin: type=0x8b30 refc=0 words=42 file=336B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:2F, tmp2:4F;
+
+ATTRIB att0:4F = fragment.texcoord[0];
+ATTRIB att1:2F = fragment.texcoord[1];
+
+PARAM prm0:1I = program.local[0];
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att1.xy:2;
+  MOV:4F tmp2.xyzw, att0.xyzw;
+  TEX:4F tmp0.xyzw, tmp1.xyyy, texture[prm0.x:1], 2D;
+  MUL:4F res0.xyzw, tmp0.xyzw, tmp2.xyzw;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s7_t8b30_w110.bin: type=0x8b30 refc=0 words=110 file=880B
+!!ARBfragmentshader
+
+TEMP tmp0:3F, tmp1:3F, tmp2:3F, tmp3:3F, tmp4:4F, tmp5:1F, tmp6:1F, tmp7:4F, tmp8:4F, tmp9:1F, tmp10:1F, tmp11:1F, tmp12:4F;
+
+ATTRIB att0:3F = fragment.texcoord[0];
+
+PARAM prm0:3F = {20.0, 20.0, 10.0, 0.0};
+PARAM prm1:3F = {0.40824801, 0.40824801, 0.81649703, 0.0};
+PARAM prm2:4F = {0.0, 0.0, 0.80000001, 1.0};
+PARAM prm3:4F = {0.1, 0.1, 0.1, 1.0};
+PARAM prm4:1F = {100.0, 0.0, 0.0, 0.0};
+PARAM prm5:4F = {0.80000001, 0.80000001, 0.80000001, 1.0};
+PARAM prm6:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:3F tmp1.xyz:3, att0.xyz:3;
+  NRM:3F tmp0.xyz:3, tmp1.xyz:3;
+  NRM:3F tmp2.xyz:3, prm0.xyz:3;
+  NRM:3F tmp3.xyz:3, prm1.xyz:3;
+  DOT:3F tmp5.x:1, tmp0.xyz:3, tmp2.xyz:3;
+  MAX:1F tmp6.x:1, tmp5.x:1, prm2.x:1;
+  MUL:4F tmp4.xyzw, prm2.xyzw, tmp6.x:1;
+  MOV:4F tmp7.xyzw, prm3.xyzw;
+  DOT:3F tmp9.x:1, tmp0.xyz:3, tmp3.xyz:3;
+  MAX:1F tmp10.x:1, tmp9.x:1, prm2.x:1;
+  POW:1F tmp11.x:1, tmp10.x:1, prm4.x:1;
+  MUL:4F tmp8.xyzw, prm5.xyzw, tmp11.x:1;
+  ADD:4F tmp12.xyzw, tmp7.xyzw, tmp8.xyzw;
+  ADD:4F res0.xyz_, tmp12.xyzw, tmp4.xyzw;
+  MOV:1F res0.___x, prm6.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s8_t8b30_w210.bin: type=0x8b30 refc=0 words=210 file=1680B
+!!ARBfragmentshader
+
+TEMP tmp0:4F, tmp1:3F, tmp2:4F, tmp3:3F, tmp4:3F, tmp5:3F, tmp6:1F, tmp7:1F, tmp8:1F, tmp9:1F, tmp10:1F, tmp11:1F, tmp12:1B, tmp13:3F, tmp14:1F, tmp15:1F, tmp16:1B, tmp17:3F, tmp18:1F, tmp19:1F, tmp20:1F, tmp21:1B, tmp22:1F, tmp23:1B, tmp24:1B, tmp25:4F;
+
+ATTRIB att0:4F = fragment.texcoord[0];
+ATTRIB att1:3F = fragment.texcoord[1];
+
+PARAM prm0:4F = {0.0, 0.30000001, 0.0, 1.0};
+PARAM prm1:4F = {4.0, 3.0, 1.0, 1.0};
+PARAM prm2:1F = {0.1, 0.0, 0.0, 0.0};
+PARAM prm3:4F = {0.0, 0.60000002, 0.0, 1.0};
+PARAM prm4:1F = {0.40000001, 0.0, 0.0, 0.0};
+PARAM prm5:4F = {0.0, 0.0, 0.0, 1.0};
+PARAM prm6:1F = {10.0, 0.0, 0.0, 0.0};
+PARAM prm7:1F = {0.5, 0.0, 0.0, 0.0};
+PARAM prm8:1F = {0.30000001, 0.0, 0.0, 0.0};
+PARAM prm9:4F = {0.69999999, 0.69999999, 0.69999999, 0.48999998};
+PARAM prm10:1F = {1.0, 0.0, 0.0, 0.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:3F tmp4.xyz:3, att1.xyz:3;
+  MOV:4F tmp2.xyzw, att0.xyzw;
+  MOV:4F tmp0.xyzw, prm0.xyzw;
+  SUB:3F tmp1.xyz:3, prm1.xyz:3, tmp2.xyz:3;
+  NRM:3F tmp3.xyz:3, tmp4.xyz:3;
+  NRM:3F tmp5.xyz:3, tmp1.xyz:3;
+  DOT:3F tmp6.x:1, tmp3.xyz:3, tmp5.xyz:3;
+  MAX:1F tmp7.x:1, tmp6.x:1, prm0.x:1;
+  LEN:4F tmp9.x:1, prm1.xyzw;
+  LEN:3F tmp10.x:1, tmp1.xyz:3;
+  DIV:1F tmp8.x:1, tmp9.x:1, tmp10.x:1;
+  MUL:1F tmp11.x:1, tmp8.x:1, tmp7.x:1;
+  SGE:1B tmp12.x:1, tmp11.x:1, prm2.x:1;
+  IF:1B tmp12.x:1;    # Target: 17 Index: 14
+    MOV:4F tmp0.xyzw, prm3.xyzw;
+  ENDIF;    # Index: 16
+  NRM:3F tmp13.xyz:3, -tmp2.xyz:3;
+  DOT:3F tmp14.x:1, tmp13.xyz:3, tmp3.xyz:3;
+  LRP:1F tmp15.x:1, tmp7.x:1, prm4.x:1, prm2.x:1;
+  SLT:1B tmp16.x:1, tmp14.x:1, tmp15.x:1;
+  IF:1B tmp16.x:1;    # Target: 24 Index: 21
+    MOV:4F tmp0.xyzw, prm5.xyzw;
+  ENDIF;    # Index: 23
+  RFL:3F tmp17.xyz:3, -tmp5.xyz:3, tmp3.xyz:3;
+  DOT:3F tmp19.x:1, tmp17.xyz:3, tmp13.xyz:3;
+  MAX:1F tmp20.x:1, prm0.x:1, tmp19.x:1;
+  POW:1F tmp18.x:1, tmp20.x:1, prm6.x:1;
+  SGT:1B tmp21.x:1, tmp6.x:1, prm0.x:1;
+  MUL:1F tmp22.x:1, tmp8.x:1, tmp18.x:1;
+  SGT:1B tmp23.x:1, tmp22.x:1, prm7.x:1;
+  ANL:1B tmp24.x:1, tmp21.x:1, tmp23.x:1;
+  IF:1B tmp24.x:1;    # Target: 36 Index: 32
+    MUL:4F tmp25.xyzw, prm8.x:1, tmp0.xyzw;
+    ADD:4F tmp0.xyzw, prm9.xyzw, tmp25.xyzw;
+  ENDIF;    # Index: 35
+  MOV:3F res0.xyz_, tmp0.xyz:3;
+  MOV:1F res0.___x, prm10.x:1;
+  RET (TR.xxxx);
+END
+
+
+=== p2773_s9_t8b30_w146.bin: type=0x8b30 refc=0 words=146 file=1168B
+!!ARBfragmentshader
+
+TEMP tmp0:3F, tmp1:2F, tmp2:3F, tmp3:3F, tmp4:3F, tmp5:4F, tmp6:3F, tmp7:3F, tmp8:3F, tmp9:4F, tmp10:1F, tmp11:1F, tmp12:4F, tmp13:4F, tmp14:1F, tmp15:1F, tmp16:1F, tmp17:4F;
+
+ATTRIB att0:2F = fragment.texcoord[0];
+
+PARAM prm0:1I = program.local[0];
+PARAM prm1:4F = program.local[1];
+PARAM prm2:4F = program.local[2];
+PARAM prm3:4F = program.local[3];
+PARAM prm4:4F = program.local[4];
+PARAM prm5:1F = {2.0, 0.0, 0.0, 0.0};
+PARAM prm6:1F = {1.0, 0.0, 0.0, 0.0};
+PARAM prm7:1F = {0.0, 0.0, 0.0, 0.0};
+PARAM prm8:3F = {20.0, 20.0, 10.0, 0.0};
+PARAM prm9:3F = {0.40824801, 0.40824801, 0.81649703, 0.0};
+PARAM prm10:4F = {0.80000001, 0.80000001, 0.80000001, 1.0};
+PARAM prm11:4F = {0.1, 0.1, 0.1, 1.0};
+PARAM prm12:1F = {100.0, 0.0, 0.0, 0.0};
+PARAM prm13:4F = {0.16000001, 0.16000001, 0.16000001, 1.0};
+
+OUTPUT res0:4F = result.color;
+
+main:
+  MOV:2F tmp1.xy:2, att0.xy:2;
+  TEX:4F tmp0.xyz_, tmp1.xyyy, texture[prm0.x:1], 2D;
+  MUL:3F tmp3.xyz:3, tmp0.xyz:3, prm5.x:1;
+  SUB:3F tmp2.xyz:3, tmp3.xyz:3, prm6.x:1;
+  MOV:3F tmp5.xyz_, tmp2.xyz:3;
+  MOV:1F tmp5.___x, prm7.x:1;
+  MUL:4F tmp6.xyz_, prm1.xyzw:4:4, tmp5.xyzw;
+  NRM:3F tmp4.xyz:3, tmp6.xyz:3;
+  NRM:3F tmp7.xyz:3, prm8.xyz:3;
+  NRM:3F tmp8.xyz:3, prm9.xyz:3;
+  DOT:3F tmp10.x:1, tmp4.xyz:3, tmp7.xyz:3;
+  MAX:1F tmp11.x:1, tmp10.x:1, prm7.x:1;
+  MUL:4F tmp9.xyzw, prm10.xyzw, tmp11.x:1;
+  MOV:4F tmp12.xyzw, prm11.xyzw;
+  DOT:3F tmp14.x:1, tmp4.xyz:3, tmp8.xyz:3;
+  MAX:1F tmp15.x:1, tmp14.x:1, prm7.x:1;
+  POW:1F tmp16.x:1, tmp15.x:1, prm12.x:1;
+  MUL:4F tmp13.xyzw, prm13.xyzw, tmp16.x:1;
+  ADD:4F tmp17.xyzw, tmp12.xyzw, tmp13.xyzw;
+  ADD:4F res0.xyzw, tmp17.xyzw, tmp9.xyzw;
+  RET (TR.xxxx);
+END
+
+
