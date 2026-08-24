@@ -14366,3 +14366,23 @@ Linux (DRI3)   —             ~0.67 ms/frame (GPU, zero traffic)
   hardware, known-good stack, 1500 FPS — the
   number to close against. The gap is the guest-
   side present path, and it is measurable.
+
+---
+
+## THE BACKEND BRACKET — GL_INVALID_OPERATION on
+BOTH Apple Core GL and ANGLE Metal: the fault is
+in OUR command stream
+
+- **THE TEST (user-switched to Core GL, one boot):**
+  build 17 FPS, shading:gouraud 38 FPS, Score 26 —
+  the GPU does real work. But glError=0x502 from
+  the first diagnostic, readback black — same on
+  Core GL as on ANGLE Metal.
+- **THE PARTITION:** the fault is in the guest-side
+  command stream (Mesa/virgl encoding), NOT in the
+  host's GL translation. Core GL rejects the same
+  commands that ANGLE rejects.
+- **THE NEXT INSTRUMENT:** the opcode log
+  (VIRGL_IOKIT_OPS) — but it didn't fire in the
+  last attempt; the deployed libOSMesa may not
+  have the instrument. Rebuilding and re-checking.
