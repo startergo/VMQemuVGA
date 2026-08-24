@@ -14236,3 +14236,45 @@ lever
   the uniform bindings, the sampler bindings, and
   the vertex layout — all present in the call's
   arguments (the same data the float compiles).
+
+---
+
+## RUNG 69 RESULT — THE DISCRIMINATING EXPERIMENT:
+GLVM EXECUTES regardless of the hardware bit;
+the drawbuffer at +0x20 IS the render target
+
+- **THE DRAWABLE DECODE (ctx+0x218 → 0xC0-byte
+  object):**
+```
++0x00  w|h packed (800|600)
++0x10  0x100000001 (flags)
++0x20  backing ptr — NONZERO, CHANGING (GLVM target)
++0x28  same (duplicate)
++0x30  GA surface base (0x3f800000 = float 1.0 at
+       midpoint — depth-clear constants, not pixels)
+```
+- **THE VERDICT: the backing at +0x20 IS being
+  written** — GLVM rasterizes into it every frame.
+  The hardware claim bit (+0x100, rung 47) does NOT
+  suppress engine-side GLVM execution. The engine
+  rasterizes through GLVM into the drawable backing
+  regardless of the driver's hardware claim.
+- **THE ARCHITECTURE CONSEQUENCE:** to route draws
+  to the GPU from the GLD path:
+  1. The drawbuffer at +0x20 must be pointed at a
+     DUMMY (so GLVM's CPU writes are harmless)
+  2. The stub's pipeline-program translation drives
+     Mesa/virgl (the real rendering)
+  3. The stub presents from Mesa's output
+  4. The engine's GLVM execution still runs (CPU
+     cost) but its output is discarded
+  This means the transparent GPU path pays for BOTH
+  rasterizations unless GLVM can be suppressed by
+  another mechanism (returning an error from the
+  pipeline program, or poisoning the drawbuffer
+  descriptor to make GLVM refuse to execute).
+- **THE ALTERNATIVE:** accept the CPU cost of GLVM
+  running into a dummy while Mesa does the real
+  work — on TCG the GLVM cost may be small relative
+  to the readback, making the dual-render acceptable
+  as a first implementation.

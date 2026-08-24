@@ -2413,6 +2413,64 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
     if (g_virgl_conn)
         IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
                             NULL, NULL, NULL, NULL);
+    /* RUNG 69 — THE DISCRIMINATING EXPERIMENT: watch the drawbuffer
+     * (ctx+0x218 → drawable → backing) for GLVM writes. The float's
+     * swap ran above (r); if GLVM executed, the backing changed. */
+    {
+        static unsigned char s_prev[16];
+        static int s_have_prev = 0;
+        static int s_watch_left = 8;   /* first 8 swaps */
+        if (dctx && s_watch_left > 0) {
+            s_watch_left--;
+            unsigned char* drw = *(unsigned char**)
+                ((char*)dctx + 0x218);
+            if (drw && (uintptr_t)drw > 0x10000
+                    && (uintptr_t)drw < 0x800000000000ull) {
+                /* the drawable: +0x8 w, +0xc h, +0x14 ptr chain */
+                uint64_t w = *(uint32_t*)(drw + 0x8);
+                uint64_t h = *(uint32_t*)(drw + 0xc);
+                uint64_t chain = *(uint64_t*)(drw + 0x14);
+                /* dump the drawable's words for the ABI record */
+                char db[256]; int dO = 0;
+                dO += snprintf(db + dO, sizeof(db) - dO,
+                    "rung69: DRAWABLE %p w=%llu h=%llu chain=0x%llx:",
+                    (void*)drw, (unsigned long long)w,
+                    (unsigned long long)h,
+                    (unsigned long long)chain);
+                for (int i = 0; i < 8 && dO < 220; i++)
+                    dO += snprintf(db + dO, sizeof(db) - dO,
+                        " %llx",
+                        *(unsigned long*)(drw + i * 8));
+                ep_log(db);
+                /* sample ALL candidate pointers in the drawable */
+                for (int po = 0; po < 0x40; po += 8) {
+                    uint64_t bk = *(uint64_t*)(drw + po);
+                    if (bk <= 0x100000000ull || bk >= 0x110000000ull)
+                        continue;
+                    unsigned char* p = (unsigned char*)(uintptr_t)bk;
+                    size_t mid = (size_t)(w * h * 4) / 2 & ~(size_t)15;
+                    if (mid > 16) mid /= 2;
+                    unsigned char cur[16];
+                    memcpy(cur, p + mid, 16);
+                    char cb[160]; int co = 0;
+                    co += snprintf(cb + co, sizeof(cb) - co,
+                        "rung69: PTR(+0x%x)=0x%llx mid:",
+                        po, (unsigned long long)bk);
+                    for (int c = 0; c < 8 && co < 110; c++)
+                        co += snprintf(cb + co, sizeof(cb) - co,
+                            "%02x", cur[c]);
+                    /* nonzero check */
+                    int nz = 0;
+                    for (int c = 0; c < 16; c++) if (cur[c]) { nz = 1; break; }
+                    co += snprintf(cb + co, sizeof(cb) - co,
+                        " %s", nz ? "NONZERO" : "zero");
+                    ep_log(cb);
+                }
+            } else {
+                ep_log("rung69: ctx+0x218 ABSENT (no drawable)");
+            }
+        }
+    }
     {
         static long s_swaps = 0;
         s_swaps++;
