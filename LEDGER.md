@@ -13715,3 +13715,33 @@ scanoutPresent3D: flush res=401 OK (zero-copy)   ← per frame
   stays on the list. The fullscreen present means
   the desktop needs releasing on app exit (the 2D
   refresh restore path — verify before daily use).
+
+---
+
+## RUNG 67 RESIDUAL FIRED (the recorded one, now
+with a witness): app exit leaves the scanout bound
+to a DEAD resource — the whole display goes black;
+restored by reboot
+
+- **THE FAILURE (observed on the guest):** GLMark
+  exits → its 3D context and resource 401 are
+  destroyed → the scanout REMAINS bound to the dead
+  resource and `m_scanout_taken_over_by_3d` stays
+  true → the host composites a dead resource
+  (black) and the 2D refresh never resumes. The
+  guest stays alive (screen visible via ARD);
+  display restored by REBOOT (the boot path
+  rebinds the desktop scanout). Also observed: the
+  display RESIZED around the 800x600 bind (the
+  host scales the scanout resource to the display
+  geometry).
+- **THE MISSING PIECE (the release path, named):**
+  on 3D-resource destroy of the scanout-bound
+  resource AND on user-client close, the kernel
+  must REBIND the desktop scanout
+  (setscanout(0, desktop_res, 0,0,w,h)) and clear
+  the takeover (setScanoutTakenOverBy3D(false)).
+  Two hook points exist: the resource-destroy path
+  (0x6005-side) and the user client's stop/died.
+  Until then: **SHIM_ZERO_COPY runs are
+  reboot-to-recover — do not leave apps running.**
