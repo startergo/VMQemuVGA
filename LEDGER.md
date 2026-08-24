@@ -14428,3 +14428,40 @@ submit 2 (498 dwords): the first real frame
   architecture works end to end. The remaining
   performance gap (17 FPS vs Linux's 1500) is in
   the readback present, as established.
+
+---
+
+## FULL SUITE UNDER CORE GL — 15 scenes at 27-40
+FPS (the GPU through the substitute, readback
+present); the strongest complete table
+
+```
+Scene FPS values (15 completed, 0 setup failures,
+no Score — the wave-scene app crash):
+14, 38, 40, 38, 35, 40, 38, 38, 36, 32, 34, 36,
+30, 27, 31
+```
+
+- **THE THREE-PATH COMPARISON (same scenes, same
+  hardware):**
+```
+CPU float:       1-12 FPS  (terrain 0.04 FPS)
+GPU substitute: 27-40 FPS  (readback present)
+Linux GPU:      ~1500 FPS  (zero pixel traffic)
+```
+  The GPU through the substitute is 3-10× the CPU
+  on every scene. The remaining 40× to Linux is
+  the readback present, as established.
+
+- **THE VISUAL LIFECYCLE (user-observed):** the
+  horse spun (draws working), froze (the drawRect
+  display cycle stopped re-firing on 10.6), then
+  went white (the un-blitted window). The FPS
+  numbers are real — the scenes ran behind the
+  frozen window.
+
+- **THE REMAINING ITEMS (unchanged):**
+  1. drawRect re-fire reliability (the frozen
+     animation + white window class)
+  2. The readback present (the 40×)
+  3. The wave-scene app crash (glmark2's own bug)
