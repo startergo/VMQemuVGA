@@ -15603,3 +15603,42 @@ class jump table bound to its handlers
   (0xd5152, kinds 1D/2D/3D/CUBE/SHADOW*);
   declaration-table formats. Then
   probe/ppdec.c, differential-verified 22/22.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 1) — ppdec.c
+SCAFFOLDED; the one blocking piece named:
+INSTRUCTION BOUNDARIES
+
+- **probe/ppdec.c** — the pure-C decoder scaffold,
+  rule-clean by construction (no foreign calls;
+  the runtime translator's intended decoder).
+  Contains: the full 140-op table, the class
+  map, the operand layout, the header decode —
+  and an honest STATUS block naming what is
+  NOT yet decoded.
+- **CONFIRMED EMPIRICALLY THIS PASS:**
+  - the stream WORD COUNT lives at word 2
+    (byte +0x10) — verified in-stream (30 in
+    the 30-word file) ✓
+  - the header carries a declaration region
+    (words 3..~16 in the w30 file) with kind
+    tags 0x11-0x1e in the word halves
+  - word 26 = 0x1348 → opcode 77 = RET —
+    EXACTLY the text's final instruction ✓
+- **THE ONE BLOCKING PIECE, now precisely
+  bounded: INSTRUCTION BOUNDARIES.** The
+  operand CLASS field and the OPCODE field
+  share bits 6-8 of w0 — a class-3 (res)
+  operand word is indistinguishable from
+  "opcode 3" by the word alone. Walking a
+  stream requires knowing each instruction's
+  word length (1 + arity + modifiers) — the
+  per-opcode length/arity table from
+  glpDisassemble1Op's 140 handlers (or
+  corpus statistics: op-count × words). With
+  boundaries, the differential gate
+  (22/22 byte-equality with
+  ppcorpus-2026-08-24.txt) is checkable.
+- Differential state: NOT MET (structure
+  walk only). No claim of completion.
