@@ -2855,7 +2855,20 @@ EPR(gldReclaimFramebuffer)
 EPR(gldDestroyFramebuffer)
 EPR(gldCreatePipelineProgram)
 EPR(gldGetPipelineProgramInfo)
-EPR(gldModifyPipelineProgram)
+/* RUNG 69b — THE SUPPRESSION TEST: return an error from
+ * ModifyPipelineProgram (do NOT forward to the float). If the engine
+ * skips GLVM execution on error, the backing stays zero (suppression
+ * for free). If it falls back to a previous/default program, the
+ * backing still gets written (no suppression via this return). */
+static long g_ec_gldModifyPipelineProgram;
+long gldModifyPipelineProgram(void* a0, void* a1, void* a2, void* a3,
+                              void* a4, void* a5)
+{
+    g_ec_gldModifyPipelineProgram++;
+    if (g_ec_gldModifyPipelineProgram <= 3)
+        ep_log("rung69b: ModifyPipelineProgram REFUSED (-> -1)");
+    return -1;
+}
 EPR(gldUnbindPipelineProgram)
 EPR(gldDestroyPipelineProgram)
 EPR(gldCreateProgram)

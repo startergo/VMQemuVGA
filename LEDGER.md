@@ -14278,3 +14278,33 @@ the drawbuffer at +0x20 IS the render target
   work — on TCG the GLVM cost may be small relative
   to the readback, making the dual-render acceptable
   as a first implementation.
+
+---
+
+## RUNG 69b — THE SUPPRESSION READ: GLVM execution
+is UNCONDITIONAL; row 4 (GLVM suppression) is
+unreachable without modifying GLEngine itself
+
+- **THE TEST:** gldModifyPipelineProgram returns -1
+  (refused, not forwarded to the float). Result:
+  the scene still runs (10 FPS), the backing at
+  +0x20 is still NONZERO — GLVM still executes.
+  The engine falls back to a default/previous
+  program and rasterizes anyway.
+- **THE COMPLETE SUPPRESSION MATRIX (all three
+  candidates dead):**
+  1. Hardware claim bit (+0x100): GLVM executes
+  2. Pipeline program error return: GLVM executes
+  3. Classification gates ([engine+0x6570]):
+     GLVM executes
+  **GLVM execution is unconditional in GLEngine.**
+  Suppressing it requires modifying GLEngine.bundle
+  itself (system software — outside our scope).
+- **ROW 4 IS UNREACHABLE** for the GLD path.
+  Row 3 (dual-render: GLVM into dummy + Mesa on
+  GPU) is the honest ceiling.
+- **PRE-REGISTERED for row 3 (per the review):**
+  dual-render means TWO rasterizers writing per
+  frame — any timing is NOT comparable to the
+  substitute's 37 FPS. Measure GLVM's CPU share
+  separately, or the comparison misleads.
