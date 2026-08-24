@@ -15500,3 +15500,66 @@ per frame: 0x600E(frame, w*4, w, h) = 0x0
   (pitch-correct, shape-offset) → flush +
   push → SCREEN. Zero app configuration; the
   VMGLD_GPUTEST gate is the only env.
+
+---
+
+## RUNG 77 — THE WORD FORMAT, FIRST THIRD:
+the 140-opcode table extracted; the op-word
+layout; instructions are MULTI-WORD with
+interleaved data tables; the Rosetta method
+validated (host-only rung, zero guest risk)
+
+- **WHY THE WORD DECODE BECAME REQUIRED:** the
+  instrumentation rule bans in-process
+  glpPPDisassemble — a runtime translator inside
+  the stub must decode raw words ITSELF (pure
+  C, no foreign calls). The text-dump design
+  served the corpus; the runtime needs the
+  binary form. The "optimization" framing of
+  the word decode is superseded.
+- **THE OPCODE TABLE (banked:
+  probe/pp-opcodes.txt):** 140 mnemonics
+  extracted from _ppstreamOpString[]
+  (__DATA,__const 0x11dde0 of the x86_64
+  slice) — ARBfp superset with vector ops
+  (NRM/DOT/LEN/SQT), flow control
+  (BRA/CAL/RET/IF/LOOP/WHILE), texture ops
+  (TEX/TXP/TXB/TXL/TEXEL_FETCH), and PP
+  extensions (TRANSPOSE/OUTERPRODUCT/
+  TARGBRA/PP_TEX_FORMAT_*).
+- **THE OP-WORD LAYOUT (from
+  glpDisassemble1Op @ glp 0xd3dfb):**
+  `opcode = word0(u16) >> 6`;
+  `word0 & 7` = a 3-bit field (the source of
+  the `:4F/:3F/:1F` width annotation);
+  `dword@+4 >> 14` = a further field; a flag
+  at word1+2 bit2 selects an " OFFSET" suffix.
+  The tail is a 140-way per-opcode jump
+  table (each opcode its own formatter — the
+  instruction LENGTHS live in those handlers).
+- **THE ROSETTA RESULT (empirical, corpus):**
+  walking `opcode = w>>6` over raw words
+  reproduces each file's mnemonic sequence IN
+  ORDER (e.g. the 30-word build shader walks
+  MOV,MOV,…,MOV,RET) — with NON-INSTRUCTION
+  words between ops: instructions are
+  MULTI-WORD (op word + operand words), and
+  the stream interleaves declaration/binding
+  tables (the w362 streams' regular
+  `?1 ?3 ?3 ?3` runs at offset 49 = table
+  data, not code). The method is viable and
+  self-verifying.
+- **THE REMAINING TWO THIRDS (named):**
+  1. per-opcode instruction LENGTHS — from the
+     jump-table handlers, or statistically
+     from the corpus (each file's op count ×
+     words consumed);
+  2. the OPERAND WORD encoding — register
+     class (tmp/att/prm/res/texture), index,
+     swizzle, the `:2F/:1I` type tags, the
+     TEX sampler descriptor; then the
+     declaration-table formats.
+  Then: probe/ppdec.c (pure-C decoder),
+  differential-verified 22/22 against
+  ppdecode's banked text; then embedded in
+  the stub for runtime translation.
