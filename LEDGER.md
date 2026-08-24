@@ -14060,3 +14060,45 @@ Mesh::update_vbo → memcpy on the wave scene
   buffer update — app-side (libc++ vector compat
   or mesh bug), clean separation from our transport,
   shim, and kernel. 15 scenes completed first.
+
+---
+
+## THE UTM DEBUG LOG READ — NOT SHADERS: the
+"Illegal resource" cascade (the rung-58 class,
+now the suite's black-frame mechanism)
+
+- **THE ERRORS (5 total, 4 contexts):**
+```
+ctx 256: Illegal resource 258 (surface create)
+ctx 257: Illegal resource 360 (surface create)
+ctx 258: Illegal resource 420 (VBO bind)
+ctx 259: Illegal resource 462 (surface create)
+       → Illegal command buffer 329729
+```
+  Each context hits ONE bad resource; the command
+  buffer ABORTS; all pending commands in the batch
+  (including other resource creations) are dropped;
+  the NEXT batch references resources that were
+  never created → cascade → black frames.
+- **THE CLASS (rung 58's, generalized):** resources
+  created at the virtio-gpu level (0x6002 resp
+  0x1100) but virglrenderer's internal table
+  refuses them. NOT a shader translation issue —
+  the GLSL feature level is 130, sufficient for
+  glmark2's GLSL 1.20 shaders; no compile or link
+  errors appear in the log at all.
+- **THE NAMED CAUSE (one read away):** the resource
+  IDs (258/360/420/462) are in-range sequential —
+  they WERE allocated; the virgl-side object
+  creation must be failing silently or the ctx-
+  attach ordering leaves gaps. The first resource
+  failure poisons the context permanently (every
+  subsequent batch aborts on a cascade-missing
+  resource).
+- **THE FIX DIRECTION:** the virgl resource-creation
+  protocol in the winsys — specifically the
+  ctxAttachResource (0x6009) ordering relative to
+  the first use, and whether any resource creations
+  ride in batches that can be dropped by earlier
+  failures. The first-context failure at resource
+  258 is the seed — everything after is cascade.
