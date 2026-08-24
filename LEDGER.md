@@ -14102,3 +14102,45 @@ ctx 259: Illegal resource 462 (surface create)
   ride in batches that can be dropped by earlier
   failures. The first-context failure at resource
   258 is the seed — everything after is cascade.
+
+---
+
+## RUNG 68 RESULT — THE LIFECYCLE IS CLEAN; the
+black-frames mechanism is a PERSISTENT
+GL_INVALID_OPERATION from context setup
+
+- **THE INSTRUMENT (79 creates, 79 attaches, 64
+  unrefs — all logged, all clean; zero new
+  "Illegal resource" in the debug log from ctx 260):**
+  the resource cascade class is NOT the current
+  mechanism. The lifecycle instrumentation closes
+  that question.
+- **THE ACTUAL MECHANISM (the diag lines):**
+```
+diag[1] scratch=(0x00000000,...) glError=0x502
+diag[2..5] scratch=(0xff000000,...) glError=0x502
+```
+  The readback returns OPAQUE BLACK (BGRA 0xff
+  00 00 00) — the GPU IS rendering; the clear works;
+  the draws silently no-op. GL_INVALID_OPERATION
+  (0x502) is set from the FIRST diagnostic — a
+  persistent context-setup error that kills every
+  draw while leaving the clear intact.
+- **THE USER'S OBSERVATION:** the horse was visible
+  (first scene, the clear + simple geometry);
+  subsequent scenes went black (the draws fail).
+- **THE QUESTION (sharper than "shader coverage"):**
+  WHAT sets GL_INVALID_OPERATION at setup? The
+  virgl state tracker's initialization path
+  emits state commands the host rejects silently
+  (no error in the UTM debug log — the rejection
+  is at the GL level, not the virgl decode level).
+  The candidates: a GL state the ANGLE/Metal host
+  doesn't support (stencil, depth-bits, a sampler
+  state), or a Mesa state-tracker emission that
+  the ANGLE translation layer rejects.
+- **NEXT:** instrument the SETUP path (the first
+  executeCommands batch after context creation) —
+  log the virgl command stream's opcodes; the first
+  command that the host rejects (visible as the
+  first GL error after MakeCurrent) is the seed.
