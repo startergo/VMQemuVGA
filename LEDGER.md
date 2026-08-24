@@ -15428,3 +15428,75 @@ rung75b: frame N 800x600 hue=X injected->backing
   into the app's dlsym — the 14:12:57
   crash); the GALLIUM_DRIVER=virgl setenv
   happens before dlopen, inside the stub.**
+
+---
+
+## RUNG 76 — FIRST GPU PIXELS ON SCREEN UNDER
+THE GLD: the stub-driven GA binding landed;
+the GPU frame (hue + triangle) is VISIBLE,
+alternating with the CPU horse (stub
+bb3762bb, run T27, user-observed)
+
+- **THE DIAGNOSIS (the "missing GA binding"):**
+  it was never automatic and never broken —
+  `SetSurface(id, 0x800)` is an APP-SIDE call
+  on the type-2 user client that NOTHING in
+  the normal flow makes (the milestone-2 boot
+  had the binding because the PROBE made it).
+  The boot-arg gate is OPEN
+  (`vm-accel-surface=1` live in kern.bootargs);
+  the `!registered` surface-client instance in
+  ioreg is NORMAL for a user client. The
+  kernel-log evidence for this boot's boot-time
+  traffic was destroyed by the stub's own
+  failing 0x600D calls (~3/s since 14:07 —
+  the flood rotated the log; the 0x600D call
+  is now REMOVED).
+- **THE STUB-DRIVEN GA CHAIN (all 0x0):**
+```
+type 0 open → VMAccelSurfaceClient
+sel 7  SetIDMode(0x66, 0x24)   surface registered, bpp 4
+sel 9  SetShape(0x4, 0, rgn)   geometry stored — the
+                               IdentityScaleBit (0x4) is the
+                               ONLY path that stores geometry
+sel 14 WriteLock               backing created (stride
+                               base_w*4, mapped in our task)
+sel 0 (type 2) SetSurface(0x66, 0x800)  → GA-BOUND
+per frame: 0x600E(frame, w*4, w, h) = 0x0
+```
+  The region struct: IOAccelDeviceRegion
+  {u32 num_rects; 4×SInt16 bounds;
+  4×SInt16 rect[1]} — 20 bytes for 1 rect.
+- **THE VISUAL VERDICT (user-observed, T27):
+  "the horse and triangle alternate on top of
+  each other shifted a little."** — the GPU
+  frame is ON SCREEN (the triangle + hue
+  exist only in the virgl-rendered frame);
+  the alternation is the two-writers
+  architecture (GLVM still rasterizes the CPU
+  frame into the window surface — rung 69b:
+  suppression unreachable — while our band
+  writes the same desktop rect at each
+  present; WindowServer repaints between);
+  the shift is the fixed (100,100) rect vs
+  the window's position. FIRST GPU PIXELS
+  UNDER THE GLD ROUTE: OBSERVED.**
+- **THE OPEN ARTIFACTS (named, none a chain
+  failure):** (1) the alternation — resolved
+  by translation replacing the CPU frame (the
+  real content rung: the corpus shaders +
+  draw-state replay on the embedded context),
+  or by the exclusive window-surface binding
+  (milestone-3's app-side attach); (2) the
+  rect offset — match the shape to the
+  window's live position or take over the
+  full scanout; (3) dual-render cost stands
+  as pre-registered.
+- **THE FULL CHAIN NOW PROVEN END-TO-END
+  UNDER THE GLD:** GLD stub → bundle-local
+  OSMesa (RTLD_LOCAL) → virgl → iokit winsys
+  → kext → host GPU (Apple M4 Pro) →
+  glReadPixels → 0x600E GA-surface write
+  (pitch-correct, shape-offset) → flush +
+  push → SCREEN. Zero app configuration; the
+  VMGLD_GPUTEST gate is the only env.

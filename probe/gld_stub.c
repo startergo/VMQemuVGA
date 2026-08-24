@@ -2472,34 +2472,103 @@ static void pp_draw_state(void* ctx, const char* site);
 static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                                   void* a2, void* a3, void* a4, void* a5)
 {
-    /* RUNG 75b — THE INJECTION PRESENT. The 0x600E GA-surface push
-     * is UNDER WindowServer (two-writers architecture; the horse
-     * composites over it at 40 Hz — observed 14:4x). The VISIBLE
-     * path is the drawbuffer: overwrite ctx+0x218's backing
-     * (rung-69's GLVM target, +0x20) with the GPU frame BEFORE the
-     * float's swap, and the engine's own presentation carries it. */
+    /* RUNG 76 — THE STUB-DRIVEN GA BINDING. Diagnosis: the GA path
+     * was never automatic — SetSurface(0x800) is an APP-SIDE call
+     * nothing makes (the milestone-2 boot had it because the probe
+     * made it); the boot-arg gate (vm-accel-surface=1) is OPEN.
+     * The stub becomes its own surface client:
+     *   type 0 → sel 7  SetIDMode(0x66, 0x24)   registers surface
+     *           → sel 9  SetShape(0x4, 0, rgn)  geometry (Identity-
+     *                                              ScaleBit ONLY)
+     *           → sel 14 WriteLock               creates the backing
+     *                                            (stride base_w*4)
+     *   type 2 → sel 0  SetSurface(0x66, 0x800)  GA-BOUND
+     *   then 0x600E per frame: pitch-correct write at the shape +
+     *   flush + push. Region struct: IOAccelDeviceRegion
+     *   {u32 num_rects; 4×SInt16 bounds; 4×SInt16 rect[1]}.
+     * Pre-registered: kernel logs SetIDMode STORED / SetShape
+     * STORED / WriteLock alloc / SetSurface BOUND; visual = the
+     * hue+triangle band at desktop (100,100)-(900,700). */
     {
-        static int s_r75 = -1;
-        if (s_r75 < 0) s_r75 = getenv("VMGLD_GPUTEST") ? 1 : 0;
-        if (s_r75 && !g_virgl_conn)
+        static int s_r76 = -1;
+        static io_connect_t s_surf_conn;
+        static io_connect_t s_3d_conn;
+        if (s_r76 < 0) s_r76 = getenv("VMGLD_GPUTEST") ? 1 : 0;
+        if (s_r76 && !g_virgl_conn)
             virgl_transport_init();
-        if (s_r75 && dctx) {
+        if (s_r76 && g_virgl_conn && !s_surf_conn && dctx) {
+            kern_return_t kr;
+            io_service_t svc =
+                IOServiceGetMatchingService(kIOMasterPortDefault,
+                    IOServiceMatching("VMQemuVGAAccelerator"));
+            if (svc) {
+                kr = IOServiceOpen(svc, mach_task_self(), 0,
+                                   &s_surf_conn);
+                char b[96];
+                snprintf(b, sizeof(b), "rung76: type0 open 0x%x "
+                         "(conn=%p)", kr, (void*)s_surf_conn);
+                ep_log(b);
+                if (kr == KERN_SUCCESS) {
+                    uint64_t sid[2] = { 0x66, 0x24 };
+                    kr = IOConnectCallMethod(s_surf_conn, 7,
+                        sid, 2, NULL, 0, NULL, NULL, NULL, NULL);
+                    snprintf(b, sizeof(b), "rung76: SetIDMode 0x%x",
+                             kr);
+                    ep_log(b);
+                    struct { uint32_t n; int16_t bx, by, bw, bh;
+                             int16_t x, y, w, h; } rgn = {
+                        1, 100, 100, 800, 600, 100, 100, 800, 600 };
+                    uint64_t ss[2] = { 0x4 /*IdentityScale*/, 0 };
+                    kr = IOConnectCallMethod(s_surf_conn, 9,
+                        ss, 2, &rgn, sizeof(rgn),
+                        NULL, NULL, NULL, NULL);
+                    snprintf(b, sizeof(b), "rung76: SetShape 0x%x",
+                             kr);
+                    ep_log(b);
+                    uint8_t info[128];
+                    size_t infoLen = sizeof(info);
+                    kr = IOConnectCallMethod(s_surf_conn, 14,
+                        NULL, 0, NULL, 0, NULL, NULL,
+                        info, &infoLen);
+                    snprintf(b, sizeof(b), "rung76: WriteLock 0x%x "
+                             "infoLen=%lu", kr,
+                             (unsigned long)infoLen);
+                    ep_log(b);
+                    uint64_t un[1] = { 0 };
+                    IOConnectCallMethod(s_surf_conn, 15,
+                        un, 1, NULL, 0, NULL, NULL, NULL, NULL);
+                }
+                kr = IOServiceOpen(svc, mach_task_self(), 2,
+                                   &s_3d_conn);
+                if (kr == KERN_SUCCESS && s_surf_conn) {
+                    uint64_t bs[2] = { 0x66, 0x800 };
+                    uint8_t out44[44];
+                    size_t o44 = sizeof(out44);
+                    kr = IOConnectCallMethod(s_3d_conn, 0,
+                        bs, 2, NULL, 0, NULL, NULL,
+                        out44, &o44);
+                    snprintf(b, sizeof(b), "rung76: SetSurface(0x66,"
+                             "0x800) 0x%x — GA-BOUND if 0", kr);
+                    ep_log(b);
+                } else {
+                    char b2[96];
+                    snprintf(b2, sizeof(b2), "rung76: type2 open "
+                             "0x%x", kr);
+                    ep_log(b2);
+                }
+                IOObjectRelease(svc);
+            }
+        }
+        if (s_r76 && g_virgl_conn && dctx && s_surf_conn) {
             unsigned char* drw = *(unsigned char**)
                 ((char*)dctx + 0x218);
             if (drw && (uintptr_t)drw > 0x10000
                     && (uintptr_t)drw < 0x800000000000ull) {
-                int w75 = *(int*)(drw + 0x8);
-                int h75 = *(int*)(drw + 0xc);
-                unsigned char* backing = *(unsigned char**)
-                    (drw + 0x20);
-                if (w75 > 16 && h75 > 16 && backing
-                        && osmesa_link_init(w75, h75) == 0
+                int w76 = *(int*)(drw + 0x8);
+                int h76 = *(int*)(drw + 0xc);
+                if (w76 > 16 && h76 > 16
+                        && osmesa_link_init(w76, h76) == 0
                         && os_glClear && os_glFinish) {
-                    /* RUNG 75c: the sum self-check caught the buffer
-                     * FROZEN at frame 1 (constant 918400 across the
-                     * hue cycle) — the thread's Mesa current-context
-                     * does not survive between swaps. Re-bind every
-                     * frame before rendering. */
                     {
                         static int (*s_mk)(void*, void*, unsigned,
                                            int, int);
@@ -2507,7 +2576,7 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                             unsigned, int, int))dlsym(
                                 g_os_lib, "OSMesaMakeCurrent");
                         if (s_mk) s_mk(g_os_ctx, g_os_buffer,
-                                       0x1401, w75, h75);
+                                       0x1401, w76, h76);
                     }
                     static float s_hue;
                     static long s_n;
@@ -2526,32 +2595,28 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                         os_glEnd();
                     }
                     os_glFinish();
-                    /* RUNG 75c: glFinish does NOT read the virgl
-                     * frame back into the bound OSMesa buffer (the
-                     * black-quarter lesson — the bound buffer stayed
-                     * calloc zeros; the substitute's present used an
-                     * EXPLICIT glReadPixels every frame). Read back
-                     * explicitly; self-check the sum so the log says
-                     * whether pixels are real, not black. */
                     if (os_glReadPixels)
-                        os_glReadPixels(0, 0, w75, h75,
-                                        0x1908 /*GL_RGBA*/,
-                                        0x1401 /*GL_UNSIGNED_BYTE*/,
+                        os_glReadPixels(0, 0, w76, h76,
+                                        0x1908, 0x1401,
                                         g_os_buffer);
-                    /* sum the RED channel only — the all-channel sum
-                     * is hue-invariant by construction (h+0.25+1-h),
-                     * which masked the first readback check */
                     unsigned long sum = 0;
-                    for (int i = 0; i < w75 * 2; i++)
+                    for (int i = 0; i < w76 * 2; i++)
                         sum += g_os_buffer[i * 4];
-                    memcpy(backing, g_os_buffer,
-                           (size_t)w75 * h75 * 4);
+                    kern_return_t pr = 0xe00002c2;
+                    uint64_t sc76[4] = {
+                        (uint64_t)(uintptr_t)g_os_buffer,
+                        (uint64_t)(w76 * 4), (uint64_t)w76,
+                        (uint64_t)h76 };
+                    if (g_virgl_conn)
+                        pr = IOConnectCallMethod(g_virgl_conn,
+                            0x600E, sc76, 4, NULL, 0,
+                            NULL, NULL, NULL, NULL);
                     if ((++s_n & 0xf) == 1) {
                         char b[160];
                         snprintf(b, sizeof(b),
-                            "rung75c: frame %ld %dx%d hue=%.2f "
-                            "sum=%lu ->%p", s_n, w75, h75, s_hue,
-                            sum, (void*)backing);
+                            "rung76: frame %ld %dx%d hue=%.2f "
+                            "sum=%lu 0x600E=0x%x", s_n, w76, h76,
+                            s_hue, sum, pr);
                         ep_log(b);
                     }
                 }
@@ -2560,12 +2625,10 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
     }
     long r = g_site_fn[site]
         ? (long)g_site_fn[site](dctx, a1, a2, a3, a4, a5) : 0;
-    if (g_virgl_conn)
-        IOConnectCallMethod(g_virgl_conn, 0x600D, NULL, 0, NULL, 0,
-                            NULL, NULL, NULL, NULL);
-    /* RUNG 75 (first form, GA-surface push via 0x600E) is SUPERSEDED
-     * by the 75b injection above: the push lands UNDER WindowServer
-     * and is overpainted — observed as "the horse spins, no hue". */
+    /* 0x600D removed: without a GA binding it failed loudly per swap
+     * and FLOODED the kernel log (~3/s for hours — the flood that
+     * destroyed this boot's diagnostic history). The 0x600E path
+     * flushes and pushes on its own. */
     pp_draw_state(dctx, "swap");
     /* RUNG 69 — THE DISCRIMINATING EXPERIMENT: watch the drawbuffer
      * (ctx+0x218 → drawable → backing) for GLVM writes. The float's
