@@ -15744,3 +15744,29 @@ WORDS, operands packed in-place; the
   L(MOV)=2, L(RET)=2 first, then read
   ADD/TEX handlers for their r12 values.
   The differential gate stands unmet.
+
+---
+
+## RUNG 77 — PRE-REGISTERED FOR THE
+DIFFERENTIAL GATE: a partial pass is the
+INFORMATIVE outcome, not a failure
+
+- **The gate protocol:** report WHICH files
+  fail, not just the count. If 20/22 match
+  byte-for-byte, the two failures localize
+  the remaining format question better than
+  the solve can — they will contain whichever
+  opcode class the length table still gets
+  wrong. A clean 22/22 on the first run is
+  the SUSPICIOUS result (it would mean no
+  opcode outside the corpus's common set was
+  ever exercised); name the failing files and
+  the opcodes they uniquely contain.
+- **Session-boundary note (memory hygiene,
+  not project state):** the personal memory
+  files are at capacity and carrying
+  superseded frontier narrative (several
+  threads the ledger has since closed). A
+  pruning pass is owed; nothing project-
+  critical depends on them — LEDGER.md and
+  .claude/rules/ are the canonical record.
