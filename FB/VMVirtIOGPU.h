@@ -564,8 +564,13 @@ public:
     // RUNG 67b — the release path: the 3D owner exited/died; rebind
     // the 2D desktop scanout via the framebuffer. Idempotent.
     void releaseScanout3D();
+    // RUNG 67c — the watchdog query: true when a 3D resource holds the
+    // scanout AND no flush has arrived for SCANOUT3D_STALE_MS (the
+    // owner died without reaching clientClose — kill, hang, skip).
+    bool scanout3dStale();
     uint32_t m_scanout3d_res = 0;    /* the scanout-bound 3D resource */
     uint32_t m_scanout3d_w = 0, m_scanout3d_h = 0;
+    uint64_t m_scanout3d_last_flush = 0;   /* mach_absolute_time */
     
     // Display interface for framebuffer
     IOReturn setupScanout(uint32_t scanout_id, uint32_t width, uint32_t height);

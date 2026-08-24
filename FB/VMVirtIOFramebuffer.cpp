@@ -2613,8 +2613,20 @@ void VMVirtIOFramebuffer::refreshDisplay()
     // If a 3D application has attached its own resource to the scanout,
     // we should NOT overwrite it with our 2D framebuffer content.
     // 3D resources manage their own transfer/flush cycle.
+    //
+    // RUNG 67c — THE WATCHDOG: while the 3D app lives it flushes every
+    // frame. If it dies WITHOUT reaching clientClose (observed: SIGTERM
+    // kill — the 10.6 IOKit task-death teardown can lag or skip), the
+    // scanout stays bound to a dead resource: display black until manual
+    // recovery. The tick notices: no flush for STALE_MS while bound →
+    // force the release. Covers ALL death classes (crash, kill, hang,
+    // teardown-skip) in one place.
     if (m_scanout_taken_over_by_3d) {
-        // 3D resource is active - don't interfere
+        if (m_gpu_driver && m_gpu_driver->scanout3dStale()) {
+            IOLog("VMVirtIOFramebuffer: 3D scanout STALE (no flush) — "
+                  "watchdog RELEASE\n");
+            m_gpu_driver->releaseScanout3D();
+        }
         return;
     }
 

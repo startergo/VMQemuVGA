@@ -3986,12 +3986,26 @@ IOReturn CLASS::scanoutPresent3D(uint32_t res3d, uint32_t w, uint32_t h)
         IOLog("scanoutPresent3D: FLUSH res=%u FAIL 0x%x\n", res3d, fret);
         return fret;
     }
+    m_scanout3d_last_flush = mach_absolute_time();   /* RUNG 67c */
     if (s_log < 6) {
         s_log++;
         IOLog("scanoutPresent3D: flush res=%u %ux%u OK (zero-copy)\n",
               res3d, w, h);
     }
     return kIOReturnSuccess;
+}
+
+bool CLASS::scanout3dStale()
+{
+    /* RUNG 67c — the watchdog: bound AND silent past the threshold.
+     * The refresh tick polls this while the 3D owns the scanout. Raw
+     * mach_absolute_time delta (TCG rate ≈ 1 GHz → 2 s ≈ 2e9 ticks;
+     * coarse is fine — the app flushes per frame at 10-30 FPS). */
+    static const uint64_t STALE_TICKS = 2000000000ull;   /* ~2 s */
+    if (!m_scanout3d_res || !m_scanout3d_last_flush)
+        return false;
+    return (mach_absolute_time() - m_scanout3d_last_flush)
+           > STALE_TICKS;
 }
 
 void CLASS::releaseScanout3D()
