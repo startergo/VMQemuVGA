@@ -13307,3 +13307,71 @@ clamp's premise holds here too and 1 stands.
 
 **Exposure:** GLD-side env-gated check (no boot);
 log the verdict; no config change either way.
+
+---
+
+## RUNG 64 SECOND CHECKPOINT — THE CONTENT INVERSION:
+GLVM rasterizes NOTHING (no drawbuffer exists); the
+attach is the missing link; the float's drawable
+object decoded; one instrument crash taken and fixed
+
+- **THE INVERSION (all by instrument):** during a
+  live build-scene run — the GA-locked surface
+  mapping (VM region 0x105100000 sz 0x343000)
+  ALL ZERO; the two frame-sized staging mallocs
+  (0x105443000/0x105618000, 0x1d5000 each) ALL ZERO
+  at every quarter-point, both passes; a widened
+  malloc hunt (all blocks 0x40000-0x1000000, census)
+  found only vertex-float staging and pointer
+  arrays; a full VM-region walk (writable,
+  0x100000-0x8000000) found NO live raster region —
+  the one candidate (0x1057ed000 sz 0x52d000) was
+  ALLOCATOR METADATA (its header carries its own
+  size; identical across passes — an initial
+  misread, corrected). **GLVM never rasterizes:
+  the FPS are command-buffering cost, no pixels.**
+- **THE MISSING LINK (rung 33's decode, now
+  decisive): the drawable object at ctx+0x218 — our
+  attach mirror stores the type (+0x210) and
+  nothing else; with no drawable object, GLVM has
+  no drawbuffer, so draws go nowhere. The staging
+  pair was allocated (by the engine) awaiting the
+  renderer link that never came.**
+- **THE FLOAT'S CONTRACT (grf.t, decoded this
+  session):** `glsAssignDrawable` mallocs a 0x80-
+  byte drawable {+0x8 width, +0xc height, +0x14
+  ptr chain, +0x78/0x79 flags, ...}, releases the
+  old via `glsReleaseDrawable`, stores the object
+  at ctx+0x218 (0x21e2b); the buffer linkage
+  continues at 0x21e5c+ (malloc(0x80) more,
+  bundle-header-initialized pointer at +0x14).
+- **ONE INSTRUMENT CRASH, TAKEN AND FIXED (its
+  lesson recorded):** the rung-64 desc+0x30 follow
+  blind-dereferenced a non-pointer — one rung's
+  descriptor carried {0,4} there = 0x400000000,
+  inside the "plausible range" guard, unmapped →
+  glmark2 crash 22:14 (RIP gldAttachDrawable+672,
+  CR2 0x400000000 — the register state named it in
+  one read). Block DELETED; rule: NEVER blind-deref
+  a descriptor field. Bonus from the trace: this
+  attach path runs NSOpenGLContext setView → CGL
+  internals → gliAttachDrawableWithOptions → the
+  ENTRY-level gldAttachDrawable.
+- **THE PRESENT MACHINERY, all banked and working:**
+  heap hunt, VM walk, midpoint pick, 0x600E
+  gaPresentUserBuffer (600/600 rows, stride
+  3200→3600, shape offset, flush+push — the user's
+  flicker), 0x600D push fallback.
+- **THE FORK (named, next session's decision):**
+  - **A — COMPLETE THE FLOAT CONTRACT:** finish the
+    glsAssignDrawable mirror (the 0x80 object + the
+    buffer linkage into the staging pair + ctx+0x218);
+    GLVM then rasterizes into staging (software, the
+    engine's own path) and 0x600E presents it. The
+    pieces exist on both sides; the remaining work is
+    the linkage read at 0x21e5c+.
+  - **B — ROUTE DRAWS TO MESA/VIRGL:** the engine's
+    GL through the embedded Mesa (rungs 55-58
+    extended from clear to draws) — the project's
+    strategic 3D path; bigger surface, host-GPU
+    raster.

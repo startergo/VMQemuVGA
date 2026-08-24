@@ -95,6 +95,7 @@ static void* g_engine_block2 = 0;
  * the block whose bytes CHANGE between swaps is the live frame. */
 static int g_fb_w = 4, g_fb_h = 4;   /* rung 39: window-sized when attached */
 #include <malloc/malloc.h>
+#include <mach/mach_vm.h>
 static kern_return_t heap_reader(task_t t, vm_address_t a, vm_size_t s,
                                  void** p)
 {
@@ -117,7 +118,7 @@ static void heap_recorder(task_t t, void* ctx, unsigned type,
             g_frame_bufs[g_frame_buf_count++] =
                 (unsigned char*)ranges[i].address;
         }
-        if (ranges[i].size < 0x100000 || ranges[i].size > 0x800000)
+        if (ranges[i].size < 0x40000 || ranges[i].size > 0x1000000)
             continue;
         char hb[80]; int ho = 0;
         unsigned char* p = (unsigned char*)ranges[i].address;
@@ -128,10 +129,70 @@ static void heap_recorder(task_t t, void* ctx, unsigned type,
                  (unsigned long long)ranges[i].address,
                  (unsigned long long)ranges[i].size, hb);
         ep_log(sb);
+        /* RUNG 64f census: quarter-points of every candidate — the
+         * live frame reads VARIED bytes; dead staging reads uniform. */
+        {
+            static int s_census_left = 4;
+            if (s_census_left-- > 0) {
+                size_t sz = ranges[i].size;
+                char cb[320]; int co = 0;
+                co += snprintf(cb + co, sizeof(cb) - co,
+                               "rung64: CENSUS %llx:",
+                               (unsigned long long)ranges[i].address);
+                for (int q = 1; q <= 4 && co < 280; q++) {
+                    unsigned char* s = p + (((size_t)sz * q) / 5 & ~(size_t)15);
+                    co += snprintf(cb + co, sizeof(cb) - co, " q%d:", q);
+                    for (int c = 0; c < 8 && co < 295; c++)
+                        co += snprintf(cb + co, sizeof(cb) - co,
+                                       "%02x", s[c]);
+                }
+                ep_log(cb);
+            }
+        }
     }
 }
 unsigned char* g_frame_bufs[2] = { 0, 0 };
 int g_frame_buf_count = 0;
+/* RUNG 64g — THE VM HUNT: GLVM-era raster buffers are mach-vm
+ * allocated (NOT malloc) — the malloc zones hold only staging. Walk
+ * the writable VM regions, census each candidate's quarter-points. */
+static void vm_census(mach_vm_address_t addr, mach_vm_size_t size,
+                      int passno)
+{
+    char cb[336]; int co = 0;
+    co += snprintf(cb + co, sizeof(cb) - co,
+                   "rung64: VM%u %llx sz=%llx:",
+                   passno, (unsigned long long)addr,
+                   (unsigned long long)size);
+    unsigned char* p = (unsigned char*)(uintptr_t)addr;
+    for (int q = 0; q <= 4 && co < 300; q++) {
+        unsigned char* s = p + (((size_t)size * q) / 5 & ~(size_t)15);
+        co += snprintf(cb + co, sizeof(cb) - co, " q%d:", q);
+        for (int c = 0; c < 8 && co < 312; c++)
+            co += snprintf(cb + co, sizeof(cb) - co, "%02x", s[c]);
+    }
+    ep_log(cb);
+}
+static void vm_hunt_pass(int passno)
+{
+    mach_vm_address_t addr = 0;
+    mach_vm_size_t size = 0;
+    int n = 0;
+    while (n++ < 400) {
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t obj = MACH_PORT_NULL;
+        if (mach_vm_region(mach_task_self(), &addr, &size,
+                           VM_REGION_BASIC_INFO_64,
+                           (vm_region_info_t)&info, &cnt,
+                           &obj) != KERN_SUCCESS)
+            break;
+        if (size >= 0x100000 && size <= 0x8000000
+            && (info.protection & VM_PROT_WRITE))
+            vm_census(addr, size, passno);
+        addr += size;
+    }
+}
 static void heap_hunt_pass(int passno)
 {
     vm_address_t* zones = NULL;
@@ -1113,8 +1174,11 @@ long gld_swap_entry(void* dctx, void* a1, void* a2, void* a3,
     if (++g_swap_count > 5 && (g_swap_count % 500) != 0) return 0;
     {
         static int s_heap_left = 2;
-        if (s_heap_left > 0)
-            heap_hunt_pass(3 - s_heap_left--);
+        if (s_heap_left > 0) {
+            int pn = 3 - s_heap_left--;
+            heap_hunt_pass(pn);
+            vm_hunt_pass(pn);
+        }
     }
     /* RUNG 64 — WHERE IS THE ENGINE'S FRAME? The GA lock mapped the
      * drawable surface in the 0x105_000000 band (LockSurface
@@ -2040,30 +2104,12 @@ long gldAttachDrawable(void* ctx, unsigned type, void* a3,
         for (int i = 0; i < 16; i++)
             o += snprintf(b2 + o, sizeof(b2) - o, " %x", d[i]);
         ep_log(b2);
-        /* RUNG 64 — follow the descriptor's +0x30 pointer (the only
-         * pointer-shaped field; a CGS surface record?): dump 16 words
-         * at it. One dump per attach call is noisy — gate to the
-         * first few. */
-        {
-            static int s_dumped = 0;
-            if (s_dumped < 3) {
-                uint64_t pv;
-                memcpy(&pv, (unsigned char*)d + 0x30, 8);
-                if (pv > 0x10000 && pv < 0x800000000000ull) {
-                    uint32_t* q = (uint32_t*)(uintptr_t)pv;
-                    char b3[288];
-                    int o3 = 0;
-                    o3 += snprintf(b3 + o3, sizeof(b3) - o3,
-                                   "  desc+0x30 -> %llx:",
-                                   (unsigned long long)pv);
-                    for (int i = 0; i < 16 && o3 < 260; i++)
-                        o3 += snprintf(b3 + o3, sizeof(b3) - o3,
-                                       " %x", q[i]);
-                    ep_log(b3);
-                    s_dumped++;
-                }
-            }
-        }
+        /* RUNG 64 follow block DELETED (cost one crash, its answer
+         * already banked): desc+0x30 is NOT a pointer on every
+         * descriptor — one rung carried {0,4} there, the "range
+         * guard" accepted 0x400000000, and the blind read faulted
+         * (glmark2 crash 22:14, RIP gldAttachDrawable+672, CR2
+         * 0x400000000). NEVER blind-deref a descriptor field. */
     }
     if (!ctx) {
         ep_log("  gldAttachDrawable -> -1 (no ctx)");
