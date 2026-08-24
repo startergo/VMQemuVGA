@@ -13091,3 +13091,60 @@ empirical, no jump-table archaeology. Mirror its
 +0x1c/+0x20 (and neighbors) in the stub, redeploy,
 re-run cglrepro: `db d24` → npix=1 is the
 pre-registered pass line.
+
+---
+
+## RUNG 62 CLOSEOUT — THE FLOAT-REFERENCE DUMP, THE
+MIRROR, AND GLMARK THROUGH THE GLD: depth gate DOWN,
+benchmark SCORE printed
+
+- **THE DUMP (bundle aside same-session, float
+  serving, restored — /tmp/pfdump.c):** the
+  scorer-ACCEPTED object's depth/stencil slots are
+  **FORMAT CODES, size-independent**: depth absent →
+  1; ANY depth request (1/16/24/32 identical) →
+  **0x1000**; stencil absent → 1; stencil → **0x80**.
+  RunG 59's "24/8 = bit sizes" was the wrong semantic
+  — the field never described bits. (The dump also
+  shows the accepted object's id=0x1020400,
+  flags=0x4c9, mode=0x8 — matching the stub's known
+  values; only the depth/stencil slots were wrong.)
+- **THE MIRROR (one variable):** the walk now tracks
+  attrs 12/13 and writes `+0x1c = 0x1000|1`,
+  `+0x20 = 0x80|1`. Deployed `aabc1281…` (98 exports,
+  digest verified).
+- **PASS LINES, ALL HIT:**
+  - cglrepro: `db d24` npix=1, `db d1` npix=1,
+    glmark set npix=1 (Phase A and B — the option
+    remains irrelevant);
+  - **nstest (the NS harness): ALL ELEVEN sets OK —
+    every depth size 1/16/24/32 AND the glmark set
+    through NSOpenGLPixelFormat.** The rung-60 wall
+    is down.
+  - The rung-59→repro contradiction resolved: rung
+    59's CGL pass predates the attr-11 parser fix —
+    the walk truncated before depth and passed
+    dishonestly; with the walk fixed, 24-at-+0x1c
+    failed every depth request; the codes pass them.
+- **GLMARK THROUGH THE GLD (first full run):**
+```
+GL_VENDOR:   VMQemuVGA Project
+GL_RENDERER: Apple M4 Pro (virgl)
+GL_VERSION:  4.1 (virgl, Apple Core OpenGL backend;
+             engine software fallback)
+Surface: 800x600 windowed, depth=32 read back
+GA path live: AllocateSurface → SetSurface →
+              LockSurface addr=105100000 row=3600
+build use-vbo=false: FPS 23 (44.6 ms)
+texture <default>:   FPS 32 (31.6 ms)
+glmark2 Score: 26
+```
+  The rung-61-corrected version string is live in a
+  real application. A benign `__NSAutoreleaseNoPool`
+  warning from the event pump (ssh, no runloop pool)
+  — cosmetic.
+- **OPEN NEXT:** the wider scene set (shaders,
+  shadow, buffer variants — GLMark's full suite) and
+  where each scene's work lands (engine raster vs
+  host GL); the fmt-19-array rejection (rung 58
+  bound) surfaces if any scene stages depth arrays.

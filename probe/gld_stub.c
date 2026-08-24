@@ -1389,6 +1389,12 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
                                * that is the attr-73 HARDWARE bit, honest only
                                * with functional 3D. */
     unsigned mode10 = 0;      /* the +0x10 exact-match echo */
+    int depth_seen = 0, stencil_seen = 0;   /* RUNG 62: the slots are
+                                              * FORMAT CODES, not bit
+                                              * counts (float-reference
+                                              * dump: any depth size ->
+                                              * 0x1000, any stencil ->
+                                              * 0x80, absent -> 1) */
     int complete = 0, si = 0;
     int* p = attrs;
     int walked = 0;
@@ -1410,8 +1416,15 @@ long gldChoosePixelFormat(void** out, int* attrs, void* rdx_unused)
                                                  [5,8,1,b,1,c,1,4]); the
                                                  missing case truncated
                                                  the walk BEFORE depth */
-        case 12: case 13:                     /* RUNG 51: Depth/Stencil
-                                                 sizes — value attrs */
+        case 12: depth_seen = 1; p++; walked += 4; break;   /* RUNG 62:
+                                                 DepthSize — value attr;
+                                                 the SIZE is ignored by
+                                                 the scorer (float
+                                                 answers 1/16/24/32
+                                                 identically); what
+                                                 matters is the CODE */
+        case 13: stencil_seen = 1; p++; walked += 4; break; /* RUNG 62:
+                                                 StencilSize — same */
         case 14: case 15:                     /* Accum/Aux — same class */
             p++; walked += 4; break;          /* value attrs: consumed */
         case 47: case 48: case 72: case 54: break;  /* no-op pass */
@@ -1525,12 +1538,16 @@ build:
                             * every request. */
     obj[6] = 1;            /* +0x18 — the float's 0x17c56: movl $0x1
                             * (never set in our builds) */
-    obj[7] = 24;  /* +0x1c — RUNG 59: the DEPTH size. Was 1 (the
-                   * rung-19 mirror); a depth-24 request scores
-                   * npix=0 against it (GLMark's gate). 24 is the
-                   * honest number — the Z16/D24S8 depth surface is
-                   * real (rungs 51/58). */
-    obj[8] = 8;   /* +0x20 — the stencil size, same reasoning */
+    obj[7] = depth_seen ? 0x1000u : 1u;  /* +0x1c — RUNG 62: the DEPTH
+                   * FORMAT CODE, not a bit count. RunG 59's "24" was
+                   * the wrong semantic — the float-reference dump
+                   * (bundle aside, float serving) shows the accepted
+                   * object carries 0x1000 for ANY depth request
+                   * (sizes 1/16/24/32 identical) and 1 when absent.
+                   * The depth surface itself is real (rungs 51/58);
+                   * this field never described its bits. */
+    obj[8] = stencil_seen ? 0x80u : 1u;  /* +0x20 — the STENCIL code,
+                   * same dump: 0x80 with stencil, 1 without */
     obj[13] = RUNG11_CLAIM; /* +0x34 our display claim (rung 22 reverted:
                              * gate 1 exonerated; honest value stands) */
     *out = obj;
