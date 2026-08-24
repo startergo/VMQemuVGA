@@ -13544,3 +13544,41 @@ table
   forwards — the per-frame delta census rerun on the
   export table names the draw slots' offsets in the
   ABI decode order.
+
+---
+
+## RUNG 66e RESULT — THE EXPORT CENSUS: the draws
+NEVER CROSS the renderer boundary; fork B reframed —
+the GPU route is CGL interposition (the shim), not
+renderer-slot forwarding
+
+- **THE READ (build scene, per-frame deltas):**
+  - swap 1 (setup): CreateTexture:+20
+    CreatePipelineProgram:+9 CreateVertexArray:+2
+    ModifyPipelineProgram:+7 SetInteger:+5 + destroys
+    and unbinds (rebuild churn)
+  - swaps 2-5 (steady): **ModifyPipelineProgram:+2
+    ONLY.** No geometry, no texture loads, no draws.
+- **THE CONCLUSION (with the zero dispatch deltas —
+  prediction iii in an unexpected shape):** the
+  engine's GLVM EXECUTES the pipeline programs
+  itself; the renderer plugin COMPILES them
+  (ModifyPipelineProgram) and holds state objects.
+  There is NO draw ABI at the plugin level to decode
+  — the raster work never crosses the renderer
+  boundary. Slot-forwarding to Mesa cannot work by
+  construction.
+- **FORK B REFRAMED:** the GPU route is CGL
+  INTERPOSITION — the cgl-shim architecture that
+  EXISTS and is proven (Gecko ran on it; virgl
+  through the shim is the Mesa-VirGL arc). GLMark
+  under the shim → Mesa → virgl → host GPU →
+  readback → present, bypassing the engine's CPU
+  execution entirely. The GLD trampoline remains
+  what it proved: the engine's own renderer,
+  fulfilled, content visible, the presentation
+  chain live.
+- **NEXT (named):** run GLMark with the CGL shim
+  interposed (DYLD path, the Gecko configuration) —
+  the shim's flush presents via the winsys/relay;
+  compare scene FPS vs the float's CPU numbers.

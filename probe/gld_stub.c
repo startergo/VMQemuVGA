@@ -109,15 +109,23 @@ static void* float_sym(const char* name)
  * before any create; the float's version there broke the context path).
  * Blanket + gate + our-CreateShared = the 22:43-successful shape plus
  * content objects. */
-#define EPR(n) long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+/* RUNG 66e — the export census: file-scope counters on every
+ * macro-generated entry (the draw door IS the export table). */
+#define EPR(n) static long g_ec_##n; \
+long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    g_ec_##n++; \
     GLD_FWD(#n, a0,a1,a2,a3,a4,a5, -1); \
     if (a0) *(void**)a0 = (void*)0; \
     ep_log("CALL " #n " -> -1 (refusal; out zeroed)"); return -1; }
-#define EPB(n) long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+#define EPB(n) static long g_ec_##n; \
+long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    g_ec_##n++; \
     GLD_FWD(#n, a0,a1,a2,a3,a4,a5, 0); \
     if (a0) *(void**)a0 = (void*)0; \
     ep_log("CALL " #n " -> false (out zeroed)"); return 0; }
-#define EPV(n) void n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+#define EPV(n) static long g_ec_##n; \
+void n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    g_ec_##n++; \
     GLD_FWDV(#n, a0,a1,a2,a3,a4,a5); \
     if (a0) *(void**)a0 = (void*)0; \
     ep_log("CALL " #n " (void; out zeroed)"); }
@@ -2396,6 +2404,7 @@ static long gld_swap_wrapper_b(void* d, void* a1, void* a2, void* a3,
                                void* a4, void* a5)
 { return gld_swap_wrapper_impl(1, d, a1, a2, a3, a4, a5); }
 static void census_report(long swapno);   /* fwd */
+static void export_census_report(long swapno);   /* fwd: after EPRs */
 static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                                   void* a2, void* a3, void* a4, void* a5)
 {
@@ -2407,8 +2416,10 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
     {
         static long s_swaps = 0;
         s_swaps++;
-        if (s_swaps <= 5 || (s_swaps % 500) == 0)
+        if (s_swaps <= 5 || (s_swaps % 500) == 0) {
             census_report(s_swaps);
+            export_census_report(s_swaps);   /* RUNG 66e: draw door */
+        }
     }
     return r;
 }
@@ -2826,3 +2837,63 @@ EPR(gldSetMemoryPluginData)
 EPR(gldFinishMemoryPluginData)
 EPR(gldTestMemoryPluginData)
 EPR(gldDestroyMemoryPluginData)
+
+/* RUNG 66e — the export census report (defined after the last
+ * instantiation so every g_ec_ counter is in scope). Nonzero deltas
+ * only, chunked lines, reset on report. */
+static void export_census_report(long swapno)
+{
+    char b[640];
+    int o = snprintf(b, sizeof(b), "rung66e s%ld:", swapno);
+#define ECR(n) do { \
+    if (g_ec_##n) { \
+        int w = snprintf(b + o, sizeof(b) - o, " %s:+%ld", \
+                         #n + 3, g_ec_##n); \
+        if (w > 0) o += w; \
+        g_ec_##n = 0; \
+        if (o > (int)sizeof(b) - 90) { ep_log(b); \
+            o = snprintf(b, sizeof(b), "rung66e:"); } \
+    } } while (0)
+    ECR(gldAllocVertexBuffer); ECR(gldBufferSubData);
+    ECR(gldCompleteVertexBuffer); ECR(gldCopyTexSubImage);
+    ECR(gldCreateBuffer); ECR(gldCreateComputeContext);
+    ECR(gldCreateFence); ECR(gldCreateFramebuffer);
+    ECR(gldCreatePipelineProgram); ECR(gldCreateProgram);
+    ECR(gldCreateQuery); ECR(gldCreateTexture);
+    ECR(gldCreateTextureLevel); ECR(gldCreateVertexArray);
+    ECR(gldDeleteTexture); ECR(gldDeleteTextureLevel);
+    ECR(gldDestroyBuffer); ECR(gldDestroyComputeContext);
+    ECR(gldDestroyFence); ECR(gldDestroyFramebuffer);
+    ECR(gldDestroyMemoryPlugin); ECR(gldDestroyMemoryPluginData);
+    ECR(gldDestroyPipelineProgram); ECR(gldDestroyProgram);
+    ECR(gldDestroyQuery); ECR(gldDestroyTexture);
+    ECR(gldDestroyTextureLevel); ECR(gldDestroyVertexArray);
+    ECR(gldDiscardFramebuffer); ECR(gldFinish);
+    ECR(gldFinishMemoryPluginData); ECR(gldFinishObject);
+    ECR(gldFlush); ECR(gldFlushBuffer);
+    ECR(gldFlushMemoryPlugin); ECR(gldFlushObject);
+    ECR(gldFlushVertexArray); ECR(gldFreeVertexBuffer);
+    ECR(gldGenerateTexMipmaps); ECR(gldGetError);
+    ECR(gldGetInteger); ECR(gldGetMemoryPlugin);
+    ECR(gldGetMemoryPluginData); ECR(gldGetPipelineProgramInfo);
+    ECR(gldGetQueryInfo); ECR(gldGetTextureLevel);
+    ECR(gldGetTextureLevelImage); ECR(gldGetTextureLevelInfo);
+    ECR(gldIsTextureResident); ECR(gldLoadBuffer);
+    ECR(gldLoadHostBuffer); ECR(gldLoadTexture);
+    ECR(gldModifyPipelineProgram); ECR(gldModifyQuery);
+    ECR(gldModifyTexSubImage); ECR(gldModifyTexture);
+    ECR(gldModifyTextureLevel); ECR(gldModifyVertexArray);
+    ECR(gldObjectPurgeable); ECR(gldObjectUnpurgeable);
+    ECR(gldPageoffBuffer); ECR(gldReclaimBuffer);
+    ECR(gldReclaimContext); ECR(gldReclaimFramebuffer);
+    ECR(gldReclaimTexture); ECR(gldReclaimVertexArray);
+    ECR(gldSetInteger); ECR(gldSetMemoryPlugin);
+    ECR(gldSetMemoryPluginData); ECR(gldSyncBufferObject);
+    ECR(gldSyncTexture); ECR(gldTestMemoryPlugin);
+    ECR(gldTestMemoryPluginData); ECR(gldTestObject);
+    ECR(gldUnbindBuffer); ECR(gldUnbindFramebuffer);
+    ECR(gldUnbindPipelineProgram); ECR(gldUnbindTexture);
+    ECR(gldUnbindVertexArray); ECR(gldWaitObject);
+#undef ECR
+    if (o > 14) ep_log(b);
+}
