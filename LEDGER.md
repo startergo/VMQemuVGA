@@ -13745,3 +13745,33 @@ restored by reboot
   (0x6005-side) and the user client's stop/died.
   Until then: **SHIM_ZERO_COPY runs are
   reboot-to-recover — do not leave apps running.**
+
+---
+
+## RUNG 67b RESULT — THE RELEASE PATH WORKS:
+app exit now RESTORES the desktop — the black-screen
+class is closed
+
+- **THE KERNEL-VERIFIED CYCLE (this boot, one run):**
+```
+scanoutPresent3D: flush res=261 800x600 OK (zero-copy)
+  ... frames ...
+2D scanout RESTORED (res=1 1680x1050 setscanout=0x0)
+  after 3D release
+scanoutPresent3D: RELEASED res=261
+```
+  GLMark → GPU fullscreen → exit → the desktop
+  scanout REBOUND at full geometry, the 3D released.
+  No reboot needed. The observed failure class
+  (black display until reboot) is closed.
+- **THE IMPLEMENTATION (commit on this branch):**
+  - `releaseScanout3D()` on the gpu device (idempotent,
+    member-tracked bound resource)
+  - `restore2DScanout()` on the framebuffer (rebind +
+    clear the takeover + one forced immediate refresh
+    so the desktop reappears at once)
+  - `clientClose()` calls the release — clean exits AND
+    crashes both land there.
+- **OPERATIONAL RULE LIFTED:** zero-copy runs are no
+  longer reboot-to-recover (pending the eyes' final
+  confirmation of the restored desktop).
