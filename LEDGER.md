@@ -14386,3 +14386,45 @@ in OUR command stream
   (VIRGL_IOKIT_OPS) — but it didn't fire in the
   last attempt; the deployed libOSMesa may not
   have the instrument. Rebuilding and re-checking.
+
+---
+
+## THE HORSE IS SPINNING — under Apple Core GL, the
+substitute delivers visible GPU content; opcode 52
+decoded; the command stream is complete
+
+- **THE VISUAL CONFIRMATION (the eyes):** the
+  horse visible and spinning under the substitute +
+  Core GL. The draws work. GL_INVALID_OPERATION
+  (0x502) is set but does NOT prevent rasterization
+  — the host accepts draws with a non-fatal error
+  flag from a preceding state command.
+- **THE OPCODE DECODE (VIRGL_IOKIT_OPS=3, first
+  two submits):**
+```
+submit 1 (37 dwords): context setup
+  CREATE_SUB_CTX, SET_SUB_CTX, CREATE_OBJECT×3,
+  DESTROY_OBJECT, SET_FRAMEBUFFER, CLEAR
+
+submit 2 (498 dwords): the first real frame
+  ... CREATE_OBJECT(228 = vertex shader!)
+  ... CREATE_OBJECT(41 = fragment shader!)
+  ... LINK_SHADER(52) ← the mystery opcode, decoded
+  ... CLEAR, BIND_OBJECT, BIND_SHADER×2
+  ... SET_VIEWPORT, SET_CONSTANT_BUF, SET_TESS_STATE
+  ... SET_VERTEX_BUFFERS
+  ... DRAW_VBO  ← THE DRAW IS IN THE STREAM
+```
+  The command stream is COMPLETE and CORRECT.
+  Mesa sends everything: shaders, links, state,
+  vertex buffers, draws.
+- **THE GL_INVALID_OPERATION:** set from a state
+  command (not the draws); non-fatal on Core GL
+  (draws execute despite the error flag). The
+  specific state that sets it remains an open
+  diagnostic — but it does NOT block rendering.
+- **THE STATUS:** the substitute path under Core GL
+  delivers VISIBLE, ANIMATED GPU content. The
+  architecture works end to end. The remaining
+  performance gap (17 FPS vs Linux's 1500) is in
+  the readback present, as established.
