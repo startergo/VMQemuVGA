@@ -13806,3 +13806,43 @@ VMVirtIOFramebuffer: 3D scanout STALE (no flush)
   rendering, fullscreen scanout presentation, and
   release on every death class. The operational
   rule is lifted.
+
+---
+
+## RUNG 67 RESIDUAL SHARPENED — THE ZERO-COPY
+PRESENT'S VISUAL IS UNCONFIRMED: flush-OK is
+transport truth, not pixels-on-screen
+
+- **THE HONEST LEDGER (every user report of the
+  zero-copy path, collected):** "reduced and black";
+  "white window (no blit)"; "black fullscreen
+  window". NEVER a confirmed visible 3D frame.
+  Meanwhile the kernel logs "flush res=N OK" per
+  frame — the transport works; the CONTENT reaching
+  the display is unproven. The eyes outrank the log
+  line and the eyes have said no every time.
+- **THE CONTRAST THAT LOCALIZES IT:** the RELAY
+  present (0x600C readback) produced CONFIRMED
+  content ("double horse with flicker" — visible,
+  duplicated). The relay writes the desktop
+  resource through the proven 2D push. The zero-copy
+  binds the 3D resource directly to the scanout —
+  if virglrenderer's scanout path rejects/mishandles
+  the resource (format, bind flags, geometry), the
+  display shows black while every flush reports OK.
+- **THE SUITE CASUALTY:** the interrupted GPU suite
+  produced ZERO scene results (full3.log empty —
+  killed at the black-screen report; a dead
+  un-blitted window lingered until reboot — the
+  white/black window class is the SHIM_ZERO_COPY
+  riding the host-present gate, which skips the
+  guest snapshot that feeds the window).
+- **NEXT (registered):** the UTM DEBUG LOG is the
+  arbiter (virglrenderer's own decode/scanout
+  complaints appear only there) — read it for the
+  zero-copy run's resource/scanout handling; the
+  fix candidates are the resource's bind flags
+  (SCANOUT-capable vs RENDER_TARGET-only) or the
+  format. The RELAY path remains the
+  visually-proven fallback; zero-copy stays
+  experimental until the eyes say yes.
