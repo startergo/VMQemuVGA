@@ -14044,3 +14044,19 @@ first; the shader lifecycle is the frontier
   render, complex ones go black. This is a Mesa/
   virgl compatibility detail, not a transport or
   presentation issue.
+
+---
+
+## SUITE CRASH — IN THE APP'S OWN CODE, not ours:
+Mesh::update_vbo → memcpy on the wave scene
+
+```
+0  __memcpy                          (libSystem)
+1  Mesh::update_vbo(vector<pair>)    (glmark2)
+2  WaveMesh::update(double)          (glmark2)
+3  MainLoop::draw()                  (glmark2)
+```
+  The 16th scene (wave) crashed in glmark2's vertex
+  buffer update — app-side (libc++ vector compat
+  or mesh bug), clean separation from our transport,
+  shim, and kernel. 15 scenes completed first.
