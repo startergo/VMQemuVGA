@@ -15706,3 +15706,41 @@ eax = byte[r13+8] >> 1   ; condition field from
   each handler's return-advance + operand
   decode; the length/packing table falls out
   mechanically; then the differential.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 4) — MOV = 2
+WORDS, operands packed in-place; the
+"consecutive MOVs" artifact dissolved
+
+- **THE MOV HANDLER (glp 0xd4a76) YIELDS:**
+  - `glpWriteDestinationOperand(r13)` — the
+    DESTINATION is decoded from the OP WORD'S
+    OWN BYTES (class at w0 bits 6-8; the
+    index/name lookup at bytes +0x6 — the
+    formatter established in part 2/3), and
+    `glpWriteSourceOperand(r13)` the source
+    from the FOLLOWING word.
+  - `movl $2, %r12d` after the operands —
+    **r12 = the advance: MOV CONSUMES 2 WORDS**
+    (op+dst packed in word 1, src in word 2;
+    the `cmpb $0x2` width check adds a path
+    for scalar variants).
+  - Clamp/saturation bits at byte +0x5 bits
+    0-3; precision at byte +0x2 >> 3.
+- **THE ARTIFACT DISSOLVED:** an ALL-ZERO
+  word is `att[0]` (class 0, index 0) — it
+  reads as "opcode 0" in a naive w0>>6 walk.
+  The "consecutive MOV op words" that
+  falsified the 1+arity model were OPERAND
+  words in disguise. The naive walk was
+  counting operands as ops.
+- **THE MODEL TO TEST NEXT SESSION:** every
+  instruction = op word (dst packed in its
+  upper half) + N source words (N = the
+  handler's r12-1); RET = 2 (op + condition
+  word, per part 3). Re-run the 22-file
+  constraint solve with
+  L(MOV)=2, L(RET)=2 first, then read
+  ADD/TEX handlers for their r12 values.
+  The differential gate stands unmet.
