@@ -13582,3 +13582,46 @@ renderer-slot forwarding
   interposed (DYLD path, the Gecko configuration) —
   the shim's flush presents via the winsys/relay;
   compare scene FPS vs the float's CPU numbers.
+
+---
+
+## FORK B LANDED — GLMARK ON THE GPU: virgl
+(Apple M4 Pro), 14 FPS build scene, HOST-BLIT per
+frame — via the SUBSTITUTE route (the insert route
+died on a libc++ init-order crash)
+
+- **THE ROUTE THAT WORKS — SUBSTITUTE, not insert:**
+  DYLD_INSERT pulled libc++ into dyld's initializer
+  phase → iostream init called NULL (both the system
+  10.6 libc++ AND the InterWeb 5.0.1 pair — an
+  ORDER problem, not a version problem; frame 0 =
+  0x0 in __stdinbuf ctor). The substitute
+  OpenGL.framework (deployed at /Users/glmark/subst,
+  DYLD_FRAMEWORK_PATH) loads as a NORMAL dependency
+  — dependency-ordered init, no crash.
+- **THE DEPLOY LAYOUT (the framework's own
+  @loader_path/../../.. rpath):** subst/OpenGL.
+  framework + libOSMesa.8.dylib + libglapi.0.dylib +
+  libOpenGL_real.dylib at the subst root; the libc++
+  pair from /Users/sl/osmesa when needed.
+- **THE RUN (clean exit 0):**
+```
+cgl_shim: swizzles installed (GALLIUM_DRIVER=virgl)
+virgl_iokit: get_caps capset_id=2 ver=2 size=1408
+GL_VENDOR:   Mesa
+GL_RENDERER: virgl (Apple M4 Pro)     ← THE HOST GPU
+GL_VERSION:  2.1 Mesa 24.3.0-devel
+build use-vbo=false: FPS 14 (74.9 ms)  Score 13
+HOST-BLIT rect 800x600 at (100,350)   ← per frame
+  double buffers 0x106a00000/0x106bd5000 alternating
+```
+- **THE COMPARISON (same scene):** float-CPU 12 FPS
+  vs virgl-GPU 14 FPS — the bottleneck moved: the
+  guest CPU no longer rasterizes; it drives the GL
+  stream + the per-frame readback round trip. The
+  shader-heavy scenes (terrain's 24.8 s/frame on
+  CPU) are where the GPU number should diverge
+  hard.
+- **OPEN (the eyes):** the window at (100,350)
+  should show the rotating cube — HOST-BLIT wrote
+  the desktop rect; visual confirmation pending.
