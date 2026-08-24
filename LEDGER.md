@@ -13375,3 +13375,40 @@ object decoded; one instrument crash taken and fixed
     extended from clear to draws) — the project's
     strategic 3D path; bigger surface, host-GPU
     raster.
+
+---
+
+## RUNG 64 CLOSED — VISIBLE CONTENT: "I saw the
+cube" — scenes on screen through the whole chain
+(float raster → float swap → our push → scanout)
+
+- **VISUAL CONFIRMATION (the deciding instrument —
+  the eyes):** the GLMark build scene VISIBLE in the
+  window. The full chain live: GLRendererFloat's real
+  machinery rasterizes (contexts, dispatch, textures,
+  programs all forwarded), its swap blits, our
+  wrapper pushes the GA surface (0x600D), the
+  compositor shows it.
+- **THE TRAMPOLINE (final shape, this session):**
+  forward to the float — InitDispatch (real draw
+  entries), attach (the true drawbuffer at
+  ctx+0x218, the contract rungs 33-64 chased),
+  CreateContext/DestroyContext/UpdateDispatch, the
+  EPR content entries (textures, programs,
+  SetInteger) behind the ARM GATE (loader probes
+  refuse until OUR Initialize completes). OURS kept:
+  gldChoosePixelFormat (depth format codes —
+  GLMark's gate), gldGetString (capset strings),
+  gldCreateShared (the float's version on
+  un-Initialized state = the context-killer, found
+  by bisection), the swap WRAP (ctx+0x65c8+0xE8 at
+  both attach sites).
+- **NUMBERS:** build 12 FPS, texture 10 FPS Score 9
+  — through the float's real software rasterizer
+  under TCG.
+- **THE ARC:** rung 44 blue rectangle → 45 shape
+  offset → 48 swap slot → 49 app color → 59 GLMark
+  loads → 60-62 the depth gate (format codes) →
+  63-64 the frame path — and now the engine's OWN
+  content, on screen, by delegating the renderer
+  contract to the renderer that wrote it.
