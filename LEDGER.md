@@ -13625,3 +13625,49 @@ HOST-BLIT rect 800x600 at (100,350)   ← per frame
 - **OPEN (the eyes):** the window at (100,350)
   should show the rotating cube — HOST-BLIT wrote
   the desktop rect; visual confirmation pending.
+
+---
+
+## RUNG 67 PRE-REGISTERED — THE ZERO-COPY SCANOUT
+PRESENT: the Linux guest's present path for our stack
+(committed before implementation)
+
+**THE COST BEING REMOVED (the 14-FPS postmortem):**
+the shim's present reads back EVERY FRAME — 800×600×4
+≈ 1.9 MB across TCG-emulated virtio into guest memory,
+written into the desktop backing, then pushed BACK UP
+to the host (0x600C): three pixel copies per frame
+through emulation. The Linux guest's virgl presents
+with ZERO per-frame pixel traffic: the 3D resource is
+scanout-bound and the host composites it directly.
+At 14 FPS, the 75 ms frame is mostly wire, not
+raster.
+
+**THE CHANGE:** bind the shim's 3D fb resource to the
+SCANOUT (the kext's 2D machinery already scanout-binds
+the desktop resource — SET_SCANOUT on the 3D resource
+ID + RESOURCE_FLUSH per frame) and drop the readback
+from the flush path. virglrenderer composites host-
+side. The kernel's 0x600C relay stays as fallback.
+
+**Predictions:**
+- (i) **THE FRAME COLLAPSES:** build scene's 75 ms →
+  dominated by the GL stream + doorbell; FPS rises
+  several-fold (the readback's share of the frame is
+  the prediction, measured by the delta).
+- (ii) **SCANOUT REFUSES the 3D resource** (the 2D-
+  only scanout contract): SET_SCANOUT errors on a
+  virgl-context resource; the error names the
+  constraint; the fix is the resource's flags/bind.
+- (iii) **PRESENTED BUT WRONG** (scale/format/offset):
+  the scanout expects the desktop geometry; the 3D
+  resource is window-sized — the shape math from
+  rungs 44-45 applies; visible but misplaced/scaled.
+
+**Exposure:** kernel selector change (existing
+machinery, no new KPI) + shim flush path change;
+substitute deploy; no reboot beyond the kext install.
+**Pre-registered BEFORE the terrain-crash read** (that
+crash — SIGSEGV exit 139 on the terrain scene under
+the substitute — is its own diagnosis, independent of
+this rung).
