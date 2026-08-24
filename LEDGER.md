@@ -13148,3 +13148,81 @@ glmark2 Score: 26
   where each scene's work lands (engine raster vs
   host GL); the fmt-19-array rejection (rung 58
   bound) surfaces if any scene stages depth arrays.
+
+---
+
+## GLMARK FULL SUITE (first complete run) — ZERO setup
+failures, real CPU-side numbers, and PRESENTATION
+ABSENT BY DESIGN: the swap slot presents the clear,
+not the engine's frame
+
+- **Data-path fix (permanent):** the suite's shaders/
+  models/textures installed to the DEFAULT location
+  `/usr/local/share/glmark2/` (was /Users/glmark/data,
+  reachable only via --data-path). No libraries were
+  missing — the earlier "Set up failed" was purely
+  the data path.
+- **The full suite, background run (/Users/glmark/
+  full.log), zero setup failures:**
+```
+build  use-vbo=true    20 FPS | texture  n/l/m 27/31/30
+shading gouraud/bi-inf/phong 15/18/13 | bump normals 29
+effect2d kernel-3x3  511 FPS (near-empty outlier)
+desktop shadow:4       1 FPS (1186 ms) | buffer map/sub/int 7/2/9
+ideas speed=duration   1 FPS (1528 ms) | jellyfish 4 (274 ms)
+```
+  The heavy shader scenes crawl (GLVM software
+  rasterization under TCG — expected); the light
+  scenes hold 20-30 FPS. (Final Score line not
+  captured; the scene table stands on its own.)
+- **THE PRESENTATION GAP (observed on the guest
+  screen — scenes run, nothing visible):** the swap
+  slot (rungs 48-49) presents OUR CLEAR — the probe
+  era's design. The engine rasterizes real frames
+  into the locked GA surface (LockSurface
+  addr=0x105100000 row=3600) and NOTHING relays
+  those bytes to the scanout. "Offscreen, no blit"
+  is the exact state.
+
+---
+
+## RUNG 64 PRE-REGISTERED — THE FRAME BLIT: the
+engine's buffer to the scanout at swap (committed
+before implementation)
+
+**The change:** the swap path extends past the
+clear — read the engine's finished frame from the
+locked GA surface, transfer it UP as the virgl
+resource's content, and relay (0x600C) to the GA
+surface at the shape offset → desktop flush →
+scanout. The clear remains the fallback/first-frame
+path. Mechanism options to settle in implementation:
+a relay-selector extension (userspace src pointer +
+row stride; kernel copies app buffer → host resource
+→ GA write) — the LockSurface address/row are known
+kernel-side (our accelerator's own user client
+logged them).
+
+**The stride question, named up front (the rung-44/45
+lesson):** LockSurface reports row=3600 for an
+800-pixel window (800×4=3200) — the SURFACE geometry
+and the WINDOW geometry differ; the blit must use the
+surface's stride and shape offset, never the window's.
+
+**Predictions:**
+- (i) **SCENES VISIBLE** — the engine's frames on
+  screen at the window's place; content moves with
+  the scenes; the suite becomes watchable.
+- (ii) **MISPLACED/TORN** — stride or offset math
+  wrong (3600-vs-3200 class); visible but shifted or
+  sheared; the fix is arithmetic, not architecture.
+- (iii) **STILL CLEAR-ONLY** — the engine's buffer at
+  swap time is not the LockSurface address (double
+  buffering: the frame is in the OTHER buffer);
+  instrument the lock/swap sequence to find the real
+  backbuffer.
+
+**Exposure:** kext relay-selector extension (no new
+KPI symbols — existing user-client machinery) + GLD
+swap entry change (live-swap); no config, no reboot
+beyond the kext install.
