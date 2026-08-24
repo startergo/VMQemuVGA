@@ -13969,3 +13969,43 @@ GPU window path (visible)  27.6 ms  37 FPS   VISIBLE — in the window
   diagnostic ladder — capsets, format codes, the
   draw-door census, the UTM debug log — in the
   ledger.
+
+---
+
+## THE LINUX BASELINE — 1500 FPS on the same
+UTM/hardware: the ~40× gap decomposed into NAMED
+costs; the optimization ceiling recorded
+
+- **THE BASELINE (user-measured):** glmark2 terrain
+  ≈1500 FPS in a Linux guest on the same UTM, same
+  host hardware. vs our 37 FPS visible = ~40×.
+- **THE DECOMPOSITION (each cost named, none of
+  them the GPU):**
+  1. **Per-frame transport overhead under TCG** —
+     every frame pays emulated doorbell MMIO, IOKit
+     user-client round trips, and a fence wait; the
+     Linux guest's kernel-native virtio driver pays
+     ~none. DOMINANT: the zero-copy wire (28 FPS)
+     was NOT faster than the visible path (37 FPS)
+     — the readback is not terrain's bottleneck; the
+     per-frame crossings are.
+  2. **The present path** — Linux presents via
+     native DRM/scanout with zero pixel traffic; we
+     read back through emulated virtio per frame.
+  3. **The execution engine** — if the Linux guest
+     virtualizes natively (HVF) rather than TCG,
+     the raw emulation tax adds on top (the ground
+     rules' warning that such numbers do not
+     transfer).
+- **THE REMAINING LADDER (optimization, not
+  architecture):** batch commands per doorbell,
+  fewer per-frame kernel crossings, amortize the
+  fence. The pixels, the GPU, and the lifecycle are
+  proven; 1500 is the named ceiling.
+- **RECOVERY CLASS CLOSED (user-observed twice):**
+  the white un-blitted glmark2 rectangle clears
+  when the process dies (killed → window gone); the
+  reduced fullscreen black display recovers the
+  same way (glmark2 killed → display restored —
+  user-confirmed). BOTH failure presentations are
+  process-death-recoverable; no reboots needed.
