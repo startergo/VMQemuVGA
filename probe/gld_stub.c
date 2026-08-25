@@ -517,6 +517,19 @@ static void (*os_glBegin)(unsigned);
 static void (*os_glEnd)(void);
 static void (*os_glVertex2f)(float, float);
 static void (*os_glColor3f)(float, float, float);
+/* RUNG 78 — the GL2 shader entries (first shader through the
+ * embedded Mesa context). */
+static unsigned (*os_glCreateShader)(unsigned);
+static void (*os_glShaderSource)(unsigned, int, const char* const*, const int*);
+static void (*os_glCompileShader)(unsigned);
+static void (*os_glGetShaderiv)(unsigned, unsigned, int*);
+static void (*os_glGetShaderInfoLog)(unsigned, int, int*, char*);
+static unsigned (*os_glCreateProgram)(void);
+static void (*os_glAttachShader)(unsigned, unsigned);
+static void (*os_glLinkProgram)(unsigned);
+static void (*os_glGetProgramiv)(unsigned, unsigned, int*);
+static void (*os_glUseProgram)(unsigned);
+static int g_r78_prog;   /* >0 linked program, -1 failed, 0 not tried */
 
 static void osmesa_create_at_load(void)
 {
@@ -607,6 +620,17 @@ static int osmesa_link_init(int w, int h)
     os_glEnd     = (void (*)(void))getproc("glEnd");
     os_glVertex2f = (void (*)(float, float))getproc("glVertex2f");
     os_glColor3f  = (void (*)(float, float, float))getproc("glColor3f");
+    /* RUNG 78 */
+    os_glCreateShader = (unsigned (*)(unsigned))getproc("glCreateShader");
+    os_glShaderSource = (void (*)(unsigned, int, const char* const*, const int*))getproc("glShaderSource");
+    os_glCompileShader = (void (*)(unsigned))getproc("glCompileShader");
+    os_glGetShaderiv = (void (*)(unsigned, unsigned, int*))getproc("glGetShaderiv");
+    os_glGetShaderInfoLog = (void (*)(unsigned, int, int*, char*))getproc("glGetShaderInfoLog");
+    os_glCreateProgram = (unsigned (*)(void))getproc("glCreateProgram");
+    os_glAttachShader = (void (*)(unsigned, unsigned))getproc("glAttachShader");
+    os_glLinkProgram = (void (*)(unsigned))getproc("glLinkProgram");
+    os_glGetProgramiv = (void (*)(unsigned, unsigned, int*))getproc("glGetProgramiv");
+    os_glUseProgram = (void (*)(unsigned))getproc("glUseProgram");
     ep_log("rung59: OSMesa LINKED (dlopen route, ctx + buffer live)");
     /* RUNG 75: the driver verdict — virgl or software fallback */
     if (os_glGetString) {
@@ -619,6 +643,82 @@ static int osmesa_link_init(int w, int h)
         ep_log(b);
     }
     return 0;
+}
+
+/* RUNG 78 — the first shader through the embedded Mesa context.
+ * Trivial GLSL-110 pair, compiled ONCE, loud on every failure branch
+ * with the info log; the render path falls back to the rung-76
+ * fixed-function frame unchanged when this returns 0. The fragment
+ * color (1,0,1) is chosen so the readback self-check is exact: the
+ * shader pass covers the whole viewport, so every read-back pixel
+ * must be (255,0,255,255) — anything else is a MISMATCH. */
+static int rung78_shader_prog(void)
+{
+    static int s_done = 0;
+    if (s_done) return g_r78_prog > 0 ? g_r78_prog : 0;
+    s_done = 1;
+    if (!os_glCreateShader || !os_glShaderSource || !os_glCompileShader
+            || !os_glGetShaderiv || !os_glCreateProgram
+            || !os_glAttachShader || !os_glLinkProgram
+            || !os_glGetProgramiv || !os_glUseProgram) {
+        ep_log("rung78: shader entries UNRESOLVED via getproc");
+        g_r78_prog = -1;
+        return 0;
+    }
+    static const char* vs_src =
+        "void main() { gl_Position = gl_Vertex; }";
+    static const char* fs_src =
+        "void main() { gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0); }";
+    const char* src[1];
+    unsigned v = os_glCreateShader(0x8B31 /*GL_VERTEX_SHADER*/);
+    unsigned f = os_glCreateShader(0x8B30 /*GL_FRAGMENT_SHADER*/);
+    src[0] = vs_src; os_glShaderSource(v, 1, src, NULL);
+    os_glCompileShader(v);
+    src[0] = fs_src; os_glShaderSource(f, 1, src, NULL);
+    os_glCompileShader(f);
+    int cv = 0, cf = 0;
+    os_glGetShaderiv(v, 0x8B81 /*GL_COMPILE_STATUS*/, &cv);
+    os_glGetShaderiv(f, 0x8B81, &cf);
+    if (!cv || !cf) {
+        char lv[160] = "", lf[160] = "";
+        int n1 = 0, n2 = 0;
+        if (os_glGetShaderInfoLog) {
+            os_glGetShaderInfoLog(v, (int)sizeof(lv) - 1, &n1, lv);
+            os_glGetShaderInfoLog(f, (int)sizeof(lf) - 1, &n2, lf);
+        }
+        char b[400];
+        snprintf(b, sizeof(b),
+            "rung78: COMPILE FAIL vs=%d fs=%d | VS: %.150s | FS: %.150s",
+            cv, cf, lv, lf);
+        ep_log(b);
+        g_r78_prog = -1;
+        return 0;
+    }
+    unsigned p = os_glCreateProgram();
+    os_glAttachShader(p, v);
+    os_glAttachShader(p, f);
+    os_glLinkProgram(p);
+    int cl = 0;
+    os_glGetProgramiv(p, 0x8B82 /*GL_LINK_STATUS*/, &cl);
+    if (!cl) {
+        char lp[200] = "";
+        int n3 = 0;
+        if (os_glGetShaderInfoLog)
+            os_glGetShaderInfoLog(p, (int)sizeof(lp) - 1, &n3, lp);
+        char b[280];
+        snprintf(b, sizeof(b), "rung78: LINK FAIL | %.200s", lp);
+        ep_log(b);
+        g_r78_prog = -1;
+        return 0;
+    }
+    {
+        char b[128];
+        snprintf(b, sizeof(b),
+            "rung78: COMPILED+LINKED prog=%u (vs=%u fs=%u)", p, v, f);
+        ep_log(b);
+    }
+    g_r78_prog = (int)p;
+    return (int)p;
 }
 
 /* The gl-call shims the clear forward uses (bound to the dlopen'd
@@ -2580,6 +2680,7 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                     }
                     static float s_hue;
                     static long s_n;
+                    int r78 = rung78_shader_prog();
                     s_hue += 0.02f; if (s_hue > 1.0f) s_hue -= 1.0f;
                     os_glClearColor(s_hue, 0.25f, 1.0f - s_hue, 1.0f);
                     os_glClear(0x4000);
@@ -2594,6 +2695,22 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                         os_glVertex2f(0.0f, 0.7f);
                         os_glEnd();
                     }
+                    /* RUNG 78: full-screen pass through the compiled
+                     * shader — covers clear AND triangle with
+                     * (1,0,1,1); the readback self-check below counts
+                     * pixels that are NOT (255,0,255). */
+                    if (r78 > 0 && os_glUseProgram) {
+                        os_glUseProgram((unsigned)r78);
+                        if (os_glBegin && os_glEnd && os_glVertex2f) {
+                            os_glBegin(0x0005 /*GL_TRIANGLE_STRIP*/);
+                            os_glVertex2f(-1.0f, -1.0f);
+                            os_glVertex2f(1.0f, -1.0f);
+                            os_glVertex2f(-1.0f, 1.0f);
+                            os_glVertex2f(1.0f, 1.0f);
+                            os_glEnd();
+                        }
+                        os_glUseProgram(0);
+                    }
                     os_glFinish();
                     if (os_glReadPixels)
                         os_glReadPixels(0, 0, w76, h76,
@@ -2602,6 +2719,24 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                     unsigned long sum = 0;
                     for (int i = 0; i < w76 * 2; i++)
                         sum += g_os_buffer[i * 4];
+                    int r78mism = -1;
+                    if (r78 > 0) {
+                        r78mism = 0;
+                        for (int i = 0; i < w76 * 2; i++)
+                            if (g_os_buffer[i * 4] != 255
+                                    || g_os_buffer[i * 4 + 1] != 0
+                                    || g_os_buffer[i * 4 + 2] != 255)
+                                r78mism++;
+                        static int s_r78_verdict = 0;
+                        if (!s_r78_verdict) {
+                            s_r78_verdict = 1;
+                            ep_log(r78mism == 0
+                                ? "rung78: VERIFIED — first shader frame "
+                                  "pixel-exact (255,0,255)"
+                                : "rung78: MISMATCH — shader pass ran, "
+                                  "pixels not (255,0,255)");
+                        }
+                    }
                     kern_return_t pr = 0xe00002c2;
                     uint64_t sc76[4] = {
                         (uint64_t)(uintptr_t)g_os_buffer,
@@ -2612,11 +2747,12 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                             0x600E, sc76, 4, NULL, 0,
                             NULL, NULL, NULL, NULL);
                     if ((++s_n & 0xf) == 1) {
-                        char b[160];
+                        char b[176];
                         snprintf(b, sizeof(b),
-                            "rung76: frame %ld %dx%d hue=%.2f "
-                            "sum=%lu 0x600E=0x%x", s_n, w76, h76,
-                            s_hue, sum, pr);
+                            "rung76/78: frame %ld %dx%d hue=%.2f "
+                            "sum=%lu 0x600E=0x%x r78=%s mism=%d",
+                            s_n, w76, h76, s_hue, sum, pr,
+                            r78 > 0 ? "on" : "FAIL", r78mism);
                         ep_log(b);
                     }
                 }

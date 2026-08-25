@@ -16013,3 +16013,90 @@ inline-PARAM constant block, and the part-8
   GLSL translation is attempted; the PP side now
   has a complete instruction-length model to
   build the translator on.
+
+---
+
+## RUNG 78 — FIRST SHADER THROUGH THE EMBEDDED
+MESA CONTEXT: MET BOTH WAYS (compile+link+
+pixel-exact readback in the log; shader pixels
+visible on the guest screen); visible coverage
+is a TOP STRIP, not the full band
+
+- **The change (one variable):** probe/gld_stub.c
+  gained the rung-78 block and nothing else —
+  GL2 entries resolved via OSMesaGetProcAddress
+  (glCreateShader/ShaderSource/CompileShader/
+  GetShaderiv/GetShaderInfoLog/CreateProgram/
+  AttachShader/LinkProgram/GetProgramiv/
+  UseProgram), a trivial GLSL-110 pair
+  (VS: `gl_Position = gl_Vertex;` FS:
+  `gl_FragColor = vec4(1.0,0.0,1.0,1.0);`),
+  compiled once, drawn as a full-screen
+  TRIANGLE_STRIP pass AFTER the rung-76
+  triangle, with an exact-pixel readback
+  self-check (every sampled pixel must be
+  (255,0,255)) and a fallback to the unchanged
+  rung-76 frame on any failure branch.
+  Deployed md5 `9b194b182dd5ac54219ee6d7bf88013f`
+  (100 exports, guest digest verified).
+- **Gate miss, not a result (launch 1):** with
+  no VMGLD_GPUTEST in the environment the swap-
+  site GPU block never runs — the block is
+  env-gated (`getenv("VMGLD_GPUTEST")`), which
+  corpus captures never set. 0 rung76/rung78
+  lines. Relaunched with the env gate on; the
+  shader change remained the only new variable.
+- **LOG RESULTS (pid 6103):**
+  - `rung78: COMPILED+LINKED prog=3 (vs=1 fs=2)`
+    — COMPILE_STATUS and LINK_STATUS both
+    GL_TRUE on the first attempt, through the
+    guest Mesa on the virgl path. The first
+    shader ever compiled on the embedded
+    context.
+  - `rung78: VERIFIED — first shader frame
+    pixel-exact (255,0,255)` — zero non-magenta
+    pixels in the sampled rows;
+    `sum=408000 = 255×1600` (every sampled
+    pixel R=255). 23 frame lines, ALL
+    `mism=0`, `0x600E=0x0` every frame, frames
+    1→~368. GA chain re-bound clean:
+    type0 open 0x0 (conn=0x460f), SetIDMode 0x0,
+    SetShape 0x0, WriteLock 0x0 infoLen=128,
+    SetSurface(0x66,0x800) 0x0.
+  - glmark ran the full suite beneath it to the
+    terrain scene (heavy scenes 1 FPS as
+    always); NSAutoreleaseNoPool warnings are
+    the known ssh-launch artifact.
+- **VISUAL (guest screen, screenshot):** a
+  uniform solid magenta STRIP — no triangle, no
+  hue cycling — occupying roughly the TOP THIRD
+  of the glmark window, over the running scenes
+  (red-sphere/spotlight scene beneath). The
+  uniformity settles the pink-ambiguity trap:
+  the hue-cycling clear `(hue,0.25,1-hue)`
+  passes through pinkish values but always
+  carries the tricolor triangle and drifts;
+  a static uniform (1,0,1) field is the shader
+  and nothing else. The strip sits where the
+  rung-75 black quarter sat — the region where
+  the stub's push persists.
+- **RESIDUAL (presentation-side, unexplained):**
+  visible coverage is a strip, not the full
+  800×600 band, although the readback buffer is
+  fully magenta (mism=0). Candidate territory:
+  0x600E pitch/shape vs the GA surface stride
+  (the rung-64 lesson: LockSurface reports
+  row=3600 for an 800-pixel window) and
+  compositor layering against the engine's own
+  writes. Not a shader-path defect; parked as
+  the next presentation item alongside the
+  replay rungs.
+- **NEXT (rung 79):** PP→GLSL translation of
+  the corpus streams offline, on the rung-77
+  length model. Pre-registered: s13 (MOV, TEX,
+  MOV, RET; 36 words) translates to GLSL that
+  COMPILES through the rung-78 context path,
+  and its inline-parameter constants reproduce
+  the stream tail's float block bit-exactly.
+  First blocker expected: the operand-count
+  encoding (pp-word-format.md open item 1).
