@@ -4377,6 +4377,60 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
             ep_log(b);
         }
     }
+    /* RUNG 86 SECOND HALF: evaluate the token's descriptors HERE —
+     * the transform call's stack args exist only in this frame. The
+     * C-ABI stack slots match glvmPreloadFPTransformFour's reads
+     * (rbp+0x18 = 8th arg = block base rdi; +0x30 = 11th = ecx;
+     * +0x38 = 12th = r8d). Gate VMGLD_R86; first 50 calls only. */
+    {
+        static int s_gate86 = -1;
+        static int s_n86 = 0;
+        if (s_gate86 < 0)
+            s_gate86 = getenv("VMGLD_R86") ? 1 : 0;
+        if (s_gate86 && s_n86 < 50 && pp_r73_sane(a4)) {
+            s_n86++;
+            char* fp = (char*)__builtin_frame_address(0);
+            unsigned long long rdi_b = *(unsigned long long*)(fp + 0x18);
+            unsigned ecx_a = *(unsigned*)(fp + 0x30);
+            unsigned r8_a  = *(unsigned*)(fp + 0x38);
+            unsigned long long* tw = (unsigned long long*)a4;
+            unsigned long long flags = tw[1];
+            unsigned n = *(unsigned*)((char*)a4 + 0x7c);
+            if (n <= 0x100) {
+                char b[420];
+                int o = snprintf(b, sizeof(b),
+                    "rung86[h%d]: tok=%p rdi=%llx ecx=%u r8=%u "
+                    "flags=%llx n=%u", s_n86, a4, rdi_b, ecx_a, r8_a,
+                    flags, n);
+                for (int k = 0; k < 7; k++) {
+                    if (!(flags & (0x4000ULL << k))) continue;
+                    unsigned long long d = tw[n + 1 + k];
+                    unsigned sel = ((unsigned)(d & 0xFF)) >> 3;
+                    unsigned cnt = (unsigned)((d >> 32) & 0xFFFF);
+                    unsigned typ = (unsigned)((d >> 16) & 0xF);
+                    long r8p = (d & 0x100000ULL)
+                        ? (long)r8_a
+                        : (long)((d >> 48) & 0xFFFF) - (long)r8_a - 1;
+                    long off = r8p * (long)cnt + (long)ecx_a;
+                    if (typ == 1 || typ == 2) off <<= 4;
+                    else if (typ == 3) off <<= 2;
+                    else if (typ == 4) off <<= 1;
+                    else off = 0;
+                    unsigned long long addr =
+                        rdi_b + (unsigned long long)(sel - 10) * 8
+                        + (unsigned long long)off;
+                    int onA10 = pp_r73_sane(c0)
+                        && addr == (unsigned long long)((char*)c0 + 0xe00 + 80);
+                    if (o < (int)sizeof(b) - 90)
+                        o += snprintf(b + o, sizeof(b) - o,
+                            " | k%d sel=%u t=%u c=%u addr=%llx%s",
+                            k, sel, typ, cnt, addr,
+                            onA10 ? " **A10**" : "");
+                }
+                ep_log(b);
+            }
+        }
+    }
     if (g_r73_prev) return g_r73_prev(c0, a1, a2, a3, a4, a5);
     return 0;
 }

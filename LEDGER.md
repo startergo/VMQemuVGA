@@ -17048,3 +17048,51 @@ offset awaits transform-call stack-arg capture
   0x4000<<7 range (0x100000000 seen) — more
   param classes than the seven scanned; the
   full class list is part of the second half.
+
+---
+
+## RUNG 86 SECOND HALF — ATTEMPTED, NEGATIVE
+ON THE ABI TRANSFER, WITH A COMPENSATING
+FINDING: the +0x188 slot's function is
+SCENE-DEPENDENT (JIT thunk ≠
+glvmPreloadFPTransformFour); on the JIT path
+the op-stack BLOCK BASES ride in REGISTERS
+rcx/r8, 0x150 apart (the A/B separation)
+
+- **THE ATTEMPT (in-hook descriptor
+  evaluation, VMGLD_R86, 50 calls):** under
+  jellyfish the evaluation never fires —
+  rung-74's own finding (calls=0: the slot
+  resets per frame before the wrap catches
+  any). Under TEXTURE the wrap fires (50
+  evaluations logged) but the decode reads
+  garbage (flags=b7d0427938a43ff2, n=0,
+  non-canonical stack 'rdi'): the slot's
+  function there is the scene's JIT THUNK —
+  a different signature. The disassembled
+  12-arg ABI belongs to the INTERPRETER call
+  specifically; it does NOT describe the
+  slot in general.
+- **THE COMPENSATING FINDING:** rung-73's
+  logged JIT-path args: rcx=0x10084c200,
+  r8=0x10084c350 — differing by EXACTLY
+  0x150 = the A/B block separation
+  (ctx+0xe00 → +0xf50). On this path the
+  transform call receives BOTH op-stack
+  block bases IN REGISTERS. Two regimes now
+  mapped: interpreter path (blocks at fixed
+  ctx offsets, per rung 85's working reads)
+  and JIT path (blocks passed per-draw in
+  rcx/r8).
+- **WHERE THIS LEAVES THE UNIFORM MAP:** the
+  first half's structure stands (selector →
+  block, type scaling); the exact byte
+  offset needs a call that IS the interpreter
+  path with a live animated word — the two
+  conditions have not co-occurred yet
+  (jellyfish: interpreter + animated but
+  slot resets; texture: slot fires but JIT).
+  Candidate next probes: the heavy-GLSL
+  scenes pre-JIT (shading/bump variants
+  early in their first frames), or a
+  condition-forced interpreter run.
