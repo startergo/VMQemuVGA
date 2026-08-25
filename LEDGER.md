@@ -17181,3 +17181,37 @@ structured, but the region it names is not
   stream stutters), and dump a WIDER window
   (+-0x100) to catch the store adjacent to
   the k0 landing.
+
+---
+
+## RUNG 86c RESUME — time-triggered wide
+re-sample: the later-fill hypothesis
+REFUTED (all zero across the scene's
+lifetime); the miss is now localized to ONE
+arg — and the arithmetic says it is solvable
+from the descriptor itself
+
+- **THE RE-SAMPLE (wall-clock every 2s,
+  +-0x100 nonzero scan, 10 dumps over 18+s
+  of shading):** k0 stable (0x10178be10/20/
+  30 family) — **all zero, every dump.** The
+  region never fills during the scene.
+- **THE LOCALIZATION:** the computed k0 sits
+  ~7.4MB ABOVE the base — but a uniform
+  store must land within the block's first
+  0x150 bytes (the A-block size). off must
+  satisfy (r8p*0x800 + ecx) in [0, 0x15) —
+  i.e. r8p = 0 and ecx small. With the
+  flag-clear path r8p = (d>>48) - r8_a - 1,
+  **the correct scale arg is r8_a = (d>>48)
+  - 1**, computable FROM the descriptor. Our
+  assumed r8_a = 0 produced the megabyte
+  overshoot.
+- **PRE-REGISTERED NEXT:** log d>>48 in the
+  h-line, set r8_a = (d>>48) - 1, recompute
+  k0, re-dump — prediction: k0 lands at
+  base + [0, 0x150) and the region holds
+  the scene's uniform floats. This closes
+  the JIT regime's value validation with
+  zero remaining unknowns but one
+  descriptor-derived constant.

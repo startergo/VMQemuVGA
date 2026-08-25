@@ -3384,6 +3384,7 @@ EPR(gldDestroyMemoryPlugin)
  * The thunk-timing hazard is why capture is at create/modify: by draw
  * time ctx->0x188 has been swapped by glvmRequestFunctionPointerWrite. */
 #include <sys/stat.h>
+#include <sys/time.h>
 /* RUNG 72 — THE RAW-WORD CAPTURE CORPUS. Per
  * .claude/rules/instrumentation.md: capture copies bytes to a file;
  * decoding happens OFFLINE in a host tool (ppdecode). No in-process
@@ -4385,9 +4386,18 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
     {
         static int s_gate86 = -1;
         static int s_n86 = 0;
+        static int s_dumped86 = 0;
         if (s_gate86 < 0)
             s_gate86 = getenv("VMGLD_R86") ? 1 : 0;
-        if (s_gate86 && s_n86 < 50 && pp_r73_sane(a4)) {
+        {
+        struct timeval tv0;
+        gettimeofday(&tv0, 0);
+        long long now0 = (long long)tv0.tv_sec * 1000
+                       + tv0.tv_usec / 1000;
+        static long long s_dump_last = -100000;
+        int time_dump = s_dumped86 < 10 && now0 - s_dump_last >= 2000;
+        if (time_dump) s_dump_last = now0;
+        if (s_gate86 && (s_n86 < 50 || time_dump) && pp_r73_sane(a4)) {
             s_n86++;
             /* JIT-hypothesis ABI (rung-86b): token at ctx+0x198; the
              * block pair rides rcx/r8 (a3/a4, 0x150 apart); scale args
@@ -4466,24 +4476,11 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                             onA10 ? " **A10**" : "",
                             inBlk ? " inBLK" : "");
                 }
-                ep_log(b);
-                /* RUNG 86c: dump the k0 staging region (words around
-                 * the computed addr) — value-level correlation */
-                static int s_dumped = 0;
-                /* spread across the scene lifetime: early calls may
-                 * predate the region's fill (first-frame all-zero) */
-                static const unsigned long long at[] = {1, 500, 5000,
-                    20000, 100000, 500000, 2000000, 8000000};
-                int do_dump = 0;
-                if (jit_mode && s_dumped < 8) {
-                    for (int q = 0; q < 8; q++)
-                        if (g_r73_calls == at[q]) { do_dump = 1; break; }
-                    if (g_r73_calls > at[s_dumped < 8 ? s_dumped : 7]
-                            && g_r73_calls % 4000000ULL == 0)
-                        do_dump = 1;
-                }
-                if (jit_mode && do_dump) {
-                    s_dumped++;
+                if (s_n86 <= 50) ep_log(b);
+                /* RUNG 86c: dump on the WALL-CLOCK trigger (the h-cap
+                 * no longer gates this) */
+                if (jit_mode && time_dump) {
+                    s_dumped86++;
                     unsigned long long k0a = 0;
                     if (flags & 0x4000ULL) {
                         unsigned long long d0 = tw[n + 1];
@@ -4501,27 +4498,37 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                             + (unsigned long long)(sel0 - 10) * 8
                             + (unsigned long long)off0;
                     }
-                    if (k0a > 0x10000
+                    if (k0a > 0x10100
                             && k0a < 0x10000000000ull) {
+                        /* wide: nonzero words only, +-%#x window */
                         unsigned long long* W =
-                            (unsigned long long*)(k0a - 0x20);
-                        char d[420];
+                            (unsigned long long*)(k0a - 0x100);
+                        char d[460];
                         int p = snprintf(d, sizeof(d),
-                            "rung86c[%d] k0addr=%llx:", s_dumped, k0a);
-                        for (int i = 0; i < 12 && p < 380; i++) {
+                            "rung86c[%d t=%lld] k0=%llx nz:",
+                            s_dumped86, now0, k0a);
+                        int shown = 0;
+                        for (int i = 0; i < 66 && shown < 12
+                                && p < 420; i++) {
                             unsigned long long w = W[i];
+                            if (!w) continue;
                             float lo, hi;
                             memcpy(&lo, &w, 4);
                             memcpy(&hi, (char*)&w + 4, 4);
                             p += snprintf(d + p, sizeof(d) - p,
-                                " %+llxA%+d=%llx(%.4g,%.4g)", w,
-                                (i - 4) * 8, w, lo, hi);
+                                " %+d:%llx(%.4g,%.4g)",
+                                (i - 32) * 8, w, lo, hi);
+                            shown++;
                         }
+                        if (!shown)
+                            p += snprintf(d + p, sizeof(d) - p,
+                                " (all-zero +-%#x)", 0x100);
                         ep_log(d);
                     }
                 }
             }
         }
+    }
     }
     skip86:;
     if (g_r73_prev) return g_r73_prev(c0, a1, a2, a3, a4, a5);
