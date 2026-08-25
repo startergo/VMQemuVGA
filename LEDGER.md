@@ -17521,3 +17521,40 @@ remains the only known source
   host-read expected-texel + pixel-check
   legs run at swap. Pre-registered for
   next session.
+
+---
+
+## RUNG 88d — TRANSFORM-HOOK CAPTURE:
+CORRECT CODE, WRONG DAY — the poisoning
+class is now near-deterministic at
+texture-scene setup (4th occurrence,
+gleVPEnable, KERN_PROTECTION_FAILURE at
+0x1005b8540); the hook never fires
+
+- **THE CODE IS IN AND READY:** the
+  transform-hook texture read (rung 88d)
+  is deployed — same guards as the
+  census, at the pre-registered safe site,
+  scanning ctx+0x780[0..7] for the first
+  valid raster texture object, reading
+  level-0 w/h/fmt/type/dataptr, storing
+  in g_r88_tex_*. The swap-side upload +
+  host-read expected-texel + pixel-check
+  legs remain implemented from rung 88b.
+- **THE BLOCKER IS NOT THE CODE:** the
+  float's destroy-path heap poisoning
+  (instrumentation.md closed class,
+  gleVPEnable at gleUseProgramObject
+  during SceneTexture::setup) has hit
+  near-deterministic rate — 4 crashes
+  today, the last 2 consecutive, all
+  before any draws fire. The hook-site
+  capture cannot execute on a process
+  that dies at scene setup.
+- **NEXT SESSION (pre-registered):**
+  reboot the guest (clears the poisoned
+  heap state), run once with VMGLD_R87+
+  GPUTEST on -b texture:duration=30 —
+  the capture, upload, and pixel
+  validation should close the texture
+  leg in a single clean boot.
