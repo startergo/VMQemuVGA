@@ -16100,3 +16100,103 @@ is a TOP STRIP, not the full band
   the stream tail's float block bit-exactly.
   First blocker expected: the operand-count
   encoding (pp-word-format.md open item 1).
+
+---
+
+## RUNG 79 — PP→GLSL TRANSLATION: s13
+COMPILES, LINKS, AND DRAWS through the guest
+Mesa virgl path; parameter round-trip
+BIT-EXACT; s13 text regenerates EXACTLY from
+raw words
+
+- **ARITY IS A FUNCTION OF OPCODE (corpus-
+  verified):** across all 22 files / 1856
+  operand-word rows, every opcode has one
+  operand count (20 opcodes covered: MOV 2,
+  ADD/SUB/MUL/DIV/DOT/MAX/MIN/POW/RFL/SGE/SGT/
+  SLT/ANL 3, NRM/LEN 2, LRP 4, TEX 4, RET 1,
+  IF 1, ENDIF 0). Standalone decode no longer
+  needs the banked text for lengths. The
+  remaining ~120 opcodes' arity is unverified —
+  the glp 140-way jump table is the authoritative
+  source (open).
+- **THE OPERAND WORD, DECODED (Rosetta against
+  the corpus):**
+  - source: class = (low24>>6)&3 {0 att,
+    1 tmp, 2 prm}; register index = u16@+0x6
+    (bits 48-63) — as pp-word-format.md said;
+    a bits-32-47 misread was made and corrected
+    during this rung; swizzle = delta table
+    (delta = low24 minus class bits): x=0x000000,
+    y=0x00aa00, xy=0x08a800, xyz=0x114800,
+    xyyy=0x18a800, xyzw=0x19c800 (+prm matrix
+    0x1fc800); negate = bit 4 of delta.
+  - destination: index = bits 48-63; mask =
+    table keyed low32 & 0x0FFFFFFF (tmp:
+    x=0x2041000, xy=0x2261000, x_=0x2241000,
+    _x=0x0221000, xyz=0x2471000, x___=0x2641000,
+    xyz_=0x2671000, xyzw=0x2679000, ___x=
+    0x2609000; res: xyzw=0x267b000, xyz_=
+    0x2673000, ___x=0x260b000). Class+mask are
+    ONE code — the bits-8-11 nibble is 0/1 on
+    xy-family words and 9/b on full-family
+    words, so no separate class field sits at a
+    fixed position (in-session theory, corrected
+    before landing). The low32 top nibble varies
+    0x1/0x7 between files with identical text
+    (e.g. tmp1.xy appears as both 0x02261000 and
+    0x72261000) — masked off, unexplained.
+  - TEX: word3 = sampler as a plain prm source
+    word (prm0.x = 0x80), word4 = kind (3 = 2D).
+  - RET's condition word is literally ZERO
+    (that is why RET length 1-vs-2 stayed
+    ambiguous through rung 77).
+- **ARTIFACTS:** probe/pptrans.py (translator;
+  --selftest = s13 regen + param round-trip),
+  probe/ppcompile.c (guest compile harness,
+  dlopen'd /Users/sl/osmesa pair, synthetic VS
+  writing the FS's varyings).
+- **RESULTS (raw):**
+  - selftest: s13's four lines regenerate
+    exactly (`MOV tmp1.xy:2, att0.xy:2;` /
+    `TEX tmp0.xyzw, tmp1.xyyy, texture[prm0.x:1],
+    2D;` / `MOV res0.xyzw, tmp0.xyzw;` /
+    `RET (TR.xxxx);`); s7 params 7/7 and s15
+    18/18 re-encode BIT-EXACT against the stream
+    tails.
+  - guest (`DYLD_LIBRARY_PATH=/Users/sl/osmesa
+    GALLIUM_DRIVER=virgl ./ppcompile s13.glsl
+    --draw`): `compile vs=1 fs=1`, `link=1
+    prog=3`, `draw row0 nonzero-bytes=64/256
+    first=000000ff`, exit 0. The readback is the
+    shader's own output: sampling the unbound
+    (black) sampler gives (0,0,0,1) — the TEX
+    executed through virgl.
+  - First link attempt failed with
+    `fragment shader varying att0 not written by
+    vertex shader` — a HARNESS gap with a real
+    lesson: the PP fragment stream assumes a
+    vertex stage feeds its ATTRIBs. The runtime
+    translator must emit both stages or map
+    ATTRIBs to fixed-function varyings
+    (gl_TexCoord[...]) via the declaration
+    tables (open item 5).
+- **OPEN:** text-free anchor discovery (decode
+  still takes the validated corpus anchor; stop
+  heuristics: RET terminates main, zero word and
+  the raster 0x8 word end the instruction
+  region); declaration-table decode (att→
+  fragment.texcoord[N] bindings, prm→
+  program.local, TEMP counts); the IF/ENDIF
+  boolean condition encoding (s8's condition
+  word 0x0002000000000080 does not follow the
+  register form); GLSL emission beyond MOV/TEX/
+  RET; arity for the remaining ~120 opcodes.
+- **NEXT (rung 80):** live translation in-stub —
+  capture a stream at ModifyPipelineProgram,
+  translate with pptrans's tables in C, compile
+  through the rung-78 context path. Pre-
+  registered: the first engine-compiled program
+  (a corpus-class GLSL fragment shader from
+  glmark) translates AND compiles inside the
+  stub without touching the float path.
