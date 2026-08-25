@@ -2558,6 +2558,7 @@ static long gld_swap_wrapper_b(void* d, void* a1, void* a2, void* a3,
 { return gld_swap_wrapper_impl(1, d, a1, a2, a3, a4, a5); }
 static void census_report(long swapno);   /* fwd */
 static void export_census_report(long swapno);   /* fwd: after EPRs */
+static void rung80_compile_pending(void);        /* fwd: rung-80 section */
 /* rung 71b NOTE: the per-frame stream re-watch (VMGLD_PPTICK) was
  * REMOVED at rung 72 — its in-process glpPPDisassemble calls are the
  * banned pattern (.claude/rules/instrumentation.md); the liveness
@@ -2755,6 +2756,10 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                             r78 > 0 ? "on" : "FAIL", r78mism);
                         ep_log(b);
                     }
+                    /* RUNG 80: compile pending live translations on
+                     * this context (after the frame push; compile/link
+                     * leave GL state untouched). */
+                    rung80_compile_pending();
                 }
             }
         }
@@ -3234,6 +3239,7 @@ EPR(gldDestroyFramebuffer)
  * 0x8804 (raster-op — the gldAddRasterOpsToPPStream merge). 0x8B31
  * never arrives (rung 71), but is accepted if it ever does. */
 static int g_ppdump_seq;
+static void rung80_translate(const unsigned long long* ws, unsigned words);
 static void pp_dump_desc(void* desc, const char* site)
 {
     static struct { void* desc; int dumped; } seen[64];
@@ -3297,6 +3303,366 @@ static void pp_dump_desc(void* desc, const char* site)
     ep_log(b);
     if (n != words)
         ep_log("rung72: MISMATCH — short write; corpus file incomplete");
+    /* RUNG 80: fragment streams additionally feed the live translator
+     * (pure string build; compile happens at the swap site). */
+    if (rtype == 0x8b30)
+        rung80_translate((const unsigned long long*)stream, words);
+}
+
+/* RUNG 80 — LIVE TRANSLATION IN-STUB. The rung-79 tables as C; the
+ * stream is translated to GLSL at modify/create time (pure string
+ * building — no GL calls, no engine state touched) and compiled on
+ * the embedded OSMesa context at the NEXT swap site (rung-78 path).
+ * Everything here is corpus-derived (LEDGER rung 79):
+ *   anchor = word after the UNIQUE 0x4c0 marker (22/22 corpus files);
+ *   L = n+1 uniform; +1 word for IF (target) and ENDIF (index);
+ *   src word: class=(low24>>6)&3, index=u16@+0x6, swizzle=delta table,
+ *             negate=bit4;
+ *   dst word: index=u16@+0x6, mask=table keyed low32&0x0FFFFFFF;
+ *   TEX word3 = sampler (prm ref), word4 = kind (3 = 2D);
+ *   IF's condition word is ZERO (like RET's) — the condition lives in
+ *   the engine's runtime bool table, NOT in the stream: emitted as a
+ *   ppcond[] uniform (semantics open, compile-valid).
+ * Gate: VMGLD_GPUTEST (same boot gate as rungs 76/78 — one variable). */
+static const struct { unsigned op; const char* mn; short n; } kR80Ops[] = {
+    {0,"MOV",2},{31,"ADD",3},{32,"SUB",3},{34,"MUL",3},{58,"DIV",3},
+    {39,"DOT",3},{45,"MAX",3},{44,"MIN",3},{21,"NRM",2},{18,"LEN",2},
+    {56,"POW",3},{60,"LRP",4},{47,"RFL",3},{50,"SGE",3},{51,"SGT",3},
+    {53,"SLT",3},{36,"ANL",3},{66,"TEX",4},{77,"RET",1},{85,"IF",1},
+    {89,"ENDIF",0},{16,"EX2",1},
+};
+static const struct { unsigned d; const char* sw; char nc; } kR80Swz[] = {
+    {0x000000,"x",1},{0x00aa00,"y",1},{0x08a800,"xy",2},{0x114800,"xyz",3},
+    {0x18a800,"xyyy",4},{0x19c800,"xyzw",4},{0x1fc800,"xyzw",4},
+    {0x01fe00,"w",1},   /* live w170: DIV tmp.xyz, tmp.xyz, tmp.w */
+    {0x015400,"z",1},   /* live w80: MUL tmp.x, tmp.z, tmp.w */
+};
+static const struct { unsigned k; char cls; const char* mask; } kR80Mask[] = {
+    {0x2041000,'t',"x"},{0x2261000,'t',"xy"},{0x2261000,'t',"xy"},
+    {0x2241000,'t',"x_"},{0x0221000,'t',"_x"},{0x2471000,'t',"xyz"},
+    {0x2641000,'t',"x___"},{0x2671000,'t',"xyz_"},{0x2679000,'t',"xyzw"},
+    {0x2609000,'t',"___x"},
+    {0x267b000,'r',"xyzw"},{0x2673000,'r',"xyz_"},{0x260b000,'r',"___x"},
+};
+#define R80_NOPS   (int)(sizeof(kR80Ops)/sizeof(kR80Ops[0]))
+#define R80_NSWZ   (int)(sizeof(kR80Swz)/sizeof(kR80Swz[0]))
+#define R80_NMSK   (int)(sizeof(kR80Mask)/sizeof(kR80Mask[0]))
+#define R80_CAP    32768
+#define R80_NSLOTS 4
+static struct {
+    char glsl[R80_CAP];
+    unsigned words, seq;
+    char need;
+} g_r80[R80_NSLOTS];
+static unsigned g_r80_seq;
+
+/* render a source operand word into out[]; returns swizzle size 1-4 */
+static int r80_src(unsigned long long w, char* out, size_t cap)
+{
+    unsigned low = (unsigned)(w & 0xFFFFFF);
+    unsigned cls = (low >> 6) & 3;
+    unsigned delta = low & ~0xC0u;
+    int neg = (delta & 0x10) != 0;
+    if (neg) delta &= ~0x10u;
+    int s;
+    for (s = 0; s < R80_NSWZ; s++)
+        if (kR80Swz[s].d == delta) break;
+    if (s == R80_NSWZ) return -1;
+    unsigned idx = (unsigned)((w >> 48) & 0xFFFF);
+    snprintf(out, cap, "%s%s%d.%s", neg ? "-" : "",
+             cls == 0 ? "att" : cls == 1 ? "tmp" : "prm", idx,
+             kR80Swz[s].sw);
+    return kR80Swz[s].nc;
+}
+/* render a destination word: name ("tmpN"/"gl_FragColor") + component
+ * string (position-based: x_ -> x, _x -> y, ___x -> w). 0 ok, -1 unk */
+static int r80_dst(unsigned long long w, char* name, size_t ncap,
+                   char* comp, size_t ccap)
+{
+    unsigned key = (unsigned)(w & 0xFFFFFFFF) & 0x0FFFFFFFu;
+    int m;
+    for (m = 0; m < R80_NMSK; m++)
+        if (kR80Mask[m].k == key) break;
+    if (m == R80_NMSK) return -1;
+    unsigned idx = (unsigned)((w >> 48) & 0xFFFF);
+    int c = 0;
+    const char* mask = kR80Mask[m].mask;
+    for (int i = 0; mask[i] && c < 7; i++)
+        if (mask[i] != '_') comp[c++] = "xyzw"[i];
+    comp[c] = 0;
+    if (kR80Mask[m].cls == 'r')
+        snprintf(name, ncap, "gl_FragColor");
+    else
+        snprintf(name, ncap, "tmp%u", idx);
+    return 0;
+}
+/* record operand-name usage for the declaration list */
+static void r80_note(const char* s, int* att, int* prm, int* tmp)
+{
+    if (s[0] == '-') s++;
+    if (!strncmp(s, "att", 3)) { int t = atoi(s + 3); if (t < 256) att[t] = 1; }
+    else if (!strncmp(s, "prm", 3)) { int t = atoi(s + 3); if (t < 256) prm[t] = 1; }
+    else if (!strncmp(s, "tmp", 3)) { int t = atoi(s + 3); if (t < 256) tmp[t] = 1; }
+}
+
+static int g_r80_gate = -1;
+static void rung80_translate(const unsigned long long* ws, unsigned words)
+{
+    if (g_r80_gate < 0) g_r80_gate = getenv("VMGLD_GPUTEST") ? 1 : 0;
+    if (!g_r80_gate || !ws || words < 8 || words > 0x10000u) return;
+    int marker = -1;
+    for (unsigned i = 2; i < words; i++)
+        if (ws[i] == 0x4c0ULL) marker = (int)i;   /* keep the LAST */
+    if (marker < 0) { ep_log("rung80: no 0x4c0 marker; skip"); return; }
+    int i = marker + 1;
+    static char body[R80_CAP];
+    int bo = 0;
+    int att_seen[256] = {0}, prm_vec[256] = {0}, prm_smp[256] = {0},
+        tmp_seen[256] = {0}, ncond = 0, ninstr = 0;
+    char dname[32], dcomp[8], a[48], b[48], c[48], lhs[64];
+    #define R80A(fmt, ...) do { \
+        if (bo < (int)sizeof(body) - 256) bo += snprintf(body + bo, \
+            sizeof(body) - bo, "    " fmt "\n", __VA_ARGS__); \
+    } while (0)
+    while (i < (int)words - 3 && ninstr < 512) {
+        unsigned opc = (unsigned)((ws[i] & 0x3FFF) >> 6);
+        int o;
+        for (o = 0; o < R80_NOPS; o++) if (kR80Ops[o].op == opc) break;
+        if (o == R80_NOPS) break;
+        int n = kR80Ops[o].n;
+        const unsigned long long* W = ws + i + 1;
+        a[0] = b[0] = c[0] = 0;
+        if (opc == 76) {                   /* CAL: subroutine stream */
+            ep_log("rung80: subroutine stream (CAL) — skipped, "
+                   "rung-81 material");
+            return;
+        }
+        if (opc == 77) { i += 2; ninstr++; break; }   /* RET ends main */
+        if (opc == 85) {                              /* IF: cond is in
+            the engine's bool table, not the stream (zero word) */
+            R80A("if (ppcond[%d] > 0.5) {", ncond); ncond++;
+            i += n + 2; ninstr++; continue;
+        }
+        if (opc == 89) {
+            if (bo < (int)sizeof(body) - 256)
+                bo += snprintf(body + bo, sizeof(body) - bo, "    }\n");
+            i += n + 2; ninstr++; continue;
+        }
+        int wa = -1;
+        if (r80_dst(W[0], dname, sizeof(dname), dcomp, sizeof(dcomp)) != 0
+                || (wa = r80_src(W[1], a, sizeof(a))) < 0) goto bad;
+        if (!strcmp(dcomp, "xyzw"))
+            snprintf(lhs, sizeof(lhs), "%s", dname);
+        else
+            snprintf(lhs, sizeof(lhs), "%s.%s", dname, dcomp);
+        if (dname[0] == 't') { int t = atoi(dname + 3); if (t < 256) tmp_seen[t] = 1; }
+        r80_note(a, att_seen, prm_vec, tmp_seen);
+        /* RUNG 80b: masked dst with wider rhs — PP semantics write the
+         * first len(comp) components; GLSL needs an explicit selector */
+        char rhs[96];
+        /* wd = expression width (operand swizzle size, 4 for TEX,
+         * 1 for scalar-producing ops): select only when WIDER than
+         * the dst write set — the rung-80c lesson ((float).x). */
+        #define R80SEL(expr) R80W(expr, wa)
+        #define R80W(expr, wd) do { \
+            if (!strcmp(dcomp, "xyzw") || (wd) <= (int)strlen(dcomp)) \
+                snprintf(rhs, sizeof(rhs), "%s", expr); \
+            else snprintf(rhs, sizeof(rhs), "(%s).%s", expr, dcomp); \
+        } while (0)
+        if (opc == 0) {                               /* MOV */
+            R80SEL(a);
+            R80A("%s = %s;", lhs, rhs);
+        } else if (opc == 66) {                       /* TEX */
+            if (r80_src(W[2], b, sizeof(b)) < 0 || b[0] == '-') goto bad;
+            {   /* the sampler word is a prm ref WITH a .x swizzle —
+                 * samplers cannot be swizzled; use the bare name */
+                char* dot = strchr(b, '.'); if (dot) *dot = 0;
+                r80_note(b, att_seen, prm_vec, tmp_seen);
+                int t = atoi(b + 3); if (t < 256) prm_smp[t] = 1; prm_vec[t] = 0;
+            }
+            {
+                char tex[96];
+                snprintf(tex, sizeof(tex), "texture2D(%s, %s.xy)", b, a);
+                R80W(tex, 4);
+                R80A("%s = %s;", lhs, rhs);
+            }
+        } else if (n >= 3 && r80_src(W[2], b, sizeof(b)) < 0) goto bad;
+        else {
+            if (n >= 3) r80_note(b, att_seen, prm_vec, tmp_seen);
+            if (opc == 31) { char rhsP[96]; snprintf(rhsP, sizeof(rhsP), "%s + %s", a, b); R80SEL(rhsP); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 32) { char rhsM[96]; snprintf(rhsM, sizeof(rhsM), "%s - %s", a, b); R80SEL(rhsM); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 34) { char rhsT[96]; snprintf(rhsT, sizeof(rhsT), "%s * %s", a, b); R80SEL(rhsT); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 58) { char rhsD[96]; snprintf(rhsD, sizeof(rhsD), "%s / %s", a, b); R80SEL(rhsD); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 45) { char rhsmax[96]; snprintf(rhsmax, sizeof(rhsmax), "max(%s, %s)", a, b); R80W(rhsmax, 1); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 44) { char rhsmin[96]; snprintf(rhsmin, sizeof(rhsmin), "min(%s, %s)", a, b); R80W(rhsmin, 1); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 56) { char rhspow[96]; snprintf(rhspow, sizeof(rhspow), "pow(%s, %s)", a, b); R80W(rhspow, 1); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 39) { char rhsdot[96]; snprintf(rhsdot, sizeof(rhsdot), "dot(%s, %s)", a, b); R80W(rhsdot, 1); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 16) { char rhsex2[96];
+                  snprintf(rhsex2, sizeof(rhsex2), "exp2(%s)", a);
+                  R80SEL(rhsex2); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 21) { char rhsnormalize[96]; snprintf(rhsnormalize, sizeof(rhsnormalize), "normalize(%s)", a); R80SEL(rhsnormalize); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 18) { char rhslength[96]; snprintf(rhslength, sizeof(rhslength), "length(%s)", a); R80W(rhslength, 1); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 47) { char rhsreflect[96]; snprintf(rhsreflect, sizeof(rhsreflect), "reflect(%s, %s)", a, b); R80SEL(rhsreflect); R80A("%s = %s;", lhs, rhs); }
+            else if (opc == 60) {                     /* LRP (ARB order unv.) */
+                if (r80_src(W[3], c, sizeof(c)) < 0) goto bad;
+                r80_note(c, att_seen, prm_vec, tmp_seen);
+                { char rhsmix[96];
+                  snprintf(rhsmix, sizeof(rhsmix), "mix(%s, %s, %s)", a, b, c);
+                  R80SEL(rhsmix); R80A("%s = %s;", lhs, rhs); }
+            }
+            else if (opc == 50 || opc == 51 || opc == 53) {
+                const char* x = opc == 50 ? ">=" : opc == 51 ? ">" : "<";
+                { char rhscmp[96];
+                  snprintf(rhscmp, sizeof(rhscmp), "(%s %s %s) ? 1.0 : 0.0", a, x, b);
+                  R80W(rhscmp, 1); R80A("%s = %s;", lhs, rhs); }
+            }
+            else if (opc == 36)
+                { char rhsanl[96];
+                  snprintf(rhsanl, sizeof(rhsanl),
+                           "(%s > 0.0 && %s > 0.0) ? 1.0 : 0.0", a, b);
+                  R80W(rhsanl, 1); R80A("%s = %s;", lhs, rhs); }
+            else goto bad;
+        }
+        i += n + 1; ninstr++;
+        continue;
+    bad:
+        {
+            char bb[160];
+            snprintf(bb, sizeof(bb),
+                "rung80: translate STOP at word %d (op %u %s): "
+                "unknown form", i, opc, kR80Ops[o].mn);
+            ep_log(bb);
+        }
+        return;
+    }
+    /* subroutine guard: the label body comes BEFORE main in the
+     * stream, so the walk's first RET ends the LABEL, not main —
+     * a CAL anywhere in the remainder means a subroutine stream */
+    for (int j = i; j < (int)words - 3; j++)
+        if (((ws[j] & 0x3FFF) >> 6) == 76) {
+            ep_log("rung80: subroutine stream (CAL after RET) — "
+                   "skipped, rung-81 material");
+            return;
+        }
+    /* compose: header (declarations) + body */
+    int s = (int)(g_r80_seq++ % R80_NSLOTS);
+    int ho = snprintf(g_r80[s].glsl, R80_CAP, "#version 110\n");
+    for (int t = 0; t < 256; t++) {
+        if (prm_smp[t] && !prm_vec[t])
+            ho += snprintf(g_r80[s].glsl + ho, R80_CAP - ho,
+                           "uniform sampler2D prm%d;\n", t);
+        else if (prm_vec[t])
+            ho += snprintf(g_r80[s].glsl + ho, R80_CAP - ho,
+                           "uniform vec4 prm%d;\n", t);
+    }
+    for (int t = 0; t < 256; t++)
+        if (att_seen[t])
+            ho += snprintf(g_r80[s].glsl + ho, R80_CAP - ho,
+                           "varying vec4 att%d;\n", t);
+    if (ncond)
+        ho += snprintf(g_r80[s].glsl + ho, R80_CAP - ho,
+                       "uniform float ppcond[8];\n");
+    ho += snprintf(g_r80[s].glsl + ho, R80_CAP - ho, "void main() {\n");
+    for (int t = 0; t < 256; t++)
+        if (tmp_seen[t])
+            ho += snprintf(g_r80[s].glsl + ho, R80_CAP - ho,
+                           "    vec4 tmp%d;\n", t);
+    if (R80_CAP - ho > bo + 2) {
+        memcpy(g_r80[s].glsl + ho, body, (size_t)bo);
+        g_r80[s].glsl[ho + bo] = 0;
+        strcat(g_r80[s].glsl, "}\n");
+    } else {
+        ep_log("rung80: GLSL too long; drop");
+        return;
+    }
+    g_r80[s].words = words;
+    g_r80[s].seq = g_r80_seq;
+    g_r80[s].need = 1;
+    {
+        char bb[128];
+        snprintf(bb, sizeof(bb),
+            "rung80: translate OK seq=%u words=%u instrs=%d conds=%d",
+            g_r80_seq, words, ninstr, ncond);
+        ep_log(bb);
+    }
+    #undef R80A
+}
+
+/* compile every pending translated shader on the embedded context.
+ * Called at the swap site AFTER the frame push — compile/link change
+ * no GL state (the programs are never UseProgram'd). The synthetic VS
+ * writes every varying the FS declares (the rung-79 link lesson). */
+static void rung80_compile_pending(void)
+{
+    static int s_first_ok = 0;
+    if (!os_glCreateShader || !os_glShaderSource || !os_glCompileShader
+            || !os_glGetShaderiv || !os_glCreateProgram
+            || !os_glAttachShader || !os_glLinkProgram
+            || !os_glGetProgramiv) return;
+    for (int s = 0; s < R80_NSLOTS; s++) {
+        if (!g_r80[s].need) continue;
+        g_r80[s].need = 0;
+        const char* fsrc = g_r80[s].glsl;
+        /* synthetic VS: re-declare the FS's varyings and write them */
+        static char vsbuf[4096];
+        int vo = 0, aa = 0;
+        char assigns[1024]; int alen = 0;
+        const char* p = fsrc;
+        while (*p && (size_t)vo < sizeof(vsbuf) - 512) {
+            const char* nl = strchr(p, '\n');
+            size_t ll = nl ? (size_t)(nl - p) : strlen(p);
+            if (strncmp(p, "varying ", 8) == 0 && ll < 100) {
+                char name[48] = "";
+                if (sscanf(p + 8, "%*s %47s", name) == 1 && name[0]) {
+                    char* sc = strchr(name, ';'); if (sc) *sc = 0;
+                    vo += snprintf(vsbuf + vo, sizeof(vsbuf) - vo,
+                                   "%.*s\n", (int)ll, p);
+                    alen += snprintf(assigns + alen, sizeof(assigns) - alen,
+                                     " %s = vec4(0.5,0.5,0.5,1.0);", name);
+                    aa = 1;
+                }
+            }
+            if (!nl) break;
+            p = nl + 1;
+        }
+        vo += snprintf(vsbuf + vo, sizeof(vsbuf) - vo,
+                       "void main() { gl_Position = gl_Vertex;%s }",
+                       aa ? assigns : "");
+        unsigned vs = os_glCreateShader(0x8B31);
+        unsigned fs = os_glCreateShader(0x8B30);
+        const char* vsrc = vsbuf;
+        os_glShaderSource(vs, 1, &vsrc, NULL); os_glCompileShader(vs);
+        os_glShaderSource(fs, 1, &fsrc, NULL); os_glCompileShader(fs);
+        int cv = 0, cf = 0;
+        os_glGetShaderiv(vs, 0x8B81, &cv);
+        os_glGetShaderiv(fs, 0x8B81, &cf);
+        unsigned pr = 0; int cl = 0;
+        if (cv && cf) {
+            pr = os_glCreateProgram();
+            os_glAttachShader(pr, vs); os_glAttachShader(pr, fs);
+            os_glLinkProgram(pr);
+            os_glGetProgramiv(pr, 0x8B82, &cl);
+        }
+        char bb[288];
+        if (cv && cf && cl) {
+            snprintf(bb, sizeof(bb),
+                "rung80: COMPILE OK seq=%u words=%u prog=%u", g_r80[s].seq,
+                g_r80[s].words, pr);
+            if (!s_first_ok) {
+                s_first_ok = 1;
+                strcat(bb, " — FIRST LIVE TRANSLATE+COMPILE");
+            }
+        } else {
+            char log1[160] = ""; int len1 = 0;
+            if (os_glGetShaderInfoLog)
+                os_glGetShaderInfoLog(cf ? vs : fs, 159, &len1, log1);
+            snprintf(bb, sizeof(bb),
+                "rung80: COMPILE FAIL seq=%u words=%u vs=%d fs=%d "
+                "link=%d | %.90s", g_r80[s].seq, g_r80[s].words, cv, cf,
+                cl, log1);
+        }
+        ep_log(bb);
+    }
 }
 EPR(gldGetPipelineProgramInfo)
 /* the two instrumented entries: dump BEFORE the forward (the float

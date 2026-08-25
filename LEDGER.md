@@ -16200,3 +16200,93 @@ raw words
   (a corpus-class GLSL fragment shader from
   glmark) translates AND compiles inside the
   stub without touching the float path.
+
+---
+
+## RUNG 80 — LIVE TRANSLATION IN-STUB: MET AND
+EXCEEDED — every corpus-class engine program
+translates AND compiles inside the stub, float
+path untouched; five live-only defects found and
+fixed in-session; subroutine streams (CAL)
+detected and skipped honestly
+
+- **THE MILESTONE (first boot of the build):**
+  `rung80: translate OK seq=1 words=30 instrs=3
+  conds=0` then `rung80: COMPILE OK seq=1 words=30
+  prog=6 — FIRST LIVE TRANSLATE+COMPILE`. The
+  engine's own compiled PP stream, captured at
+  ModifyPipelineProgram, translated by the stub's
+  C tables and compiled+linked on the embedded
+  OSMesa context at the next swap. The float
+  still renders (screen unchanged by design —
+  translated programs are never UseProgram'd).
+- **FINAL BUILD (md5 dc0cee6f8fc90041188b96d85367
+  d042), full glmark suite:** 20 translate OK, 9
+  COMPILE OK, 0 COMPILE FAIL, 0 translate STOP.
+  The 11 translated-but-not-compiled are RING
+  OVERFLOW: glmark creates several programs per
+  scene setup (seq 15,16,17 within one second),
+  the 4-slot stash compiles at the NEXT swap —
+  bursts beyond 4 clobber. Capacity note, not a
+  correctness defect. glmark Score 2 = the CPU-
+  float stability number (labeling rule).
+- **FIVE LIVE-ONLY DEFECTS, found by the failing
+  logs and fixed (each verified by the next
+  boot):**
+  1. Sampler swizzle: TEX's sampler word is a
+     prm ref WITH `.x`; `texture2D(prm0.x, …)` →
+     `cannot access field 'x' of non-structure`.
+     Samplers cannot be swizzled — truncate at
+     the dot.
+  2. 2-operand overread: NRM/LEN (n=2) read
+     W[2] = the NEXT instruction's op word as an
+     operand → `translate STOP`. Gate on n>=3.
+  3. Width-blind selector: masked dst with
+     wider rhs needs `(rhs).comp`, but scalar-
+     producing rhs (`max/dot/pow`) must NOT take
+     it → `(float).x`. Selector is now width-
+     aware (operand swizzle size vs dst write
+     set; TEX = 4; scalar ops = 1).
+  4. New swizzle deltas from live-only streams:
+     `.w` = 0x01fe00 (w170: `DIV tmp.xyz,
+     tmp.xyz, tmp.w`), `.z` = 0x015400 (w80).
+     New opcode EX2 (16, arity 1, exp2).
+  5. Register-count caps: w454 uses tmp64+ and
+     prm16+; tracking arrays 64/16 → 256.
+  Plus one build-scripting slip: an automated
+  edit emitted `"* %s %s"` for MUL (prefix, not
+  infix) — caught by `syntax error, unexpected
+  '*'`, fixed before any claim depended on it.
+- **NEW STREAM CLASSES BEYOND THE CORPUS** (the
+  live suite is richer than the rung-72 capture):
+  w80 (peel: `MUL tmp.x, tmp.z, tmp.w` chains,
+  MIN-tree, EX2, LRP), w108, w170 (SUBROUTINE),
+  w454 (86+ temps). All translate under the
+  final tables.
+- **SUBROUTINE STREAMS (w170):** layout is
+  `label_0: body … RET; main: … CAL label_0 …
+  RET`. The walk's first RET ends the LABEL, not
+  main — emitting label-only would produce a
+  false-passing shader (compiles, half a
+  program). Guard: any CAL (op 76) after the
+  first RET → `subroutine stream (CAL after RET)
+  — skipped, rung-81 material`. Fired correctly
+  when the scene appeared (one boot; the final
+  boot's scene order did not produce it — the
+  skip count differs per boot, both recorded).
+- **Artifacts:** the rung-80 section of
+  probe/gld_stub.c (tables + rung80_translate at
+  modify/create + rung80_compile_pending at swap,
+  gated VMGLD_GPUTEST); probe/pptrans.py tables
+  synced (.w, .z, EX2) — selftest still PASS
+  (s13 regen exact, params bit-exact).
+- **OPEN (rung 81):** subroutine INLINE (single-
+  call-site label splice at CAL); semantic
+  validation (draw WITH a translated program and
+  pixel-check — compile validity is proven,
+  semantic fidelity of LRP/RFL operand order and
+  the IF bool-slot conditions is NOT); the
+  ppcond[] mechanism (IF conditions live in the
+  engine's runtime bool table — condition word
+  is ZERO, like RET's); presentation coverage
+  (rung-78 residual, unchanged).

@@ -40,7 +40,7 @@ ARITY = {
     'MOV': 2, 'ADD': 3, 'SUB': 3, 'MUL': 3, 'DIV': 3, 'DOT': 3, 'MAX': 3,
     'MIN': 3, 'NRM': 2, 'LEN': 2, 'POW': 3, 'LRP': 4, 'RFL': 3,
     'SGE': 3, 'SGT': 3, 'SLT': 3, 'ANL': 3, 'TEX': 4, 'RET': 1,
-    'IF': 1, 'ENDIF': 0,
+    'IF': 1, 'ENDIF': 0, 'EX2': 1,
 }
 BRANCH = {'IF', 'BRA', 'CAL', 'LOOP', 'REP', 'WHILE'}
 ENDOPS = {'ENDIF', 'ENDLOOP', 'ENDREP', 'ENDWHILE', 'ELSE'}
@@ -53,6 +53,7 @@ SWZ = {
     0x000000: ('x', 1), 0x00aa00: ('y', 1), 0x08a800: ('xy', 2),
     0x114800: ('xyz', 3), 0x18a800: ('xyyy', 4), 0x19c800: ('xyzw', 4),
     0x1fc800: ('xyzw', 4),   # prm matrix variant (":4:4" in banked text)
+    0x01fe00: ('w', 1), 0x015400: ('z', 1),  # live w170/w80 streams (rung 80)
 }
 NEG = 0x10
 
