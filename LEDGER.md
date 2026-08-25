@@ -17352,3 +17352,50 @@ per-frame uniform constants
   region selects) are computable — REAL
   engine texcoords driving texture sampling,
   pixel-verified.
+
+---
+
+## RUNG 87b — QUAD-CORNER/TEXCOORD REPLAY:
+PIXEL-EXACT — the engine's live texcoord
+(captured per-draw from op-stack word A1)
+bound as a REAL varying, driving texture
+sampling through the translated program:
+every pixel == texel(u,v), continuously
+
+- **THE STRUCTURE REVISION (from the corner
+  snapshots):** A0/A1 = the CURRENT
+  fragment quad's CENTER position +
+  texcoord (one pair per transform call —
+  the 4-corner preload writes elsewhere);
+  A2..A8 zero at sample time.
+- **THE REPLAY:** the synthetic VS now
+  feeds varyings from UNIFORMS (u_att0/
+  u_att1); at swap, u_att1 = the live
+  engine texcoord from A1 (captured per
+  draw), u_att0 = ones; the shape-2
+  program renders texture2D(tex, att1.xy)
+  * att0 through the 2x2 NEAREST texture.
+- **THE RESULT (texture scene,
+  VMGLD_R87+GPUTEST):** `REAL TEXCOORD
+  REPLAY u=0.5997 v=0.3099 -> texel(1,0)=
+  192,64,0` — then frames 49-113+:
+  `sum=307200 (=192x1600) mism=0` —
+  EVERY pixel exactly (192,64,0,255).
+  **Real engine texcoord -> varying ->
+  sampler -> texel selection -> verified
+  pixel, continuously.**
+- **ONE REPEATED LESSON (caught by the
+  black frame, fixed by ordering):** the
+  rung-84 rule AGAIN — glUniform before
+  glUseProgram is a silent no-op; the vary
+  uniforms must bind AFTER UseProgram. The
+  synthetic-VS uniform split (u_att_k)
+  makes all future varying feeds one
+  glUniform4fv each.
+- **THE LADDER'S VARYING LEG, VALIDATED:**
+  uniforms (85/86e, both regimes) and now
+  varyings (87b) flow from live engine
+  state through translated programs to
+  verified pixels. Remaining: geometry
+  (the vertex stream), textures (the
+  engine's texture data), the swap.

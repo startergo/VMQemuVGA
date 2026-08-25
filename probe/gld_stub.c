@@ -2582,6 +2582,7 @@ static const char* vsrc_r85(void)
 {
     return "void main() { gl_Position = gl_Vertex; }";
 }
+static float g_r87_u, g_r87_v;    /* rung 87: live engine texcoord */
 static float g_r85_u;             /* rung 85: tracked engine value */
 static int   g_r85_u_valid;
 static unsigned g_r85_prog;       /* rung 85: validation program */
@@ -2594,7 +2595,9 @@ static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
                                * section holds the real definition) */
 static int g_r82_exp[4];       /* fwd: rung-82 expected live pixel */
 static int g_r84_tol;          /* fwd: rung-84 per-shape tolerance */
-static int g_r84_verdict_arm;  /* fwd: re-arm verdict on GOES LIVE */
+static int g_r84_verdict_arm;  /* fwd: re-arm verdict */
+static int g_r82_shape2_live;  /* fwd: rung-82 shape-2 live flag */
+static void r81_verdict_reset(void) { g_r84_verdict_arm = 1; }
 /* rung 71b NOTE: the per-frame stream re-watch (VMGLD_PPTICK) was
  * REMOVED at rung 72 — its in-process glpPPDisassemble calls are the
  * banned pattern (.claude/rules/instrumentation.md); the liveness
@@ -2778,6 +2781,44 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                     }
                     int drawprog = g_r81_prog ? (int)g_r81_prog : r78;
                     if (g_r85_prog) drawprog = (int)g_r85_prog;
+                    /* RUNG 87b: real engine texcoord -> u_att1 */
+                    static int s_r87_bound = 0;
+                    if (g_r82_shape2_live && g_r81_prog
+                            && os_glGetUniformLocation && os_glUniform4fv
+                            && g_r87_u > 0.0f && !s_r87_bound) {
+                        s_r87_bound = 1;
+                        /* bind AFTER UseProgram — the rung-84 lesson:
+                         * glUniform with no current program is a
+                         * silent no-op (the black-frame repeat) */
+                        os_glUseProgram(g_r81_prog);
+                        float att1v[4] = { g_r87_u, g_r87_v, 0.0f, 1.0f };
+                        float onev[4] = { 1, 1, 1, 1 };
+                        int l1 = os_glGetUniformLocation(g_r81_prog,
+                                                         "u_att1");
+                        int l0 = os_glGetUniformLocation(g_r81_prog,
+                                                         "u_att0");
+                        if (l1 >= 0) os_glUniform4fv(l1, 1, att1v);
+                        if (l0 >= 0) os_glUniform4fv(l0, 1, onev);
+                        /* expected: texel(u,v) of the 2x2 NEAREST */
+                        int ui = g_r87_u < 0.5f ? 0 : 1;
+                        int vi = g_r87_v < 0.5f ? 0 : 1;
+                        static const unsigned char TX[2][2][4] = {
+                            { { 64, 0, 0, 255 }, { 192, 64, 0, 255 } },
+                            { { 0, 128, 0, 255 }, { 0, 0, 255, 255 } } };
+                        g_r82_exp[0] = TX[vi][ui][0];
+                        g_r82_exp[1] = TX[vi][ui][1];
+                        g_r82_exp[2] = TX[vi][ui][2];
+                        g_r82_exp[3] = TX[vi][ui][3];
+                        g_r84_tol = 0;
+                        r81_verdict_reset();
+                        char b87[160];
+                        snprintf(b87, sizeof(b87),
+                            "rung87: REAL TEXCOORD REPLAY u=%.4g v=%.4g "
+                            "-> texel(%d,%d)=%u,%u,%u",
+                            g_r87_u, g_r87_v, ui, vi,
+                            TX[vi][ui][0], TX[vi][ui][1], TX[vi][ui][2]);
+                        ep_log(b87);
+                    }
                     if (drawprog > 0 && os_glUseProgram) {
                         os_glUseProgram((unsigned)drawprog);
                         if (drawprog == (int)g_r85_prog
@@ -3746,7 +3787,6 @@ static unsigned g_r81_prog;   /* rung 81: verified passthrough, live */
 static int g_r82_exp[4] = {128, 128, 128, 255};  /* expected live pixel */
 static int g_r82_shape2_live;                    /* TEX+MUL shape live */
 static int g_r84_shape3_live;                    /* LRP/EX2 shape live */
-static void r81_verdict_reset(void) { g_r84_verdict_arm = 1; }
 static int g_r84_tol;                            /* per-shape tolerance */
 
 /* render a source operand word into out[]; returns swizzle size 1-4 */
@@ -4113,8 +4153,12 @@ static void rung80_compile_pending(void)
                     char* sc = strchr(name, ';'); if (sc) *sc = 0;
                     vo += snprintf(vsbuf + vo, sizeof(vsbuf) - vo,
                                    "%.*s\n", (int)ll, p);
+                    /* RUNG 87b: varyings fed from UNIFORMS so the
+                     * swap can bind real captured engine values */
+                    vo += snprintf(vsbuf + vo, sizeof(vsbuf) - vo,
+                                   "uniform vec4 u_%s;\n", name);
                     alen += snprintf(assigns + alen, sizeof(assigns) - alen,
-                                     " %s = vec4(0.25,0.75,0.5,1.0);", name);
+                                     " %s = u_%s;", name, name);
                     aa = 1;
                 }
             }
@@ -4589,6 +4633,30 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                     if (b > s_max[1][i]) s_max[1][i] = b;
                 }
                 s_cnt++;
+                {   /* publish the live texcoord A1=(u,v) per call */
+                    extern float g_r87_u, g_r87_v;
+                    unsigned long long w1 = A[1];
+                    memcpy(&g_r87_u, &w1, 4);
+                    memcpy(&g_r87_v, (char*)&w1 + 4, 4);
+                }
+                /* RUNG 87b: snapshot words 0..8 (float pairs) at a
+                 * few single calls — the 4 quad corners should sit
+                 * at 16-byte stride with arithmetic progressions */
+                static int s_snap = 0;
+                if (s_snap < 6 && (s_cnt & 0x2fff) == 0) {
+                    s_snap++;
+                    char sb[420];
+                    int sp = snprintf(sb, sizeof(sb),
+                        "rung87b[s%d] c=%ld:", s_snap, s_cnt);
+                    for (int i = 0; i < 9 && sp < 380; i++) {
+                        float lo, hi;
+                        memcpy(&lo, &A[i], 4);
+                        memcpy(&hi, (char*)&A[i] + 4, 4);
+                        sp += snprintf(sb + sp, sizeof(sb) - sp,
+                            " A%d=(%.4g,%.4g)", i, lo, hi);
+                    }
+                    ep_log(sb);
+                }
                 if ((s_cnt & 0x3ff) == 0 && s_cnt <= 0x10000) {
                     char b2[480];
                     int p = snprintf(b2, sizeof(b2),
