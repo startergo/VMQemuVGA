@@ -17096,3 +17096,46 @@ rcx/r8, 0x150 apart (the A/B separation)
   scenes pre-JIT (shading/bump variants
   early in their first frames), or a
   condition-forced interpreter run.
+
+---
+
+## RUNG 86b — PRE-JIT PROBE (shading) + THE
+JIT-HYPOTHESIS DECODE: SANE AND STABLE —
+the shading path decodes under the JIT ABI
+(token from ctx+0x198, base from rcx), the
+k0 descriptor MATCHES the jellyfish family,
+and it points at a heap staging region
+(0x100fd7e10) — the JIT regime's uniform
+source candidate
+
+- **SHADING IS JIT FROM CALL 1** (no
+  interpreter window): the raw interpreter
+  ABI reads garbage (flags varies while a4
+  constant — a4 is provably NOT the token).
+- **THE DISCRIMINATOR THAT WORKS:** token-
+  stability (same token must give same
+  flags) + canonical-heap bound on the stack
+  rdi. Implausible → JIT mode: token =
+  ctx+0x198, rdi = a3 (rcx), ecx = a5, r8=0.
+- **THE JIT-HYP RESULT (shading, 50/50
+  stable):** tok=0x102816d20
+  flags=0x400010004400 n=27; k0: sel=10
+  (block 0) t=1 c=0x800 — the SAME
+  descriptor family as jellyfish's token —
+  addr=0x100fd7e10 = a canonical heap
+  region ~7.4MB above the draw ctx: the
+  JIT-regime uniform STAGING AREA candidate
+  (the counterpart of the interpreter
+  regime's ctx+0xe00).
+- **Two uniform regimes, both now located:**
+  interpreter → ctx+0xe00/+0xf50 (rung 85,
+  jellyfish-validated); JIT → the descriptor-
+  resolved heap region (this rung,
+  structurally validated: stable token,
+  right descriptor family, canonical base).
+- **PRE-REGISTERED NEXT:** dump the staging
+  region (0x100fd7e10-0x20 .. +0x40) per
+  draw and correlate with the scene's actual
+  uniform values (shading's light position/
+  color vectors change per variant) — the
+  value-level validation of the JIT regime.

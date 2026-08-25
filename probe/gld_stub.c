@@ -4389,18 +4389,54 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
             s_gate86 = getenv("VMGLD_R86") ? 1 : 0;
         if (s_gate86 && s_n86 < 50 && pp_r73_sane(a4)) {
             s_n86++;
+            /* JIT-hypothesis ABI (rung-86b): token at ctx+0x198; the
+             * block pair rides rcx/r8 (a3/a4, 0x150 apart); scale args
+             * unknown — try r9d (a5) as ecx, 0 as r8 */
             char* fp = (char*)__builtin_frame_address(0);
             unsigned long long rdi_b = *(unsigned long long*)(fp + 0x18);
             unsigned ecx_a = *(unsigned*)(fp + 0x30);
             unsigned r8_a  = *(unsigned*)(fp + 0x38);
+            void* tok_j = pp_r73_sane(c0)
+                ? *(void**)((char*)c0 + 0x198) : 0;
+            unsigned long long rdi_j =
+                (unsigned long long)(uintptr_t)a3;
+            unsigned ecx_j = (unsigned)(uintptr_t)a5;
+            unsigned r8_j = 0;
+            if (s_n86 <= 8 && pp_r73_sane(tok_j))
+                ep_log("rung86[jit-hyp] active: tok_j set, rdi=a3");
             unsigned long long* tw = (unsigned long long*)a4;
             unsigned long long flags = tw[1];
             unsigned n = *(unsigned*)((char*)a4 + 0x7c);
+            int jit_mode = 0;
+            /* token-stability: same token must yield same flags */
+            static unsigned long long s_last_tok, s_last_flags;
+            static int s_have_last;
+            int unstable = s_have_last
+                && (unsigned long long)(uintptr_t)a4 == s_last_tok
+                && flags != s_last_flags;
+            s_last_tok = (unsigned long long)(uintptr_t)a4;
+            s_last_flags = flags;
+            s_have_last = 1;
+            if (flags == 0 || n > 0x100 || unstable
+                    || !(rdi_b > 0x100000000ull
+                         && rdi_b < 0x10000000000ull)) {
+                /* interpreter-ABI decode implausible — JIT mode */
+                jit_mode = 1;
+                if (!pp_r73_sane(tok_j)) goto skip86;
+                tw = (unsigned long long*)tok_j;
+                flags = tw[1];
+                n = *(unsigned*)((char*)tok_j + 0x7c);
+                rdi_b = rdi_j;
+                ecx_a = ecx_j;
+                r8_a = r8_j;
+                if (n > 0x100) goto skip86;
+            }
             if (n <= 0x100) {
                 char b[420];
                 int o = snprintf(b, sizeof(b),
-                    "rung86[h%d]: tok=%p rdi=%llx ecx=%u r8=%u "
-                    "flags=%llx n=%u", s_n86, a4, rdi_b, ecx_a, r8_a,
+                    "rung86[h%d]%s: tok=%p rdi=%llx ecx=%u r8=%u "
+                    "flags=%llx n=%u", s_n86, jit_mode ? "J" : "",
+                    jit_mode ? tok_j : a4, rdi_b, ecx_a, r8_a,
                     flags, n);
                 for (int k = 0; k < 7; k++) {
                     if (!(flags & (0x4000ULL << k))) continue;
@@ -4421,16 +4457,20 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                         + (unsigned long long)off;
                     int onA10 = pp_r73_sane(c0)
                         && addr == (unsigned long long)((char*)c0 + 0xe00 + 80);
+                    int inBlk = addr >= rdi_b
+                        && addr < rdi_b + 0x150;
                     if (o < (int)sizeof(b) - 90)
                         o += snprintf(b + o, sizeof(b) - o,
-                            " | k%d sel=%u t=%u c=%u addr=%llx%s",
+                            " | k%d sel=%u t=%u c=%u addr=%llx%s%s",
                             k, sel, typ, cnt, addr,
-                            onA10 ? " **A10**" : "");
+                            onA10 ? " **A10**" : "",
+                            inBlk ? " inBLK" : "");
                 }
                 ep_log(b);
             }
         }
     }
+    skip86:;
     if (g_r73_prev) return g_r73_prev(c0, a1, a2, a3, a4, a5);
     return 0;
 }
