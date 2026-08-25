@@ -15770,3 +15770,41 @@ INFORMATIVE outcome, not a failure
   pruning pass is owed; nothing project-
   critical depends on them — LEDGER.md and
   .claude/rules/ are the canonical record.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 5) — THE SOLVE
+RAN: raster-op class EXACT (2/2); fragment
+class breaks LOCALIZED (ADD@7, RET, TEX)
+
+- **MODEL VALIDATED where it's testable
+  today:** both 0x8804 raster-op files walk
+  EXACTLY end-to-end (header H=22, L =
+  operand count, MOV=2) — 2/2.
+- **THE 0x8B30 FRAGMENT FILES break early,
+  and the breaks CLUSTER:**
+  - ALL eight w362 streams: 2 ops match,
+    break at ADD (word 7)
+  - all three w30 streams: 2 ops match,
+    break at RET (word 6)
+  - TEX breaks in w42/w204/w146; NRM in
+    w110; SUB in w210; ADD in w290
+- **THE TWO REFINED HYPOTHESES (from the
+  handler reads + break pattern):**
+  1. RET's advance may be 1, not 2 — the
+     handler reads its condition from
+     byte[op+8] = the NEXT word, which could
+     be the next instruction's op word (the
+     condition rides in a field the walker
+     already consumes). Explains the w30
+     breaks exactly (2 MOVs = 4 words from
+     H=2, RET@6 with advance 1).
+  2. ADD's word-7 break in every w362 file:
+    either the first two MOVs there consume
+    3 words each (fragment-stream MOV may
+    differ from raster-op MOV), or the
+    fragment header H is larger than the
+    alignment guess. Test H∈{2..8} ×
+    MOV∈{2,3} × ADD∈{3,4} — a small grid.
+- Gate: 2/22 exact; failures localized per
+  the pre-registered protocol. NOT MET.
