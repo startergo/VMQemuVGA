@@ -17443,3 +17443,45 @@ did not run this boot
   check) implemented but NOT exercised —
   pre-registered to rerun after the extent
   fix.
+
+---
+
+## RUNG 88 CLOSE-OUT (session boundary): the
+swap-time texture census crashed a second
+time (same SIGBUS class) — the census is
+retired from the swap path; the structure
+decode stands; the upload leg moves to a
+safer site next session
+
+- **THE SECOND CRASH:** gld_swap_wrapper_
+  impl+419, SIGBUS KERN_PROTECTION_FAILURE
+  at 0x100000010 — the same site/class as
+  the first. Even with extent-covering
+  region guards and a first-swap/first-
+  entry restriction, walking ctx+0x780 at
+  swap time is not safe: the array entries
+  change under us and protection faults
+  inside mapped regions (guard pages) are
+  invisible to the region-size check. Also
+  fixed post-hoc: the capture block was
+  made dead code by a misplaced break
+  (never re-deployed).
+- **WHAT STANDS (banked, verified):** the
+  level-entry decode — geo=obj+0x10; level0
+  at geo+0xc8; w@+0x08, h@+0x0a, FORMAT
+  0x1907@+0x14, TYPE 0x1401@+0x16 (endianness
+  re-derived; the original offsets were
+  right), DATA POINTER@+0x18 — live-census
+  confirmed on the 512x512 RGB/UBYTE engine
+  texture with its store at 0x107cxxxx.
+- **THE SAFER SITE (pre-registered for the
+  next session):** capture the texture
+  object at the gldModifyTexture ENTRY
+  (a1 = the texture object — logged by the
+  rung-83 RAW instrument already), where
+  the object is LIVE-STABLE and the read
+  happens inside our own forward — no
+  array walking, no swap-time races. The
+  upload + host-read expected-texel +
+  pixel-check legs are already implemented
+  and waiting.
