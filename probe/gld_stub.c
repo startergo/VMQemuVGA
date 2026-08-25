@@ -3304,6 +3304,25 @@ static int g_ppdump_seq;
 #include <mach/mach_vm.h>
 static int g_r83_gate = -1;
 static long g_r83_logged;
+void* g_float_base = 0;   /* RUNG 83: the float's runtime load address,
+                           * published for gdb (single-session breakpoint
+                           * math; the slide drifts run to run) */
+static void r83_find_float_base(void)
+{
+    if (g_float_base) return;
+    uint32_t n = _dyld_image_count();
+    for (uint32_t i = 0; i < n; i++) {
+        const char* nm = _dyld_get_image_name(i);
+        if (nm && strstr(nm, "GLRendererFloat")) {
+            g_float_base = (void*)_dyld_get_image_header(i);
+            char b[96];
+            snprintf(b, sizeof(b), "rung83: FLOAT BASE=%p (idx %u)",
+                     g_float_base, i);
+            ep_log(b);
+            return;
+        }
+    }
+}
 static size_t r83_region_size(void* p)
 {
     mach_vm_address_t addr = (mach_vm_address_t)p;
@@ -3341,6 +3360,7 @@ static void r83_probe(const char* tag, void* a0, void* a1, void* a2,
                       void* a3)
 {
     if (g_r83_gate < 0) g_r83_gate = getenv("VMGLD_R83") ? 1 : 0;
+    r83_find_float_base();          /* unconditional: gdb needs it early */
     if (!g_r83_gate || !a0) return;
     if ((uintptr_t)a0 < 0x1000) return;
     if (r83_region_size(a0) == 0) return;          /* unmapped: skip */

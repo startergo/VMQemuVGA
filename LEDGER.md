@@ -16722,3 +16722,86 @@ real — is TRANSIENT between swaps
   clear. That sees the transient directly. No
   fix is designed until that datum exists
   (the rect-clamp-vs-backing constraint stands).
+
+---
+
+## RUNG 83 (GDB LEG) — THE PER-CLEAR TRACE
+LANDED (1025 clears, all healthy) AND THE
+CRASH CATCHER CAUGHT A CRASH — WHICH WAS THE
+CLOSED POISONING CLASS, NOT THE CLEAR-PATH
+DEFECT; the attribution of the desktop crash
+family SHIFTS to the known class
+
+- **THE HARNESS (banked for reuse):** launch
+  desktop-only under VMGLD_R83, read the
+  float's runtime base from the stub's
+  published `g_float_base` (logged per
+  process; the slide drifts run to run —
+  0x10325..., 0x103b5..., 0x102d5... observed),
+  attach apple-gdb's x86_64 slice with a
+  breakpoint at base+0x129a3 (gldClearDrawBuffer
+  entry; entry-bytes verified 55 48 89 e5 each
+  time — the check caught two stale-base
+  attempts by itself). gdb attach REQUIRES
+  sudo (same-user attach refused); nohup'd
+  scripts lose the sudo timestamp after ~5 min
+  (run 10's attach failed this way — the
+  process crashed naturally, unattached).
+- **THE PASSING-RUN TRACE (1025 clears):**
+  exactly THREE (rect, slot) states:
+  800x600 × 0x106662000 (512), 800x600 ×
+  0x10807f000 (512) — the drawbuffer images
+  PING-PONG per clear — and 210x210 ×
+  0x107b4c000 (ONE clear, the scene-setup FBO).
+  ZERO disagreements; the images are
+  vm_allocate'd (page-aligned, no malloc
+  header). The FBO clear happens EXACTLY ONCE
+  per scene — the per-frame desktop loop never
+  re-clears it — which is precisely why every
+  swap-density instrument missed that window.
+- **THE CAUGHT CRASH (run 10 of 15, pid
+  11869):** `EXC_BAD_ACCESS (SIGBUS)
+  KERN_PROTECTION_FAILURE at 0x1005a8a40` in
+  `gleVPEnable ← gleUpdateCurrentProgramState ←
+  gleUseProgramObject ← glmark
+  RenderClearImage::clear` — VERBATIM the
+  CLOSED destroy-path poisoning class
+  (instrumentation.md names gleVPEnable; the
+  poison cluster 0x1004a5xxx family; "poisons
+  the successor context's first program
+  bind" — here at desktop setup's first
+  render-object draw).
+- **ATTRIBUTION SHIFT (evidence-backed, not
+  yet proven for the 02:39 instance):** the
+  parsimonious model is ONE dose-dependent
+  heap-poisoning bug with MANY victim
+  signatures — the enable state in today's
+  bind crash, the level-image storage in the
+  02:39 clear crash (a freed/reused image
+  pointer walks the memset off a protected
+  page mid-row = the +144 datum). The
+  "size disagreement" hypothesis is DOWNGRADED
+  to one possible shape, no longer the leading
+  explanation. Supporting: the fbo_clear probe
+  never reproduces in fresh contexts; the
+  per-clear states are healthy on passing
+  runs; both crashes are intermittent-on-
+  heavy-dose, at desktop setup, after the
+  heaviest float-exercise day.
+- **Also corrected this leg:** the 04:35
+  SIGTRAP in NSOpenGLContext init was an
+  artifact of the failed scripted-gdb runs
+  (truncated 32-bit breakpoint addresses) —
+  instrument-induced, not an engine defect;
+  and the framebuffer service entries DO fire
+  during desktop (gldUnbindFramebuffer per
+  frame + at teardown) — the earlier "dormant"
+  reading came from non-FBO scenes.
+- **OPEN (unchanged priorities, this leg
+  closes the crash chase at current value):**
+  the class is KNOWN and closed glmark2-side;
+  a stub-side mitigation of the poisoning is
+  not planned (it is the float's bug; the
+  eventual fix is REPLACING the float — the
+  translator ladder). Draw-state replay
+  remains the ladder's destination.
