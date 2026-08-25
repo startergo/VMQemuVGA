@@ -2583,12 +2583,19 @@ static const char* vsrc_r85(void)
     return "void main() { gl_Position = gl_Vertex; }";
 }
 static float g_r87_u, g_r87_v;    /* rung 87: live engine texcoord */
+static void* g_r88_tex_data;      /* rung 88: engine level-0 store */
+static unsigned g_r88_tex_w, g_r88_tex_h;
+static int g_r88_tex_valid;
 static float g_r85_u;             /* rung 85: tracked engine value */
 static int   g_r85_u_valid;
 static unsigned g_r85_prog;       /* rung 85: validation program */
 static void r83_probe(const char* tag, void* a0, void* a1, void* a2,
                       void* a3);                    /* fwd: rung-83 */
+static int pp_r73_sane(void* p);                   /* fwd: rung-73 */
 static void r85_poll(void* dctx);                   /* fwd: rung-85 */
+static void* g_r88_tex_data;       /* fwd: rung-88 */
+static unsigned g_r88_tex_w, g_r88_tex_h;
+static int g_r88_tex_valid;
 static size_t r83_region_size(void* p);             /* fwd: rung-83 */
 static void r86_poll(void* dctx);                   /* fwd: rung-86 */
 static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
@@ -2617,6 +2624,59 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
     r83_probe(site == 0 ? "swap" : "present", dctx, a1, a2, a3);
     r85_poll(dctx);
     r86_poll(dctx);
+    {   /* RUNG 88 — the engine's bound textures (ctx+0x780[32]):
+         * dump level-0 metadata (w/h/fmt/rowbytes + the raw 32-byte
+         * level entry) for the first few. Gate VMGLD_R88. */
+        static int s_gate88 = -1;
+        static long s_n88 = 0;
+        if (s_gate88 < 0) s_gate88 = getenv("VMGLD_R88") ? 1 : 0;
+        if (s_gate88 && dctx && ((++s_n88 & 0xff) == 1)) {
+            void** ta = (void**)((char*)dctx + 0x780);
+            for (int i = 0; i < 32; i++) {
+                void* tobj = ta[i];
+                if (!pp_r73_sane(tobj)) continue;
+                if (r83_region_size(tobj) < 0x100) continue;
+                void* geo = *(void**)((char*)tobj + 0x10);
+                if (!pp_r73_sane(geo)) continue;
+                if (r83_region_size(geo) < 0x200) continue;
+                unsigned fmt16 = *(unsigned short*)((char*)tobj + 0x40);
+                char* lv = (char*)geo + 0xc8;
+                /* level entry 0: +8 w?, +0xa h?, dump raw 32 bytes */
+                unsigned w = *(unsigned short*)(lv + 8);
+                unsigned h = *(unsigned short*)(lv + 0xa);
+                char b[288];
+                int o = snprintf(b, sizeof(b),
+                    "rung88[t%d]: obj=%p fmt16=%04x w=%u h=%u e0:",
+                    i, tobj, fmt16, w, h);
+                for (int k = 0; k < 4 && o < 250; k++)
+                    o += snprintf(b + o, sizeof(b) - o,
+                        " %016llx",
+                        *(unsigned long long*)(lv + k * 8));
+                ep_log(b);
+                /* RUNG 88b: capture level-0's store for upload:
+                 * word2 = (type<<32|format) halves at +0x10/+0x14...
+                 * observed: +0x14 u16=0x1401 (UBYTE), +0x16 u16=
+                 * 0x1907 (RGB); word3 (+0x18) = data pointer */
+                unsigned ty16 = *(unsigned short*)(lv + 0x14);
+                unsigned fm16 = *(unsigned short*)(lv + 0x16);
+                void* datap = *(void**)(lv + 0x18);
+                if (ty16 == 0x1401 && fm16 == 0x1907
+                        && pp_r73_sane(datap) && w >= 16 && h >= 16
+                        && !g_r88_tex_valid) {
+                    g_r88_tex_valid = 1;
+                    g_r88_tex_data = datap;
+                    g_r88_tex_w = w;
+                    g_r88_tex_h = h;
+                    char b2[128];
+                    snprintf(b2, sizeof(b2),
+                        "rung88: STORE CAPTURED %ux%u RGB @%p",
+                        w, h, datap);
+                    ep_log(b2);
+                }
+                if (i > 20) break;
+            }
+        }
+    }
     /* RUNG 76 — THE STUB-DRIVEN GA BINDING. Diagnosis: the GA path
      * was never automatic — SetSurface(0x800) is an APP-SIDE call
      * nothing makes (the milestone-2 boot had it because the probe
@@ -2786,6 +2846,50 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                     if (g_r82_shape2_live && g_r81_prog
                             && os_glGetUniformLocation && os_glUniform4fv
                             && g_r87_u > 0.0f && !s_r87_bound) {
+                        /* RUNG 88b: upload the ENGINE texture once
+                         * (over the unit-0 object) and verify against
+                         * a host-side read of the same bytes */
+                        static int s_up88 = 0;
+                        if (!s_up88 && g_r88_tex_valid
+                                && os_glTexImage2D && os_glBindTexture
+                                && os_glGenTextures) {
+                            s_up88 = 1;
+                            unsigned tex88 = 1;
+                            os_glGenTextures(1, &tex88);
+                            os_glBindTexture(0x0DE1, tex88);
+                            if (os_glTexParameteri) {
+                                os_glTexParameteri(0x0DE1, 0x2801, 0x2600);
+                                os_glTexParameteri(0x0DE1, 0x2800, 0x2600);
+                            }
+                            os_glTexImage2D(0x0DE1, 0, 0x1907,
+                                (int)g_r88_tex_w, (int)g_r88_tex_h, 0,
+                                0x1907, 0x1401, g_r88_tex_data);
+                            char b3[128];
+                            snprintf(b3, sizeof(b3),
+                                "rung88: ENGINE TEX UPLOADED %ux%u "
+                                "obj=%u @%p", g_r88_tex_w, g_r88_tex_h,
+                                tex88, g_r88_tex_data);
+                            ep_log(b3);
+                        }
+                        if (g_r88_tex_valid) {
+                            /* expected = the engine's own bytes at
+                             * (u,v), NEAREST */
+                            int tx = (int)(g_r87_u * g_r88_tex_w);
+                            int ty = (int)(g_r87_v * g_r88_tex_h);
+                            if (tx >= 0 && ty >= 0
+                                    && tx < (int)g_r88_tex_w
+                                    && ty < (int)g_r88_tex_h) {
+                                const unsigned char* px =
+                                    (const unsigned char*)
+                                        g_r88_tex_data
+                                    + ((size_t)ty * g_r88_tex_w + tx) * 3;
+                                g_r82_exp[0] = px[0];
+                                g_r82_exp[1] = px[1];
+                                g_r82_exp[2] = px[2];
+                                g_r82_exp[3] = 255;
+                                g_r84_tol = 0;
+                            }
+                        }
                         s_r87_bound = 1;
                         /* bind AFTER UseProgram — the rung-84 lesson:
                          * glUniform with no current program is a

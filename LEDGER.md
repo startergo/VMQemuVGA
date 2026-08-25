@@ -17399,3 +17399,47 @@ every pixel == texel(u,v), continuously
   verified pixels. Remaining: geometry
   (the vertex stream), textures (the
   engine's texture data), the swap.
+
+---
+
+## RUNG 88 — TEXTURE CENSUS: the level
+structure DECODED (w/h, type, format, and
+the data pointer — with one offset
+correction), then MY CENSUS CRASHED on an
+under-guarded read extent; the upload leg
+did not run this boot
+
+- **THE STRUCTURE (from the live census,
+  texture scene):** bound texture at
+  ctx+0x780[0]: obj=0x100610710,
+  fmt16(obj+0x40)=0x8367; geometry =
+  obj+0x10; level entry 0 at geo+0xc8
+  (32 bytes): +0x08 w=512, +0x0a h=512,
+  **+0x10 type=0x1401 (GL_UNSIGNED_BYTE),
+  +0x12 format=0x1907 (GL_RGB)** —
+  CORRECTED: my first read used +0x14/
+  +0x16 (yielding 0x0200 — the counts
+  half; that is why STORE CAPTURE never
+  fired) — **+0x18 = the LEVEL DATA
+  POINTER** (0x0000000107cc3000,
+  canonical). Everything needed for the
+  upload is now field-located.
+- **THE CRASH (mine, at swap entry
+  gld_swap_wrapper_impl+390, SIGBUS
+  KERN_PROTECTION_FAILURE at 0x100000010):**
+  the census reads ctx+0x780 entries whose
+  pointer values can pass naive sane+
+  region checks while the ENTRY read extent
+  (geo+0xc8 .. +0xe7) crosses a protected
+  sub-region. The guard philosophy (region
+  check) was right; the check must cover
+  the READ EXTENT (region >= 0x100+0xe8),
+  and the census must not run on entries
+  that only coincidentally look sane in a
+  fresh process.
+- **STATE:** census decode banked; upload
+  validation (glTexImage2D from the engine
+  store, expected-texel host read, pixel
+  check) implemented but NOT exercised —
+  pre-registered to rerun after the extent
+  fix.
