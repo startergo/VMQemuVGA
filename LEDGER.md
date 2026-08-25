@@ -16444,3 +16444,53 @@ real sampler binding and a real texture
   operand order; presentation coverage; and
   rung 83's destination — draw-state replay
   with real engine state.
+
+---
+
+## RUNG 82 CORRECTION + NEW CRASH SIGNATURE
+(open, unreproduced): the first rung-82 boot
+CRASHED at SceneDesktop — "suite finished"
+above is WRONG; the rerun completed
+
+- **CORRECTION:** the rung-82 entry's implicit
+  "suite ended" described a CRASH, not a
+  completion: glmark died at 02:39:12 in
+  SceneDesktop::setup (the scene after
+  pulsar), with no Score line. A rerun with
+  the IDENTICAL build completed the full suite
+  (glmark2 Score: 2, CPU-float stability
+  number) — the crash is INTERMITTENT (one
+  occurrence in ~10 suite boots this day). All
+  rung-82 validation numbers stand (they were
+  logged before the crash point; the rerun
+  added 15 more exact frames, 30 total).
+- **THE NEW SIGNATURE (not in the closed
+  classes):**
+  `EXC_BAD_ACCESS (SIGSEGV) at 0x107dbf000
+  (page-aligned)` — `__bzero ← gldClearDrawBuffer
+  +3577 ← gldClear ← glClear_Exec ← RenderObject
+  ::size ← RenderWindowBlur::size ←
+  SceneDesktop::setup`. The float bzeros a
+  draw-buffer backing that is unmapped, during
+  a new scene object's FIRST clear.
+- **ATTRIBUTION — OPEN.** Facts: the crash is
+  inside the float's heap while the stub's
+  swap-site code was NOT executing (no swap
+  occurs during scene setup; the last stub
+  action was a pure string translate at
+  02:39:09); the glmark binary is unchanged
+  (md5 discipline for the closed classes
+  applied); not WaveMesh, not the teardown-
+  abort names. The shape matches the KNOWN
+  float-side family's "poisons the successor
+  context's first use" variant (dose-suspected;
+  this was the heaviest float-exercise day),
+  but that is a HYPOTHESIS, not a finding. A
+  stub-side contribution through the shared
+  kernel 3D connection is not excluded. Next
+  step if it recurs: the three-run isolation
+  protocol against a no-VMGLD_GPUTEST control.
+- The two old `/Library/Logs/DiagnosticReports/
+  *.hang` files (10:05/10:14, other pids) are
+  unrelated earlier runs; configd crashes are
+  guest-era noise.
