@@ -4418,6 +4418,7 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
             unsigned long long flags = tw[1];
             unsigned n = *(unsigned*)((char*)a4 + 0x7c);
             int jit_mode = 0;
+            unsigned long long d0 = 0;
             /* token-stability: same token must yield same flags */
             static unsigned long long s_last_tok, s_last_flags;
             static int s_have_last;
@@ -4438,16 +4439,22 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                 n = *(unsigned*)((char*)tok_j + 0x7c);
                 rdi_b = rdi_j;
                 ecx_a = ecx_j;
-                r8_a = r8_j;
+                /* RUNG 86d: the scale arg derived FROM the k0
+                 * descriptor (block-size constraint: r8p must be 0,
+                 * so r8_a = (d>>48) - 1) — replaces the assumed 0 */
+                d0 = (n + 1 <= 0x100) ? tw[n + 1] : 0;
+                r8_a = (unsigned)(((d0 >> 48) & 0xFFFF) - 1);
+                r8_j = r8_a;
                 if (n > 0x100) goto skip86;
             }
             if (n <= 0x100) {
                 char b[420];
                 int o = snprintf(b, sizeof(b),
-                    "rung86[h%d]%s: tok=%p rdi=%llx ecx=%u r8=%u "
-                    "flags=%llx n=%u", s_n86, jit_mode ? "J" : "",
+                    "rung86[h%d]%s: tok=%p rdi=%llx ecx=%u "
+                    "r8=%u(d0hi=%llx) flags=%llx n=%u",
+                    s_n86, jit_mode ? "J" : "",
                     jit_mode ? tok_j : a4, rdi_b, ecx_a, r8_a,
-                    flags, n);
+                    (d0 >> 48) & 0xFFFF, flags, n);
                 for (int k = 0; k < 7; k++) {
                     if (!(flags & (0x4000ULL << k))) continue;
                     unsigned long long d = tw[n + 1 + k];
@@ -4488,7 +4495,8 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                         unsigned cnt0 = (unsigned)((d0 >> 32) & 0xFFFF);
                         unsigned typ0 = (unsigned)((d0 >> 16) & 0xF);
                         long r8p0 = (d0 & 0x100000ULL)
-                            ? 0 : (long)((d0 >> 48) & 0xFFFF) - 1;
+                            ? 0
+                            : (long)((d0 >> 48) & 0xFFFF) - (long)r8_a - 1;
                         long off0 = r8p0 * (long)cnt0 + (long)ecx_a;
                         if (typ0 == 1 || typ0 == 2) off0 <<= 4;
                         else if (typ0 == 3) off0 <<= 2;

@@ -17215,3 +17215,48 @@ from the descriptor itself
   the JIT regime's value validation with
   zero remaining unknowns but one
   descriptor-derived constant.
+
+---
+
+## RUNG 86d — THE JIT UNIFORM STORE FOUND
+AND ALIVE: k0 lands at base+0x10 with the
+descriptor-derived scale arg, and the region
+holds the scene's animated uniforms (the
+shading light position, changing every
+sample) — the uniform map is now COMPLETE
+across both regimes
+
+- **THE DERIVATION, CONFIRMED:** r8_a =
+  (d>>48) - 1 (d0hi=0x258=600 -> r8_a=599)
+  zeroes r8p exactly as the block-size
+  constraint demanded; k0 = base+0x10 —
+  INSIDE the block (the rung-86c 7.4MB
+  overshoot was the assumed r8_a=0).
+- **THE STORE (10 wall-clock dumps, 2s
+  spacing, shading):**
+  - `-0x10`: (590.5,356.5)→(462.5,341.5)→
+    (333.5,343.5)→… — a slowly wandering
+    PIXEL-COORDINATE PAIR: the shading
+    scene's animated LIGHT POSITION.
+  - `-0x8`: (0.7297,0.2286)→(0.9179,
+    0.1586)→… normalized components changing
+    per sample.
+  - `+0x48/+0x38`: correlated normalized
+    values (~0.09-0.13 matching the -0x8
+    second component).
+  All changing every sample — per-frame
+  animated, plausible magnitudes, no zeros.
+- **THE UNIFORM MAP, COMPLETE:**
+  | regime | source | validation |
+  |---|---|---|
+  | interpreter | ctx+0xe00/+0xf50 fixed | rung 85: jellyfish sine, pixel == value, exact |
+  | JIT | token descriptor → base+0x10, r8_a=(d>>48)-1 | rung 86d: shading light position, animated, sane floats |
+  The remaining descriptor classes (the
+  higher flag bits, 0x100000000-class) are
+  additional param streams on the same
+  machinery.
+- **The chain the ladder now owns end to
+  end:** engine token → descriptor → op-
+  stack/block address → live uniform value →
+  glUniform → translated program → GPU →
+  verified pixel. Both engine regimes.
