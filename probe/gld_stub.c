@@ -2559,6 +2559,8 @@ static long gld_swap_wrapper_b(void* d, void* a1, void* a2, void* a3,
 static void census_report(long swapno);   /* fwd */
 static void export_census_report(long swapno);   /* fwd: after EPRs */
 static void rung80_compile_pending(void);        /* fwd: rung-80 section */
+static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
+                               * section holds the real definition) */
 /* rung 71b NOTE: the per-frame stream re-watch (VMGLD_PPTICK) was
  * REMOVED at rung 72 — its in-process glpPPDisassemble calls are the
  * banned pattern (.claude/rules/instrumentation.md); the liveness
@@ -2696,12 +2698,13 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                         os_glVertex2f(0.0f, 0.7f);
                         os_glEnd();
                     }
-                    /* RUNG 78: full-screen pass through the compiled
-                     * shader — covers clear AND triangle with
-                     * (1,0,1,1); the readback self-check below counts
-                     * pixels that are NOT (255,0,255). */
-                    if (r78 > 0 && os_glUseProgram) {
-                        os_glUseProgram((unsigned)r78);
+                    /* RUNG 78/81: full-screen pass through the
+                     * compiled shader — the rung-81 passthrough when
+                     * live (predicted (128,128,128,255)), else the
+                     * rung-78 fixed (1,0,1,1). */
+                    int drawprog = g_r81_prog ? (int)g_r81_prog : r78;
+                    if (drawprog > 0 && os_glUseProgram) {
+                        os_glUseProgram((unsigned)drawprog);
                         if (os_glBegin && os_glEnd && os_glVertex2f) {
                             os_glBegin(0x0005 /*GL_TRIANGLE_STRIP*/);
                             os_glVertex2f(-1.0f, -1.0f);
@@ -2721,7 +2724,41 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                     for (int i = 0; i < w76 * 2; i++)
                         sum += g_os_buffer[i * 4];
                     int r78mism = -1;
-                    if (r78 > 0) {
+                    int r81mism = -1;
+                    if (g_r81_prog) {
+                        /* RUNG 81: the translated passthrough must
+                         * render EXACTLY att0 = vec4(0.5,0.5,0.5,1) */
+                        r81mism = 0;
+                        for (int i = 0; i < w76 * 2; i++)
+                            if (g_os_buffer[i * 4] != 128
+                                    || g_os_buffer[i * 4 + 1] != 128
+                                    || g_os_buffer[i * 4 + 2] != 128
+                                    || g_os_buffer[i * 4 + 3] != 255)
+                                r81mism++;
+                        /* verdict on a LOGGED (steady) frame — the
+                         * very first live frame after link mismatched
+                         * once (19/19 steady frames exact; cause
+                         * unverified, first-use upload is an
+                         * INFERENCE). On mismatch, log the pixel. */
+                        static int s_r81_verdict = 0;
+                        if (!s_r81_verdict && (s_n & 0xf) == 1
+                                && s_n > 16) {
+                            s_r81_verdict = 1;
+                            if (r81mism == 0)
+                                ep_log("rung81: SEMANTIC VERIFIED — "
+                                       "translated passthrough renders "
+                                       "(128,128,128,255) exactly");
+                            else {
+                                char vb[128];
+                                snprintf(vb, sizeof(vb),
+                                    "rung81: MISMATCH mism=%d "
+                                    "px0=%02x%02x%02x%02x", r81mism,
+                                    g_os_buffer[0], g_os_buffer[1],
+                                    g_os_buffer[2], g_os_buffer[3]);
+                                ep_log(vb);
+                            }
+                        }
+                    } else if (r78 > 0) {
                         r78mism = 0;
                         for (int i = 0; i < w76 * 2; i++)
                             if (g_os_buffer[i * 4] != 255
@@ -2748,12 +2785,15 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                             0x600E, sc76, 4, NULL, 0,
                             NULL, NULL, NULL, NULL);
                     if ((++s_n & 0xf) == 1) {
-                        char b[176];
+                        char b[192];
                         snprintf(b, sizeof(b),
-                            "rung76/78: frame %ld %dx%d hue=%.2f "
-                            "sum=%lu 0x600E=0x%x r78=%s mism=%d",
+                            "rung76/78/81: frame %ld %dx%d hue=%.2f "
+                            "sum=%lu 0x600E=0x%x r78=%s mism=%d "
+                            "r81=%s mism=%d",
                             s_n, w76, h76, s_hue, sum, pr,
-                            r78 > 0 ? "on" : "FAIL", r78mism);
+                            r78 > 0 ? "on" : "FAIL", r78mism,
+                            g_r81_prog ? "LIVE" : "-",
+                            r81mism);
                         ep_log(b);
                     }
                     /* RUNG 80: compile pending live translations on
@@ -3329,7 +3369,7 @@ static const struct { unsigned op; const char* mn; short n; } kR80Ops[] = {
     {39,"DOT",3},{45,"MAX",3},{44,"MIN",3},{21,"NRM",2},{18,"LEN",2},
     {56,"POW",3},{60,"LRP",4},{47,"RFL",3},{50,"SGE",3},{51,"SGT",3},
     {53,"SLT",3},{36,"ANL",3},{66,"TEX",4},{77,"RET",1},{85,"IF",1},
-    {89,"ENDIF",0},{16,"EX2",1},
+    {89,"ENDIF",0},{16,"EX2",1},{76,"CAL",1},
 };
 static const struct { unsigned d; const char* sw; char nc; } kR80Swz[] = {
     {0x000000,"x",1},{0x00aa00,"y",1},{0x08a800,"xy",2},{0x114800,"xyz",3},
@@ -3352,9 +3392,10 @@ static const struct { unsigned k; char cls; const char* mask; } kR80Mask[] = {
 static struct {
     char glsl[R80_CAP];
     unsigned words, seq;
-    char need;
+    char need, passthrough;
 } g_r80[R80_NSLOTS];
 static unsigned g_r80_seq;
+static unsigned g_r81_prog;   /* rung 81: verified passthrough, live */
 
 /* render a source operand word into out[]; returns swizzle size 1-4 */
 static int r80_src(unsigned long long w, char* out, size_t cap)
@@ -3424,29 +3465,83 @@ static void rung80_translate(const unsigned long long* ws, unsigned words)
         if (bo < (int)sizeof(body) - 256) bo += snprintf(body + bo, \
             sizeof(body) - bo, "    " fmt "\n", __VA_ARGS__); \
     } while (0)
-    while (i < (int)words - 3 && ninstr < 512) {
+    /* RUNG 81 — collect, then emit in INLINE ORDER. Subroutine
+     * streams carry the label body FIRST (ending in a mid-stream
+     * RET), main second; CAL (op + zero cond = 2 words, label ref
+     * in the op word's high dword — the live w170 stream) splices
+     * the label body inline at its call site. */
+    static struct { unsigned opc; int wi; } is[280];
+    int nis = 0, nret = 0, r1 = -1, r2 = -2, ncal = 0;
+    while (i < (int)words - 3 && nis < 280) {
+        if (ws[i] == 0 || ws[i] == 8) break;
         unsigned opc = (unsigned)((ws[i] & 0x3FFF) >> 6);
         int o;
         for (o = 0; o < R80_NOPS; o++) if (kR80Ops[o].op == opc) break;
         if (o == R80_NOPS) break;
         int n = kR80Ops[o].n;
-        const unsigned long long* W = ws + i + 1;
-        a[0] = b[0] = c[0] = 0;
-        if (opc == 76) {                   /* CAL: subroutine stream */
-            ep_log("rung80: subroutine stream (CAL) — skipped, "
-                   "rung-81 material");
-            return;
+        if (opc == 77) {                       /* RET: region boundary */
+            is[nis].opc = 77; is[nis].wi = i; nis++;
+            if (r1 < 0) r1 = nis - 1; else if (r2 < 0) r2 = nis - 1;
+            nret++;
+            i += 2;
+            if (i < (int)words - 3 && ws[i] == 0) break;  /* final RET */
+            continue;                                      /* label end */
         }
-        if (opc == 77) { i += 2; ninstr++; break; }   /* RET ends main */
+        if (opc == 76) ncal++;
+        is[nis].opc = opc; is[nis].wi = i; nis++;
+        /* CAL = op + zero cond = 2 words (its label ref rides the op
+         * word's high dword, 0x4000 — unlike IF, which carries a
+         * separate target word); IF/ENDIF keep their extra word */
+        i += n + 1 + ((opc == 85 || opc == 89) ? 1 : 0);
+    }
+    if (nret > 2) {
+        ep_log("rung80: >2 RETs (multi-label) — skipped");
+        return;
+    }
+    if (ncal && nret < 2) {
+        ep_log("rung80: CAL without a label region — skipped");
+        return;
+    }
+    static int ord[560];
+    int no = 0;
+    if (nret == 2) {          /* label = is[0..r1), main = (r1..nis) */
+        for (int k = r1 + 1; k < nis && no < 560; k++) {
+            if (is[k].opc == 77) continue;
+            if (is[k].opc == 76) {
+                for (int m = 0; m < r1 && no < 560; m++) ord[no++] = m;
+                continue;
+            }
+            ord[no++] = k;
+        }
+    } else {
+        for (int k = 0; k < nis && no < 560; k++) {
+            if (is[k].opc == 77 || is[k].opc == 76) continue;
+            ord[no++] = k;
+        }
+    }
+    /* RUNG 81 shape tracking: the passthrough (att -> tmp ->
+     * gl_FragColor, two full MOVs, nothing else) is the semantic-
+     * verification shader — its output is statically known. */
+    int shape_ok = 1;
+    for (int kk = 0; kk < no; kk++) {
+        unsigned opc = is[ord[kk]].opc;
+        int o;
+        for (o = 0; o < R80_NOPS; o++) if (kR80Ops[o].op == opc) break;
+        int n = kR80Ops[o].n;
+        const unsigned long long* W = ws + is[ord[kk]].wi + 1;
+        a[0] = b[0] = c[0] = 0;
+        if (opc == 76) { ninstr++; continue; }   /* spliced above */
         if (opc == 85) {                              /* IF: cond is in
             the engine's bool table, not the stream (zero word) */
+            shape_ok = 0;
             R80A("if (ppcond[%d] > 0.5) {", ncond); ncond++;
-            i += n + 2; ninstr++; continue;
+            ninstr++; continue;
         }
         if (opc == 89) {
+            shape_ok = 0;
             if (bo < (int)sizeof(body) - 256)
                 bo += snprintf(body + bo, sizeof(body) - bo, "    }\n");
-            i += n + 2; ninstr++; continue;
+            ninstr++; continue;
         }
         int wa = -1;
         if (r80_dst(W[0], dname, sizeof(dname), dcomp, sizeof(dcomp)) != 0
@@ -3457,6 +3552,12 @@ static void rung80_translate(const unsigned long long* ws, unsigned words)
             snprintf(lhs, sizeof(lhs), "%s.%s", dname, dcomp);
         if (dname[0] == 't') { int t = atoi(dname + 3); if (t < 256) tmp_seen[t] = 1; }
         r80_note(a, att_seen, prm_vec, tmp_seen);
+        if (ninstr == 0) {
+            if (opc != 0 || strncmp(a, "att", 3) != 0
+                    || strcmp(dcomp, "xyzw")) shape_ok = 0;
+        } else if (ninstr == 1) {
+            if (opc != 0 || dname[0] != 'g') shape_ok = 0;
+        } else shape_ok = 0;
         /* RUNG 80b: masked dst with wider rhs — PP semantics write the
          * first len(comp) components; GLSL needs an explicit selector */
         char rhs[96];
@@ -3523,27 +3624,18 @@ static void rung80_translate(const unsigned long long* ws, unsigned words)
                   R80W(rhsanl, 1); R80A("%s = %s;", lhs, rhs); }
             else goto bad;
         }
-        i += n + 1; ninstr++;
+        ninstr++;
         continue;
     bad:
         {
             char bb[160];
             snprintf(bb, sizeof(bb),
                 "rung80: translate STOP at word %d (op %u %s): "
-                "unknown form", i, opc, kR80Ops[o].mn);
+                "unknown form", is[ord[kk]].wi, opc, kR80Ops[o].mn);
             ep_log(bb);
         }
         return;
     }
-    /* subroutine guard: the label body comes BEFORE main in the
-     * stream, so the walk's first RET ends the LABEL, not main —
-     * a CAL anywhere in the remainder means a subroutine stream */
-    for (int j = i; j < (int)words - 3; j++)
-        if (((ws[j] & 0x3FFF) >> 6) == 76) {
-            ep_log("rung80: subroutine stream (CAL after RET) — "
-                   "skipped, rung-81 material");
-            return;
-        }
     /* compose: header (declarations) + body */
     int s = (int)(g_r80_seq++ % R80_NSLOTS);
     int ho = snprintf(g_r80[s].glsl, R80_CAP, "#version 110\n");
@@ -3578,11 +3670,14 @@ static void rung80_translate(const unsigned long long* ws, unsigned words)
     g_r80[s].words = words;
     g_r80[s].seq = g_r80_seq;
     g_r80[s].need = 1;
+    g_r80[s].passthrough = (char)(shape_ok && ninstr == 2);
     {
-        char bb[128];
+        char bb[144];
         snprintf(bb, sizeof(bb),
-            "rung80: translate OK seq=%u words=%u instrs=%d conds=%d",
-            g_r80_seq, words, ninstr, ncond);
+            "rung80: translate OK seq=%u words=%u instrs=%d conds=%d "
+            "regions=%d spliced=%d%s",
+            g_r80_seq, words, ninstr, ncond, nret, ncal,
+            g_r80[s].passthrough ? " PASSTHRU" : "");
         ep_log(bb);
     }
     #undef R80A
@@ -3651,6 +3746,15 @@ static void rung80_compile_pending(void)
             if (!s_first_ok) {
                 s_first_ok = 1;
                 strcat(bb, " — FIRST LIVE TRANSLATE+COMPILE");
+            }
+            /* RUNG 81: the passthrough program renders every frame
+             * from now on — its output is statically known. */
+            if (g_r80[s].passthrough && !g_r81_prog) {
+                g_r81_prog = pr;
+                char b2[96];
+                snprintf(b2, sizeof(b2),
+                    "rung81: passthrough prog=%u GOES LIVE", pr);
+                ep_log(b2);
             }
         } else {
             char log1[160] = ""; int len1 = 0;

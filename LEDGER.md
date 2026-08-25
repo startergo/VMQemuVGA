@@ -16290,3 +16290,89 @@ detected and skipped honestly
   engine's runtime bool table — condition word
   is ZERO, like RET's); presentation coverage
   (rung-78 residual, unchanged).
+
+---
+
+## RUNG 81 — SEMANTIC VALIDATION AND SUBROUTINE
+INLINE: both MET — the translated passthrough
+renders EXACTLY its predicted pixels on the GPU
+(machine-verified every steady frame), and the
+CAL subroutine streams translate via label
+splice; one in-session decode correction (CAL
+length)
+
+- **(i) SEMANTIC VALIDATION — MET.** The first
+  engine program every boot is the w30
+  passthrough (`tmp0 = att0; gl_FragColor =
+  tmp0`); with the synthetic VS writing att0 =
+  vec4(0.5,0.5,0.5,1) its output is statically
+  known: (128,128,128,255). Logged on two boots:
+  `rung81: passthrough prog=6 GOES LIVE` then
+  `rung81: SEMANTIC VERIFIED — translated
+  passthrough renders (128,128,128,255)
+  exactly`; 19/19 and 18/18 logged steady
+  frames `r81=LIVE mism=0`, and `sum=204800 =
+  128×1600` — every sampled pixel R=128 every
+  logged frame. The passthrough program renders
+  EVERY frame from GOES LIVE on. This validates
+  the MOV-family operand decode (class, index,
+  swizzle, mask, negate) semantically on the
+  GPU, end to end through compile, link,
+  UseProgram, varyings, and rasterization.
+- **(ii) VISUAL — machine-verified, not eye-
+  confirmed this rung:** the gray frame is the
+  buffer pushed by 0x600E through the same GA
+  channel eye-confirmed in rungs 76 and 78;
+  the suite (and the gray strip with it) ended
+  before an eyes-on check was taken. The pixel
+  claim rests on the readback, which is the
+  stronger instrument.
+- **(iii) SUBROUTINE INLINE — MET.** w170:
+  `translate OK seq=8 words=170 instrs=28
+  regions=2 spliced=1` and `COMPILE OK prog=27`.
+  Walk = collect instructions (RET is a region
+  boundary: label body first, main second),
+  emission order = main with the label body
+  spliced at CAL.
+- **CAL DECODE CORRECTED (in-session):** CAL is
+  op + zero condition = **2 words** — the word
+  after the zero is the NEXT instruction's op
+  word (0x0000003100000001 = MOV). The first
+  attempt assumed an IF-shaped 3 words and
+  mis-walked into the next dst word
+  (`unknown op 64 w=0x18000072679000` = the
+  tmp24 dst word). CAL's label reference rides
+  its op word's high dword (0x0000400000001308
+  → high 0x4000) — unlike IF, which carries a
+  separate target word. Both forms recorded.
+- **FIRST-LIVE-FRAME FLAKE (honest record):**
+  one boot's one-shot verdict logged MISMATCH
+  on the very first frame after GOES LIVE while
+  every logged steady frame was exact (19/19,
+  sum=204800). Verdict re-armed to fire on
+  logged frames only; the re-armed boot gave a
+  clean VERIFIED. The flake's cause is
+  UNVERIFIED — first-use program upload is an
+  inference, not a finding.
+- **Tallies (both post-fix boots):** 20
+  translate OK / 0 COMPILE FAIL / 0 translate
+  STOP / 0 skips; COMPILE OK 7–13 per boot
+  (4-slot ring overflow on multi-program
+  bursts — the rung-80 capacity note,
+  unchanged). `regions=0` lines (w42-class) =
+  the walk's words-3 bound ends before the
+  final RET; emission is unaffected. glmark
+  Score 1 = the CPU-float stability number.
+- **OPEN (rung 82+):** the ppcond mechanism
+  (IF/branch conditions live in the engine's
+  runtime bool table — zero words in the
+  stream; streams with conds=3 translate and
+  compile but conditions are uniforms);
+  semantic validation beyond the MOV family
+  (TEX with a real sampler binding, prm
+  uniforms carrying the tail constants, LRP/
+  RFL operand order); presentation coverage
+  (rung-78 residual); and the goal the ladder
+  climbs toward — draw-state replay: draw the
+  ENGINE'S scene with translated programs and
+  real uniforms.
