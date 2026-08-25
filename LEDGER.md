@@ -15848,3 +15848,36 @@ model
   advance-1 + trailer).
 - Gate: 2/22, unmet; next action is the two
   solver fixes, not more handler reads.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 7) — BOTH
+SOLVER FIXES IMPLEMENTED AND RERUN: STILL
+2/22; the open question is now pinned to
+ONE WORD
+
+- The fixes ran (anti-spoof anchor: all-zero
+  words cannot anchor; slack acceptance:
+  end ≥ total-4). Result UNCHANGED: 2/22,
+  all 0x8B30 files fail with NO complete
+  walk from any H.
+- **THE PINCED DATUM (w30, s2): the text is
+  CONFIRMED 2×MOV + RET** (verified against
+  s2's own block, not s20's) **yet only ONE
+  opcode-0 word exists before RET@26**
+  (word 23, w0=0x0009; words 24-25 decode
+  0xb000/0xc840 — opcodes 0x2c0/0x320).
+  The second MOV's op word is not where any
+  length model puts it. Either one MOV's
+  opcode field is encoded differently in
+  fragment streams, or an instruction can
+  omit its op word (implicit/previous op —
+  a run-length idiom).
+- **NEXT (one dump):** lay words 17-27 of
+  s2 beside the 3-line text and identify the
+  second MOV's op word by elimination; that
+  single word resolves the instruction
+  encoding and with it the walk.
+- Gate 2/22 unmet; all model/handler/solver
+  legs now verified — this word is the last
+  unknown.
