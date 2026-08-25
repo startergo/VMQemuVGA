@@ -17558,3 +17558,80 @@ gleVPEnable, KERN_PROTECTION_FAILURE at
   the capture, upload, and pixel
   validation should close the texture
   leg in a single clean boot.
+
+---
+
+## RUNG 88 CORRECTION — THE CRASH UNIFIED:
+texture level storage is never allocated in
+GLRendererFloat — BOTH crash signatures
+(gldClearDrawBuffer and gleVPEnable) are
+the same defect through two write paths;
+the destroy-path poisoning attribution is
+REFUTED for these occurrences
+
+- **THE REFUTATION (evidence):** this
+  gleVPEnable SIGBUS occurred under the
+  reuse-context binary — one context,
+  never destroyed. The "context-cycling
+  poisoning" hypothesis (instrumentation.md
+  closed class) cannot explain a crash with
+  zero destroys. The destroy-path aborts
+  were a separate real issue; these
+  gleVPEnable crashes are a THIRD,
+  INDEPENDENT float bug.
+- **THE SEQUENCE (what the run proves):**
+  1. build ×2 completes — each binds a
+     program successfully in this same
+     context (glUseProgram worked twice →
+     gleVPEnable is healthy).
+  2. texture runs the FIRST glTexImage2D of
+     the run with REAL pixel data (texture.
+     cpp:91, PNG upload — unlike desktop's
+     NULL-data re-spec).
+  3. The very NEXT glUseProgram →
+     gleUpdateCurrentProgramState writes
+     into damaged heap → SIGBUS at
+     0x1005b8540 (different page from the
+     earlier 0x1004a5a40 — layout-dependent
+     victim, same disease).
+- **THE UNIFIED MODEL:** texture level
+  storage is never actually allocated.
+  Both write paths into a level go through
+  a bogus pointer:
+  - CLEAR PATH: gldClearDrawBuffer →
+    __bzero → dies immediately (the desktop
+    crash, 02:39 today)
+  - PIXEL-UPLOAD PATH: glTexImage2D with
+    data → memcpy into unbacked storage →
+    SILENT heap corruption that surfaces at
+    the next engine state write
+    (gleVPEnable at program bind — this
+    crash class)
+- **MINIMAL REPRO PAIR:**
+  ```
+  # upload-then-bind (this crash):
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+    w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glUseProgram(p);
+
+  # clear-into-FBO (the desktop crash):
+  # NULL-data upload + attach + glClear
+  ```
+  In glmark2 terms: `-b build:duration=2 -b
+  texture:duration=2` (fast discriminator:
+  build binds fine, texture dies) and `-b
+  desktop:duration=2` (the clear variant).
+- **FIX DIRECTION (unchanged from rung 82b
+  but now covering both signatures):** give
+  texture levels real backing at allocation
+  in GLRendererFloat — the same treatment
+  gldCreateBuffer's header-wrap gives
+  buffers. One fix should clear BOTH crash
+  signatures. Once texture levels are real,
+  shadow/refract become the next
+  unexercised paths to watch.
+- **Also:** the post-reboot "Invalid EGL
+  state" was the boot-cache staleness (the
+  documented procedure: clear caches +
+  rebuild, or run cacheless); the caches
+  were cleared mid-session.
