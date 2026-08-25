@@ -19,7 +19,9 @@ typedef unsigned char GLboolean; typedef float GLfloat;
 int main(int argc, char** argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: %s FILE.glsl [--draw]\n", argv[0]); return 2; }
-    int draw = argc > 2 && strcmp(argv[2], "--draw") == 0;
+    int draw = 0;
+    { int ai; for (ai = 1; ai < argc; ai++)
+        if (strcmp(argv[ai], "--draw") == 0) draw = 1; }
 
     void* lib = dlopen("/Users/sl/osmesa/libOSMesa.8.dylib", RTLD_LAZY | RTLD_LOCAL);
     if (!lib) { printf("PPCOMPILE dlopen FAIL: %s\n", dlerror()); return 1; }
@@ -111,6 +113,38 @@ int main(int argc, char** argv)
     GLuint p = glCreateProgram();
     glAttachShader(p, vs); glAttachShader(p, fs);
     glLinkProgram(p);
+    /* RUNG 84: optional uniform file (argv[2], "NAME x y z w" lines) */
+    { char* ufile = NULL; int ai;
+      for (ai = 2; ai < argc; ai++)
+        if (strcmp(argv[ai], "--draw") != 0) ufile = argv[ai];
+      if (ufile) {
+        /* glUniform* acts on the CURRENTLY BOUND program — bind first
+         * (the rung-84 black-frame lesson: writes before UseProgram
+         * are INVALID_OPERATION no-ops) */
+        glUseProgram(p);
+        FILE* uf = fopen(ufile, "r");
+        if (uf) {
+            int (*glGetUniformLocation2)(GLuint, const char*) =
+                (int (*)(GLuint, const char*))getproc("glGetUniformLocation");
+            void (*glUniform4fv2)(int, int, const float*) =
+                (void (*)(int, int, const float*))getproc("glUniform4fv");
+            char line[128];
+            int nb = 0;
+            while (fgets(line, sizeof(line), uf)) {
+                char nm[48];
+                float v[4];
+                if (sscanf(line, "%47s %f %f %f %f",
+                           nm, &v[0], &v[1], &v[2], &v[3]) == 5
+                        && glGetUniformLocation2 && glUniform4fv2) {
+                    int loc = glGetUniformLocation2(p, nm);
+                    if (loc >= 0) { glUniform4fv2(loc, 1, v); nb++; }
+                }
+            }
+            fclose(uf);
+            printf("PPCOMPILE uniforms set=%d from %s\n", nb, ufile);
+        }
+      }
+    }
     GLint cl = 0;
     glGetProgramiv(p, 0x8B82, &cl);
     printf("PPCOMPILE link=%d prog=%u\n", cl, p);

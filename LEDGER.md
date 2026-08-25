@@ -16805,3 +16805,72 @@ family SHIFTS to the known class
   eventual fix is REPLACING the float — the
   translator ladder). Draw-state replay
   remains the ladder's destination.
+
+---
+
+## RUNG 84 — REAL-DATA BINDING: all three
+predictions MET — prm constants from the
+stream tail, UV-sensitive TEX validation,
+and the spec-corrected LRP validated
+byte-exact (180,218,240,240); plus a
+standalone reproducer for the intermittent
+black-render
+
+- **THE CORRECTION FIRST (spec-verified):** ARB
+  LRP dst,a,b,c = a*b + (1-a)*c — the FIRST
+  operand is the BLEND FACTOR (Khronos
+  ARB_fragment_program; SGI ch.13; UAF
+  A*B+(1-A)*C). The emitter had mix(a,b,c)
+  — equal only when b==(1,1,1,1) (w80's
+  case, by coincidence). FIXED to mix(c,b,a).
+  The b≠1 distinction (s8-class) remains
+  untested in vivo — w80 cannot split the
+  orders.
+- **(i) PASSTHROUGH under varied varyings
+  (0.25,0.75,0.5,1):** predicted (64,191,128,
+  255) — MET (sum=102400=64×1600, mism=0;
+  the verdict line's text is stale, the
+  check used the new values).
+- **(ii) TEX+MUL with a 2x2 NEAREST texture
+  (four unique texels) at UV (0.25,0.75):**
+  predicted texel(0,1)×att = (0,96,0,255) —
+  first attempt FAILED mism=1600 (G/B/A),
+  sum=0: the default min filter
+  NEAREST_MIPMAP_LINEAR makes a level-less
+  2x2 INCOMPLETE → black (the 1x1 of rung 82
+  escaped this — a single level cannot be
+  incomplete). Explicit NEAREST filters
+  fixed it: mism=0, sum=0. **UV-sensitive
+  validation closed** (a wrong coordinate
+  swizzle now picks the wrong texel).
+- **(iii) w80 (peel: MUL/MIN/EX2/LRP) with
+  its real constants prm0=(-2,0,0,0) prm1=
+  (0,0.5,0.8,0.8) prm2=(1,1,1,1):** w80 never
+  appeared in-suite this boot (scene-order
+  variance), so validated STANDALONE via the
+  ppcompile harness (now with uniform-file
+  support): predicted exp2(-0.5)=0.707107 →
+  mix(prm1,prm2,t) = (180,218,240,240) —
+  **MET BYTE-EXACT** (draw first=b4daf0f0).
+  The in-stub shape-3 path remains armed for
+  the next in-suite appearance.
+- **TWO HARNESS LESSONS (both mine, both
+  caught by differentials):** glUniform4fv
+  before glUseProgram is an INVALID_OPERATION
+  no-op (uniforms silently 0 → the black
+  frames); and ppcompile's argv parsing broke
+  when the uniform file shifted --draw to
+  argv[3].
+- **NEW OPEN — the intermittent black-render
+  now has a MINIMAL REPRODUCER:** the SAME
+  w80 invocation alternates first=b4daf0f0 /
+  first=00000000 (2-of-3 correct here). Same
+  family as rung-81's first-frame MISMATCH
+  and today's transient zeros. Standalone,
+  outside glmark, three lines to loop —
+  pre-registered as its own investigation
+  (kext/virgl-side suspicion: a day of
+  deliberately-leaked contexts). prm bind
+  logging this rung: n=7/7, 9/9 complete
+  binds; heuristic offsets 0 and 1 both
+  exercised.
