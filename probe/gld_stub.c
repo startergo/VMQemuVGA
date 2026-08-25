@@ -538,6 +538,7 @@ static void (*os_glBindTexture)(unsigned, unsigned);
 static void (*os_glTexImage2D)(unsigned, int, int, int, int, int,
                                unsigned, unsigned, const void*);
 static void (*os_glTexParameteri)(unsigned, unsigned, int);
+static int (*os_glUniform1f)(int, float);   /* rung 85 */
 static int g_r78_prog;   /* >0 linked program, -1 failed, 0 not tried */
 
 static void osmesa_create_at_load(void)
@@ -648,6 +649,7 @@ static int osmesa_link_init(int w, int h)
     os_glBindTexture = (void (*)(unsigned, unsigned))getproc("glBindTexture");
     os_glTexImage2D = (void (*)(unsigned, int, int, int, int, int, unsigned, unsigned, const void*))getproc("glTexImage2D");
     os_glTexParameteri = (void (*)(unsigned, unsigned, int))getproc("glTexParameteri");
+    os_glUniform1f = (int (*)(int, float))getproc("glUniform1f");
     ep_log("rung59: OSMesa LINKED (dlopen route, ctx + buffer live)");
     /* RUNG 75: the driver verdict — virgl or software fallback */
     if (os_glGetString) {
@@ -2576,8 +2578,16 @@ static long gld_swap_wrapper_b(void* d, void* a1, void* a2, void* a3,
 static void census_report(long swapno);   /* fwd */
 static void export_census_report(long swapno);   /* fwd: after EPRs */
 static void rung80_compile_pending(void);        /* fwd: rung-80 section */
+static const char* vsrc_r85(void)
+{
+    return "void main() { gl_Position = gl_Vertex; }";
+}
+static float g_r85_u;             /* rung 85: tracked engine value */
+static int   g_r85_u_valid;
+static unsigned g_r85_prog;       /* rung 85: validation program */
 static void r83_probe(const char* tag, void* a0, void* a1, void* a2,
                       void* a3);                    /* fwd: rung-83 */
+static void r85_poll(void* dctx);                   /* fwd: rung-85 */
 static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
                                * section holds the real definition) */
 static int g_r82_exp[4];       /* fwd: rung-82 expected live pixel */
@@ -2600,6 +2610,7 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
     /* RUNG 83: the service entries fire only pre-draw; the FBO state
      * lives in the ctx (rung 66e generalized) — observe it per SWAP. */
     r83_probe(site == 0 ? "swap" : "present", dctx, a1, a2, a3);
+    r85_poll(dctx);
     /* RUNG 76 — THE STUB-DRIVEN GA BINDING. Diagnosis: the GA path
      * was never automatic — SetSurface(0x800) is an APP-SIDE call
      * nothing makes (the milestone-2 boot had it because the probe
@@ -2727,9 +2738,52 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                      * compiled shader — the rung-81 passthrough when
                      * live (predicted (128,128,128,255)), else the
                      * rung-78 fixed (1,0,1,1). */
+                    /* RUNG 85: the engine's live uniform word
+                     * (block A word 10, jellyfish-localized) rendered
+                     * AS the frame — pixel must equal quantize(u). */
+                    if (g_r85_u_valid && os_glUniform1f
+                            && os_glCreateShader && os_glUseProgram) {
+                        static int s_built = 0;
+                        if (!s_built) {
+                            s_built = 1;
+                            static const char* fs85 =
+                                "uniform float u_engine;\n"
+                                "void main() { gl_FragColor = "
+                                "vec4(u_engine, u_engine, u_engine, "
+                                "1.0); }\n";
+                            const char* v85 = vsrc_r85();
+                            unsigned vs = os_glCreateShader(0x8B31);
+                            unsigned fs = os_glCreateShader(0x8B30);
+                            const char* fs85p = fs85;
+                            os_glShaderSource(vs, 1, &v85, NULL);
+                            os_glCompileShader(vs);
+                            os_glShaderSource(fs, 1, &fs85p, NULL);
+                            os_glCompileShader(fs);
+                            unsigned p = os_glCreateProgram();
+                            os_glAttachShader(p, vs);
+                            os_glAttachShader(p, fs);
+                            os_glLinkProgram(p);
+                            int cl = 0;
+                            os_glGetProgramiv(p, 0x8B82, &cl);
+                            g_r85_prog = cl ? p : 0;
+                            char b2[96];
+                            snprintf(b2, sizeof(b2),
+                                "rung85: validation prog=%u link=%d",
+                                p, cl);
+                            ep_log(b2);
+                        }
+                    }
                     int drawprog = g_r81_prog ? (int)g_r81_prog : r78;
+                    if (g_r85_prog) drawprog = (int)g_r85_prog;
                     if (drawprog > 0 && os_glUseProgram) {
                         os_glUseProgram((unsigned)drawprog);
+                        if (drawprog == (int)g_r85_prog
+                                && os_glGetUniformLocation) {
+                            int loc = os_glGetUniformLocation(
+                                g_r85_prog, "u_engine");
+                            if (loc >= 0 && os_glUniform1f)
+                                os_glUniform1f(loc, g_r85_u);
+                        }
                         if (os_glBegin && os_glEnd && os_glVertex2f) {
                             os_glBegin(0x0005 /*GL_TRIANGLE_STRIP*/);
                             os_glVertex2f(-1.0f, -1.0f);
@@ -2750,7 +2804,42 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                         sum += g_os_buffer[i * 4];
                     int r78mism = -1;
                     int r81mism = -1;
-                    if (g_r81_prog) {
+                    int r85mism = -1;
+                    if (g_r85_prog && g_r85_u_valid) {
+                        float uc = g_r85_u < 0 ? 0 :
+                                   g_r85_u > 1 ? 1 : g_r85_u;
+                        int ev = (int)(uc * 255.0f + 0.5f);
+                        r85mism = 0;
+                        for (int i = 0; i < w76 * 2; i++) {
+                            int d0 = g_os_buffer[i * 4] - ev;
+                            int d1 = g_os_buffer[i * 4 + 1] - ev;
+                            int d2 = g_os_buffer[i * 4 + 2] - ev;
+                            if (d0 < 0) d0 = -d0; if (d1 < 0) d1 = -d1;
+                            if (d2 < 0) d2 = -d2;
+                            if (d0 > 1 || d1 > 1 || d2 > 1
+                                    || g_os_buffer[i * 4 + 3] != 255)
+                                r85mism++;
+                        }
+                        /* periodic per-sample verdict: u varies with
+                         * the jellyfish sine — sample across its range */
+                        if ((s_n & 0x7) == 1 && s_n > 16
+                                && g_r85_u >= 0.0f) {
+                            char vb[160];
+                            if (r85mism == 0)
+                                snprintf(vb, sizeof(vb),
+                                    "rung85[%ld]: MATCH u=%.4g -> %d",
+                                    s_n, g_r85_u, ev);
+                            else
+                                snprintf(vb, sizeof(vb),
+                                    "rung85[%ld]: MISMATCH mism=%d "
+                                    "u=%.4g expected=%d "
+                                    "px0=%02x%02x%02x%02x",
+                                    s_n, r85mism, g_r85_u, ev,
+                                    g_os_buffer[0], g_os_buffer[1],
+                                    g_os_buffer[2], g_os_buffer[3]);
+                            ep_log(vb);
+                        }
+                    } else if (g_r81_prog) {
                         /* RUNG 81: the translated passthrough must
                          * render EXACTLY att0 = vec4(0.5,0.5,0.5,1) */
                         r81mism = 0;
@@ -3325,6 +3414,50 @@ static float g_r80_slot_tmp[16][4];
 static int   g_r80_nprm_tmp;
 static int g_r83_gate = -1;
 static long g_r83_logged;
+/* RUNG 85 — the operation-stack blocks (rung 74: ctx+0xe00/+0xf50 hold
+ * the per-draw live uniform values; DIRECT fixed-offset reads only,
+ * per the rung-74 crash rules). Animation finder: static copies, log
+ * CHANGED words per swap; the jellyfish uCurrentTime signature (rung
+ * 71b: animates every frame) should surface as one continuously
+ * changing float. Gate VMGLD_R85. */
+#define R85_WORDS 0x30
+static void r85_poll(void* dctx)
+{
+    static int s_gate = -1;
+    static unsigned long long s_a[R85_WORDS], s_b[R85_WORDS];
+    static int s_have = 0;
+    static long s_n = 0;
+    if (s_gate < 0) s_gate = getenv("VMGLD_R85") ? 1 : 0;
+    if (!s_gate || !dctx) return;
+    if ((uintptr_t)dctx < 0x1000) return;
+    unsigned long long* A = (unsigned long long*)((char*)dctx + 0xe00);
+    unsigned long long* B = (unsigned long long*)((char*)dctx + 0xf50);
+    int nchg = 0;
+    char buf[480]; int o = 0;
+    o += snprintf(buf + o, sizeof(buf) - o, "rung85[%ld]:", s_n);
+    for (int i = 0; i < R85_WORDS; i++) {
+        unsigned long long a = A[i], b = B[i];
+        int ca = s_have && a != s_a[i];
+        int cb = s_have && b != s_b[i];
+        s_a[i] = a; s_b[i] = b;
+        if (i == 10) {                  /* the jellyfish-animated slot */
+            memcpy(&g_r85_u, &a, 4);
+            g_r85_u_valid = 1;
+        }
+        if ((ca || cb) && o < (int)sizeof(buf) - 60) {
+            float fa, fb;
+            memcpy(&fa, &a, 4); memcpy(&fb, &b, 4);
+            o += snprintf(buf + o, sizeof(buf) - o,
+                " %s%d=%llx(%.4g)%s", ca ? "A" : "B", i,
+                ca ? a : b, ca ? fa : fb, "");
+            nchg++;
+        }
+    }
+    s_n++;
+    if (!s_have) { s_have = 1; ep_log("rung85: baseline set"); return; }
+    if (nchg) ep_log(buf);          /* log every swap WITH changes */
+    else if ((s_n & 0x3f) == 0) ep_log("rung85: no-change swap");
+}
 void* g_float_base = 0;   /* RUNG 83: the float's runtime load address,
                            * published for gdb (single-session breakpoint
                            * math; the slide drifts run to run) */

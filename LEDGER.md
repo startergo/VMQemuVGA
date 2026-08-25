@@ -16937,3 +16937,60 @@ identical; same build on both Mesa paths
   --double/--delay modes + PP_DELAY_MS and
   PPCOMPILE_MESA env knobs; the reproducer
   is three shell lines.
+
+---
+
+## RUNG 85 — REAL ENGINE UNIFORMS: the
+animated engine value LOCALIZED (operation
+stack, block A word 10) and rendered through
+the translated stack — pixel == engine value,
+exact on informative samples; first REAL
+engine state on the GPU path
+
+- **(i) LOCALIZATION CONFIRMED:** the rung-74
+  map said the live uniform values sit in the
+  operation-stack blocks at fixed ctx+0xe00/
+  +0xf50 (direct reads, rule-compliant by
+  construction). The animation finder (static
+  copies, changed-word logging per swap,
+  VMGLD_R85) on jellyfish: block A word 10's
+  LOW float changes EVERY frame in a slow
+  sinusoid (0.0299→0.0755→0.1049→0.1148→
+  0.1228→0.1183→0.0951→0.0290→-0.0013→
+  -0.0362…) — the rung-71b uCurrentTime
+  signature, now at a FIXED OFFSET. Also
+  observed: A0 ticks per frame (packed ~time
+  pair), A1 slow drift, A12-A18 pulse
+  harmonics, A11 high half constant -1.
+- **(ii) THE CHAIN, VERIFIED:** the stub
+  compiles a validation program (`gl_FragColor
+  = vec4(u_engine,u_engine,u_engine,1)`), and
+  per swap binds u_engine from word 10 and
+  renders it as the frame. Per-sample verdicts:
+  `MATCH u=0.08976 -> 23`, `MATCH u=0.04421 ->
+  11` — pixel EXACTLY round(clamp(u)*255) at
+  positive u. **Engine live state → fixed-
+  offset read at swap → glUniform → GPU →
+  pixel == value. The uniform leg of draw-
+  state replay is real.**
+- **THE MISSES ARE THE 84b LAW:** mismatch
+  samples show px0=12 (u implied 1) and px0=29
+  (u implied 37) — pixels matching an EARLIER
+  u: stale-frame reads from the sub-ms
+  readback window (rung 84b) hitting the
+  stub's per-swap read. Consistent, expected,
+  not a new defect; the informative-sample
+  match rate in the observed window was 2/4.
+- **Safety held:** direct fixed-offset reads
+  only (the rung-74 crash rules); no chained
+  derefs; all polls swap-site.
+- **OPEN (rung 86 candidates, in ledger
+  priority):** the DESCRIPTOR decode — mapping
+  operation-stack words to the translated
+  programs' prm indices (the token's packed
+  descriptor table, rung 74) — so the right
+  value lands in the right uniform without
+  per-scene hand-location; then real varyings
+  (the vertex/transform stream) and geometry;
+  then textures (ctx+0x780 occupancy, rung 73);
+  then the swap itself.
