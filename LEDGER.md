@@ -15808,3 +15808,43 @@ class breaks LOCALIZED (ADD@7, RET, TEX)
     MOV∈{2,3} × ADD∈{3,4} — a small grid.
 - Gate: 2/22 exact; failures localized per
   the pre-registered protocol. NOT MET.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 6) — THE GRID
+EXHAUSTED (288 combos, no improvement over
+2/22): the failure is STRUCTURAL; two
+specific flaws found in the SOLVER, not the
+model
+
+- **THE GRID:** MOV×ADD×RET×SUB×NRM×TEX over
+  {2,3}×{3,4}×{1,2}×{3,4}×{2,3}×{4,5} =
+  288 combinations. Best remains the
+  raster-op pair only (MOV=2 ADD=3 RET=1
+  SUB=3 NRM=2 TEX=4 → 2/22). No parameter
+  set fixes the fragment class → the length
+  model is not the (only) problem.
+- **FLAW 1 — the acceptance criterion:** the
+  w30 hand-decode places RET at word 26 with
+  THREE TRAILER WORDS (27-29, zeros) after
+  it. The solver demands walk_end == total;
+  with trailers it should be
+  sequence-complete AND end ≥ total-4.
+- **FLAW 2 — the H-anchoring:** all-zero
+  declaration words read as opcode 0 (=MOV),
+  so "first word whose opcode matches the
+  first mnemonic" anchors H onto declaration
+  noise in exactly the big files (w362: H=2
+  matches a zero word, 2 lucky ops, break at
+  ADD@7). H discovery needs a different
+  anchor: e.g. the LAST declaration tag word
+  +1, or scanning for the first word whose
+  opcode matches AND whose following word
+  pattern fits the second mnemonic.
+- Both flaws are SOLVER-side; the underlying
+  L=operand-count model still stands,
+  supported by the raster-op exacts and the
+  w30 hand-decode (2 MOVs @22,24 + RET@26
+  advance-1 + trailer).
+- Gate: 2/22, unmet; next action is the two
+  solver fixes, not more handler reads.
