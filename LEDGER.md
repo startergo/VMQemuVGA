@@ -15917,3 +15917,99 @@ MASK BREAKTHROUGH: opcode = (w0 & 0x3FFF)
   is now 90% solved — mask, annotation word,
   trailer, and MOV/RET walk lengths all
   verified end-to-end.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 9) — THE GATE
+CLOSED: 22/22 sequence-complete; instruction
+lengths are UNIFORM (L = n+1), the tail is the
+inline-PARAM constant block, and the part-8
+"remaining four opcode entries" did not exist
+
+- **THE THREE REAL FIXES** (the solver runs of
+  parts 5-8 were chasing these as one blur):
+  1. **Acceptance, not extras:** every failing
+     file failed the TAIL rule, not the walk.
+     The nonzero tails are the inline PARAM
+     constants: an EVEN-ALIGNED block after the
+     last instruction, 2 words per inline param
+     — `(c2<<32|c1),(c4<<32|c3)` — bit-exact
+     against the declarations (`s7` prm4
+     `{20,20,10,0}` = `0x41a0000041a00000,
+     0x41200000`; `s15` prm18 `{1,0,0,0}` =
+     `0x3f800000`). Files with no inline params
+     end in plain zeros — the part-8 "uniform
+     3-word trailer" was padding on empty files.
+     Params start at word 326/266/96/188/128/186
+     in s15/s11/s7/s8/s9/s10 — all EVEN indices.
+  2. **Plain length = n+1 too:** raster MOV is 3
+     words, not 2. Structural proof: the raster
+     pair's `MOV res0, att0` words are
+     `op, 0x7267b000, 0x19c800` — the SAME
+     operand encodings as the fragment streams'
+     res0 (`0x7267b000`, s13@31, s2@24) and
+     att0 (`0x19c800`, s2@22); tmp0 is
+     `0x19c840` in source position (s13@32) but
+     `0x72679000` in destination position
+     (s2@21) — destination words are a separate
+     encoding class.
+  3. **Branch/END carry one extra word:** s8
+     (the only control-flow file) completes with
+     IF = n+2 (the `# Target:` word; IF@102
+     spans 102-104) and ENDIF = n+2 (the
+     `# Index:` word; ENDIF@108 = 0x1648,
+     opcode 89). Without these the walk desyncs
+     exactly at the first IF block.
+- **THE GATE (repo artifact):** `probe/ppgate.py`
+  loads the opcode table from `pp-opcodes.txt`
+  (never hand-copied), walks all 22 corpus
+  streams (bins now in `probe/ppcorpus-2026-08-24/`)
+  checking EVERY instruction's op word against its
+  mnemonic's table index, and verifies the tail
+  (PARAM block / raster `(0x8,0x0)` epilogue /
+  zeros). Result: **22/22 PASS, single anchor per
+  file, exit 0.**
+- **FALSIFIED THIS SESSION (with evidence):**
+  - "TEX/NRM/SUB/MAD need per-opcode length
+    extras" — false; zero extras anywhere under
+    L=n+1. The hunt of parts 5-8 was solving the
+    wrong problem.
+  - Part 8's "9/22 complete" — not reproducible
+    from its own stated rules: under
+    annotated-n+1/plain-max(n,1) and
+    end==total-3, s13 ends at 34 (=total-2) with
+    MOV@22(3) TEX@25(5) MOV@30(3) RET@33(1).
+    The w36/w42 files counted as passing there
+    cannot pass those rules; that run's code is
+    lost, so its actual model is unknowable.
+  - The first gate.py run (5/22 at extras=0)
+    "passed" the raster pair with the WRONG
+    MOV=2 because end==total-3 never inspected
+    the leftover words (0x19c800, 0x8, 0).
+  - A session-internal misdiagnosis, corrected
+    before it reached any file: "gate.py's
+    hand-typed table is missing 5 entries" was
+    an artifact of a freshly mistyped list in a
+    throwaway trace script. gate.py's 136-entry
+    list matched `pp-opcodes.txt` on every
+    opcode; the 4 apparent missing entries are
+    the PP_TEX_FORMAT_* strings, which are not
+    opcodes. The real defects were the two above.
+- **REMAINING OPEN (format side):** the
+  operand-count encoding n in the op word (the
+  high dword does not carry it: s13's n=2 MOVs
+  and the n=4 TEX share high dword 0x31); a
+  standalone ppdec walk needs n from the stream
+  or a static arity table from the glp 140-way
+  jump table. Swizzle bits, immediates, TEX
+  sampler operand, declaration tables. RET
+  length formally 1-or-2 (zeros absorb it);
+  raster 0x8 epilogue uninterpreted.
+- **NEXT (rung 78, unchanged from the ladder):**
+  compile translated shaders on the embedded
+  Mesa context. Pre-registered: the first GLSL
+  compile through the stub's OSMesa context
+  succeeds for a trivial shader before any PP→
+  GLSL translation is attempted; the PP side now
+  has a complete instruction-length model to
+  build the translator on.

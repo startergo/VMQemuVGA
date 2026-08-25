@@ -5,15 +5,20 @@
  * in-process. Layout from probe/pp-word-format.md + pp-opcodes.txt,
  * decoded from libGLProgrammability (x86_64, md5 a018…5c75).
  *
- * STATUS (honest): the op word (opcode = w0>>6), the operand word
- * (class = (w0>>6)&7 ∈ {att,tmp,prm,res,adr,immediate}, register
- * index = u16@+0x6), and the stream header (type@w0, flags@w1,
- * WORD COUNT@w2 — verified empirically) are decoded. NOT YET: the
- * declaration-table tag semantics (kinds 0x11-0x1e observed), the
- * swizzle bit positions, the immediate encodings, per-opcode
- * instruction lengths. The differential below reports coverage per
- * file; byte-equality with ppcorpus-2026-08-24.txt is the release
- * gate and is NOT yet met — see the rung-77 ledger note.
+ * STATUS (honest): the op word (opcode = (w0 & 0x3FFF)>>6 — bit 14 is
+ * a modifier, not opcode), the operand word (class = (w0>>6)&7 ∈
+ * {att,tmp,prm,res,adr,immediate}, register index = u16@+0x6), and
+ * the stream header (type@w0, flags@w1, WORD COUNT@w2 — verified
+ * empirically) are decoded. INSTRUCTION LENGTHS ARE SOLVED (rung 77
+ * part 9): L = n+1 uniformly, +1 for branch ops (IF target word) and
+ * +1 for END ops (ENDIF index word) — verified 22/22 by
+ * probe/ppgate.py. The walk below does NOT yet use that rule: it
+ * still needs n from the stream (op-word operand-count encoding or a
+ * static arity table — see pp-word-format.md open item 1). NOT YET:
+ * declaration-table tag semantics (kinds 0x11-0x1e observed),
+ * swizzle bit positions, immediate encodings. Byte-equality with
+ * ppcorpus-2026-08-24.txt remains the release gate for a
+ * text-emitting decoder and is NOT yet met.
  *
  * Build: clang probe/ppdec.c -o /tmp/ppdec2
  * Usage: ppdec2 FILE.bin [...]        (one stream per file)
