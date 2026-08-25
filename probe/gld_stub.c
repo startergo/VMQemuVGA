@@ -529,6 +529,14 @@ static void (*os_glAttachShader)(unsigned, unsigned);
 static void (*os_glLinkProgram)(unsigned);
 static void (*os_glGetProgramiv)(unsigned, unsigned, int*);
 static void (*os_glUseProgram)(unsigned);
+/* RUNG 82 — uniforms + texture for sampler/constant binding */
+static int (*os_glGetUniformLocation)(unsigned, const char*);
+static void (*os_glUniform1i)(int, int);
+static void (*os_glUniform4fv)(int, int, const float*);
+static unsigned (*os_glGenTextures)(int, unsigned*);
+static void (*os_glBindTexture)(unsigned, unsigned);
+static void (*os_glTexImage2D)(unsigned, int, int, int, int, int,
+                               unsigned, unsigned, const void*);
 static int g_r78_prog;   /* >0 linked program, -1 failed, 0 not tried */
 
 static void osmesa_create_at_load(void)
@@ -631,6 +639,13 @@ static int osmesa_link_init(int w, int h)
     os_glLinkProgram = (void (*)(unsigned))getproc("glLinkProgram");
     os_glGetProgramiv = (void (*)(unsigned, unsigned, int*))getproc("glGetProgramiv");
     os_glUseProgram = (void (*)(unsigned))getproc("glUseProgram");
+    /* RUNG 82 */
+    os_glGetUniformLocation = (int (*)(unsigned, const char*))getproc("glGetUniformLocation");
+    os_glUniform1i = (void (*)(int, int))getproc("glUniform1i");
+    os_glUniform4fv = (void (*)(int, int, const float*))getproc("glUniform4fv");
+    os_glGenTextures = (unsigned (*)(int, unsigned*))getproc("glGenTextures");
+    os_glBindTexture = (void (*)(unsigned, unsigned))getproc("glBindTexture");
+    os_glTexImage2D = (void (*)(unsigned, int, int, int, int, int, unsigned, unsigned, const void*))getproc("glTexImage2D");
     ep_log("rung59: OSMesa LINKED (dlopen route, ctx + buffer live)");
     /* RUNG 75: the driver verdict — virgl or software fallback */
     if (os_glGetString) {
@@ -2561,6 +2576,7 @@ static void export_census_report(long swapno);   /* fwd: after EPRs */
 static void rung80_compile_pending(void);        /* fwd: rung-80 section */
 static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
                                * section holds the real definition) */
+static int g_r82_exp[4];       /* fwd: rung-82 expected live pixel */
 /* rung 71b NOTE: the per-frame stream re-watch (VMGLD_PPTICK) was
  * REMOVED at rung 72 — its in-process glpPPDisassemble calls are the
  * banned pattern (.claude/rules/instrumentation.md); the liveness
@@ -2730,10 +2746,10 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                          * render EXACTLY att0 = vec4(0.5,0.5,0.5,1) */
                         r81mism = 0;
                         for (int i = 0; i < w76 * 2; i++)
-                            if (g_os_buffer[i * 4] != 128
-                                    || g_os_buffer[i * 4 + 1] != 128
-                                    || g_os_buffer[i * 4 + 2] != 128
-                                    || g_os_buffer[i * 4 + 3] != 255)
+                            if (g_os_buffer[i * 4] != g_r82_exp[0]
+                                    || g_os_buffer[i * 4 + 1] != g_r82_exp[1]
+                                    || g_os_buffer[i * 4 + 2] != g_r82_exp[2]
+                                    || g_os_buffer[i * 4 + 3] != g_r82_exp[3])
                                 r81mism++;
                         /* verdict on a LOGGED (steady) frame — the
                          * very first live frame after link mismatched
@@ -3392,10 +3408,12 @@ static const struct { unsigned k; char cls; const char* mask; } kR80Mask[] = {
 static struct {
     char glsl[R80_CAP];
     unsigned words, seq;
-    char need, passthrough;
+    char need, passthrough, shape2;
 } g_r80[R80_NSLOTS];
 static unsigned g_r80_seq;
 static unsigned g_r81_prog;   /* rung 81: verified passthrough, live */
+static int g_r82_exp[4] = {128, 128, 128, 255};  /* expected live pixel */
+static int g_r82_shape2_live;                    /* TEX+MUL shape live */
 
 /* render a source operand word into out[]; returns swizzle size 1-4 */
 static int r80_src(unsigned long long w, char* out, size_t cap)
@@ -3522,7 +3540,7 @@ static void rung80_translate(const unsigned long long* ws, unsigned words)
     /* RUNG 81 shape tracking: the passthrough (att -> tmp ->
      * gl_FragColor, two full MOVs, nothing else) is the semantic-
      * verification shader — its output is statically known. */
-    int shape_ok = 1;
+    int shape_ok = 1, shape2_ok = 1;
     for (int kk = 0; kk < no; kk++) {
         unsigned opc = is[ord[kk]].opc;
         int o;
@@ -3558,6 +3576,17 @@ static void rung80_translate(const unsigned long long* ws, unsigned words)
         } else if (ninstr == 1) {
             if (opc != 0 || dname[0] != 'g') shape_ok = 0;
         } else shape_ok = 0;
+        /* RUNG 82 shape-2: MOV att, MOV att, TEX, MUL->gl_FragColor */
+        if (ninstr == 0) {
+            if (opc != 0 || strncmp(a, "att", 3) != 0) shape2_ok = 0;
+        } else if (ninstr == 1) {
+            if (opc != 0 || strncmp(a, "att", 3) != 0
+                    || strcmp(dcomp, "xyzw")) shape2_ok = 0;
+        } else if (ninstr == 2) {
+            if (opc != 66) shape2_ok = 0;
+        } else if (ninstr == 3) {
+            if (opc != 34 || dname[0] != 'g') shape2_ok = 0;
+        } else shape2_ok = 0;
         /* RUNG 80b: masked dst with wider rhs — PP semantics write the
          * first len(comp) components; GLSL needs an explicit selector */
         char rhs[96];
@@ -3671,13 +3700,15 @@ static void rung80_translate(const unsigned long long* ws, unsigned words)
     g_r80[s].seq = g_r80_seq;
     g_r80[s].need = 1;
     g_r80[s].passthrough = (char)(shape_ok && ninstr == 2);
+    g_r80[s].shape2 = (char)(shape2_ok && ninstr == 4);
     {
         char bb[144];
         snprintf(bb, sizeof(bb),
             "rung80: translate OK seq=%u words=%u instrs=%d conds=%d "
             "regions=%d spliced=%d%s",
             g_r80_seq, words, ninstr, ncond, nret, ncal,
-            g_r80[s].passthrough ? " PASSTHRU" : "");
+            g_r80[s].passthrough ? " PASSTHRU"
+            : g_r80[s].shape2 ? " SHAPE2(TEX+MUL)" : "");
         ep_log(bb);
     }
     #undef R80A
@@ -3747,13 +3778,72 @@ static void rung80_compile_pending(void)
                 s_first_ok = 1;
                 strcat(bb, " — FIRST LIVE TRANSLATE+COMPILE");
             }
-            /* RUNG 81: the passthrough program renders every frame
-             * from now on — its output is statically known. */
+            /* RUNG 81/82: the passthrough (expected 128,128,128,255)
+             * then the TEX+MUL shape (texel x att) render live; each
+             * output is statically known. */
             if (g_r80[s].passthrough && !g_r81_prog) {
                 g_r81_prog = pr;
+                g_r82_exp[0] = 128; g_r82_exp[1] = 128;
+                g_r82_exp[2] = 128; g_r82_exp[3] = 255;
                 char b2[96];
                 snprintf(b2, sizeof(b2),
                     "rung81: passthrough prog=%u GOES LIVE", pr);
+                ep_log(b2);
+            }
+            /* RUNG 82: 1x1 NEAREST texture (128,128,64,255) on unit 0;
+             * every sampler uniform bound to it. Output of shape-2 =
+             * texel * att0(0.5) = (64,64,32,255) — all products off
+             * the .5 rounding boundary. NOTE: a 1x1 texture validates
+             * sampler plumbing + MUL + varyings, NOT UV swizzles. */
+            if (os_glGenTextures && os_glBindTexture
+                    && os_glTexImage2D && os_glGetUniformLocation
+                    && os_glUniform1i) {
+                static unsigned s_tex = 0;
+                if (!s_tex) {
+                    unsigned char px[4] = {128, 128, 64, 255};
+                    os_glGenTextures(1, &s_tex);
+                    os_glBindTexture(0x0DE1 /*GL_TEXTURE_2D*/, s_tex);
+                    os_glTexImage2D(0x0DE1, 0, 0x1908, 1, 1, 0,
+                                    0x1908, 0x1401, px);
+                    char b2[96];
+                    snprintf(b2, sizeof(b2),
+                        "rung82: 1x1 NEAREST texture=%u bound unit 0",
+                        s_tex);
+                    ep_log(b2);
+                }
+                /* bind every declared sampler to unit 0 */
+                const char* p2 = fsrc;
+                int nsamp = 0;
+                while ((p2 = strstr(p2, "uniform sampler2D ")) != 0) {
+                    unsigned tn = 999;
+                    if (sscanf(p2 + 18, "prm%u", &tn) == 1
+                            && tn < 256) {
+                        char nm[16];
+                        snprintf(nm, sizeof(nm), "prm%u", tn);
+                        int loc = os_glGetUniformLocation(pr, nm);
+                        if (loc >= 0) {
+                            os_glUniform1i(loc, 0);
+                            nsamp++;
+                        }
+                    }
+                    p2 += 18;
+                }
+                if (nsamp) {
+                    char b2[96];
+                    snprintf(b2, sizeof(b2),
+                        "rung82: prog=%u samplers bound=%d", pr, nsamp);
+                    ep_log(b2);
+                }
+            }
+            if (g_r80[s].shape2 && !g_r82_shape2_live) {
+                g_r82_shape2_live = 1;
+                g_r81_prog = pr;
+                g_r82_exp[0] = 64; g_r82_exp[1] = 64;
+                g_r82_exp[2] = 32; g_r82_exp[3] = 255;
+                char b2[112];
+                snprintf(b2, sizeof(b2),
+                    "rung82: TEX+MUL prog=%u GOES LIVE (expect "
+                    "64,64,32,255)", pr);
                 ep_log(b2);
             }
         } else {

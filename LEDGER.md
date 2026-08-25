@@ -16376,3 +16376,71 @@ length)
   climbs toward — draw-state replay: draw the
   ENGINE'S scene with translated programs and
   real uniforms.
+
+---
+
+## RUNG 82 — TEX-PATH SEMANTIC VALIDATION:
+MET to the byte — the TEX+MUL engine program
+renders its hand-computed prediction exactly
+(64,64,32,255) on every steady frame, through
+real sampler binding and a real texture
+
+- **THE SETUP:** a 1×1 NEAREST texture with
+  bytes (128,128,64,255) is created once at the
+  first compile and bound to unit 0; every
+  compiled program's sampler uniforms are bound
+  to unit 0 (glGetUniformLocation +
+  glUniform1i on each `uniform sampler2D prmN`
+  declared in the emitted GLSL). Logged:
+  `rung82: 1x1 NEAREST texture=1 bound unit 0`,
+  `rung82: prog=12 samplers bound=1`.
+- **THE PREDICTION (pre-registered):** the
+  w42-class engine program
+  (`tmp1.xy = att1.xy; tmp2 = att0; tmp0 =
+  texture2D(prm0, tmp1.xyyy); gl_FragColor =
+  tmp0 * tmp2`) with the synthetic VS writing
+  every varying = (0.5,0.5,0.5,1) must render
+  texel × att = (128,128,64,255) × 0.5 =
+  **(64,64,32,255)** — every product off the
+  .5 rounding boundary by construction.
+- **THE RESULT:** `rung82: TEX+MUL prog=12 GOES
+  LIVE (expect 64,64,32,255)` at frame 49;
+  from frame 65 on, every logged frame shows
+  `sum=102400` (= 64×1600 — R=64 on ALL sampled
+  pixels) with `mism=0` against (64,64,32,255)
+  — 15/15 logged shape-2 frames exact. The
+  rung-81 passthrough verified first on the
+  same boot (`SEMANTIC VERIFIED`, frames 17-49
+  at sum=204800) before handing live status to
+  the TEX shape. Boot tallies: 13 translate OK,
+  9 COMPILE OK, 0 FAIL/STOP/skip.
+- **WHAT THIS VALIDATES semantically on the
+  GPU:** TEX emission (the texture2D call
+  shape, the sampler-operand decode → prm0,
+  coord swizzle plumbing), sampler uniform
+  binding, texture creation/upload, vec4×vec4
+  MUL, and TWO varyings (att0 and att1) through
+  the synthetic VS.
+- **STATED LIMITATION (pre-registered):** a 1×1
+  texture samples identically at any UV — this
+  validates the sampler/MUL/varying chain, NOT
+  coordinate-swizzle correctness. A multi-texel
+  texture with known UVs is the rung-83 form.
+- **VISUAL:** machine-verified only — the suite
+  ended before an eyes-on check (as in rung
+  81); the exact buffer pushes through the GA
+  channel eye-confirmed in rungs 76/78.
+- **IN-SESSION BUILD FIX:** the glTexImage2D
+  pointer type was declared with 10 params (one
+  extra int) — the correct 9-arg call failed to
+  compile; fixed before any deploy succeeded
+  (the deploy script's abort-on-no-executable
+  gate held).
+- **DEFERRED (unchanged/open):** prm-constant
+  uniforms from the stream tail
+  (glUniform4fv is resolved but unused; the
+  tail-index↔prm-number mapping heuristic is
+  unverified); the ppcond mechanism; LRP/RFL
+  operand order; presentation coverage; and
+  rung 83's destination — draw-state replay
+  with real engine state.
