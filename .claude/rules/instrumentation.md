@@ -52,24 +52,36 @@ sentinel), `+0x10` u32 word count. See `docs/pipeline-program-abi.md`.
 
 Before treating a new guest crash as a kext or stub fault, check it
 against the closed classes (full chain of evidence in `LEDGER.md`,
-rung 71c-71d). The signatures are not GLMark-specific — the destroy-path
-family will appear under ANY app that tears down GL contexts; only the
+rung 71c-71d and rung 88's correction). The signatures are not
+GLMark-specific — the destroy-path family will appear under ANY app
+that tears down GL contexts; the texture-level defect will appear
+under ANY app that uploads texture pixels or clears an FBO; only the
 first bullet is app-specific:
 
 - `WaveMesh::update` → `Mesh::update_vbo` memcpy — the glmark2 wave bug,
   fixed upstream; the guest binary `2700b290…` carries the fix.
-- Abort in `free` / SIGBUS at context teardown or the next context's first
-  use (`gleFreeTextureState`, `gleFreePixelMap`, `gleDestroyEnableHashTable`,
-  `gfxFreeTextureLevel`, `gleVPEnable`) — the float's destroy-path
-  ownership bug: one allocation cluster (observed `0x1004a5xxx`) is
-  written-then-freed across runs; destroys both abort directly and poison
-  the successor context's first program bind. Intermittent; dose-suspected;
-  minimal prefixes did not reproduce. Closed glmark2-side by
-  `GLMARK2_106_FLOAT_STACK` (reuse-context forced, teardown skipped, map
-  disabled) — but the bug itself is float-side and will resurface in any
-  app that exercises context destroy. **If a crash in this family appears,
-  suspect a binary regression first — check the binary's md5 and the two
-  console warnings before touching kext or stub.**
+- Abort in `free` / SIGBUS at context teardown (`gleFreeTextureState`,
+  `gleFreePixelMap`, `gleDestroyEnableHashTable`, `gfxFreeTextureLevel`) —
+  the float's destroy-path ownership bug. Closed glmark2-side by
+  `GLMARK2_106_FLOAT_STACK` (reuse-context forced, teardown skipped).
+  Will resurface in any app that exercises context destroy.
+- SIGBUS at `gleVPEnable ← gleUpdateCurrentProgramState ←
+  gleUseProgramObject` during scene setup — **texture level storage is
+  never allocated in GLRendererFloat** (rung 88 correction): the first
+  `glTexImage2D` with real pixel data memcpy's into unbacked storage,
+  corrupting the heap silently; the next engine state write dies.
+  The same defect produces the `gldClearDrawBuffer → __bzero` SIGBUS
+  when a NULL-data level is attached to an FBO and cleared (the clear
+  path writes through the same bogus pointer, but dies immediately
+  instead of corrupting). **One fix — real level backing at allocation
+  — clears both signatures.** The reuse-context binary does NOT
+  prevent this class (no destroys needed; the corruption is in the
+  upload, not the teardown). Minimal repro: `-b build:duration=2 -b
+  texture:duration=2` (build binds fine, texture dies at the first
+  real-pixel upload); `-b desktop:duration=2` (the clear variant).
+  **If a crash in this family appears, suspect a binary regression
+  first — check the binary's md5 and the two console warnings before
+  touching kext or stub.**
 
 ## Scores from the CPU path are stability numbers, not performance numbers
 
