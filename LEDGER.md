@@ -17485,3 +17485,39 @@ safer site next session
   upload + host-read expected-texel +
   pixel-check legs are already implemented
   and waiting.
+
+---
+
+## RUNG 88c — gldModifyTexture-ENTRY CAPTURE:
+ATTEMPTED, WRONG OBJECT — a1 is a texture
+HANDLE/descriptor (1MB region), not the
+raster-side texture object with the level
+structure; the census's ctx+0x780 array
+remains the only known source
+
+- **gldModifyTexture FIRED (once, at boot)
+  but r88_capture_tex(a1) returned on the
+  guards:** a1=0x103819fa0 (r=1MB) — the
+  SAME 1MB-object class seen in every
+  boot's RAW line. It is NOT the object
+  whose +0x10 → geometry → +0xc8 level
+  entry carries w/h/fmt/type/dataptr —
+  the census's ctx+0x780[0] entry
+  (obj=0x100610710 etc.) is that object.
+  Two distinct classes: the service-level
+  handle (what gldModifyTexture receives)
+  and the raster-side texture object
+  (what the float actually reads pixels
+  from).
+- **THE REMAINING PATH for texture
+  capture:** the raster ctx's +0x780 array
+  IS the source — but it crashes at swap
+  density (rung 88's two SIGBUS). The safe
+  site is inside the TRANSFORM HOOK (where
+  the raster ctx is stable mid-draw): read
+  the array once from there, capture the
+  first sane texture object's level-0,
+  then the already-implemented upload +
+  host-read expected-texel + pixel-check
+  legs run at swap. Pre-registered for
+  next session.

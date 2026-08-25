@@ -2624,578 +2624,7 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
     r83_probe(site == 0 ? "swap" : "present", dctx, a1, a2, a3);
     r85_poll(dctx);
     r86_poll(dctx);
-    {   /* RUNG 88 — the engine's bound textures (ctx+0x780[32]):
-         * dump level-0 metadata (w/h/fmt/rowbytes + the raw 32-byte
-         * level entry) for the first few. Gate VMGLD_R88. */
-        static int s_gate88 = -1;
-        static long s_n88 = 0;
-        if (s_gate88 < 0) s_gate88 = getenv("VMGLD_R88") ? 1 : 0;
-        if (s_gate88 && dctx && ((++s_n88 & 0xff) == 1)) {
-            void** ta = (void**)((char*)dctx + 0x780);
-            for (int i = 0; i < 32; i++) {
-                void* tobj = ta[i];
-                if (!pp_r73_sane(tobj)) continue;
-                if (r83_region_size(tobj) < 0x100) continue;
-                void* geo = *(void**)((char*)tobj + 0x10);
-                if (!pp_r73_sane(geo)) continue;
-                if (r83_region_size(geo) < 0x200) continue;
-                unsigned fmt16 = *(unsigned short*)((char*)tobj + 0x40);
-                char* lv = (char*)geo + 0xc8;
-                /* level entry 0: +8 w?, +0xa h?, dump raw 32 bytes */
-                unsigned w = *(unsigned short*)(lv + 8);
-                unsigned h = *(unsigned short*)(lv + 0xa);
-                char b[288];
-                int o = snprintf(b, sizeof(b),
-                    "rung88[t%d]: obj=%p fmt16=%04x w=%u h=%u e0:",
-                    i, tobj, fmt16, w, h);
-                for (int k = 0; k < 4 && o < 250; k++)
-                    o += snprintf(b + o, sizeof(b) - o,
-                        " %016llx",
-                        *(unsigned long long*)(lv + k * 8));
-                ep_log(b);
-                /* RUNG 88b: capture level-0's store for upload:
-                 * word2 = (type<<32|format) halves at +0x10/+0x14...
-                 * observed: +0x14 u16=0x1401 (UBYTE), +0x16 u16=
-                 * 0x1907 (RGB); word3 (+0x18) = data pointer */
-                unsigned ty16 = *(unsigned short*)(lv + 0x14);
-                unsigned fm16 = *(unsigned short*)(lv + 0x16);
-                void* datap = *(void**)(lv + 0x18);
-                if (ty16 == 0x1401 && fm16 == 0x1907
-                        && pp_r73_sane(datap) && w >= 16 && h >= 16
-                        && !g_r88_tex_valid) {
-                    g_r88_tex_valid = 1;
-                    g_r88_tex_data = datap;
-                    g_r88_tex_w = w;
-                    g_r88_tex_h = h;
-                    char b2[128];
-                    snprintf(b2, sizeof(b2),
-                        "rung88: STORE CAPTURED %ux%u RGB @%p",
-                        w, h, datap);
-                    ep_log(b2);
-                }
-                if (i > 20) break;
-            }
-        }
-    }
-    /* RUNG 76 — THE STUB-DRIVEN GA BINDING. Diagnosis: the GA path
-     * was never automatic — SetSurface(0x800) is an APP-SIDE call
-     * nothing makes (the milestone-2 boot had it because the probe
-     * made it); the boot-arg gate (vm-accel-surface=1) is OPEN.
-     * The stub becomes its own surface client:
-     *   type 0 → sel 7  SetIDMode(0x66, 0x24)   registers surface
-     *           → sel 9  SetShape(0x4, 0, rgn)  geometry (Identity-
-     *                                              ScaleBit ONLY)
-     *           → sel 14 WriteLock               creates the backing
-     *                                            (stride base_w*4)
-     *   type 2 → sel 0  SetSurface(0x66, 0x800)  GA-BOUND
-     *   then 0x600E per frame: pitch-correct write at the shape +
-     *   flush + push. Region struct: IOAccelDeviceRegion
-     *   {u32 num_rects; 4×SInt16 bounds; 4×SInt16 rect[1]}.
-     * Pre-registered: kernel logs SetIDMode STORED / SetShape
-     * STORED / WriteLock alloc / SetSurface BOUND; visual = the
-     * hue+triangle band at desktop (100,100)-(900,700). */
-    {
-        static int s_r76 = -1;
-        static io_connect_t s_surf_conn;
-        static io_connect_t s_3d_conn;
-        if (s_r76 < 0) s_r76 = getenv("VMGLD_GPUTEST") ? 1 : 0;
-        if (s_r76 && !g_virgl_conn)
-            virgl_transport_init();
-        if (s_r76 && g_virgl_conn && !s_surf_conn && dctx) {
-            kern_return_t kr;
-            io_service_t svc =
-                IOServiceGetMatchingService(kIOMasterPortDefault,
-                    IOServiceMatching("VMQemuVGAAccelerator"));
-            if (svc) {
-                kr = IOServiceOpen(svc, mach_task_self(), 0,
-                                   &s_surf_conn);
-                char b[96];
-                snprintf(b, sizeof(b), "rung76: type0 open 0x%x "
-                         "(conn=%p)", kr, (void*)s_surf_conn);
-                ep_log(b);
-                if (kr == KERN_SUCCESS) {
-                    uint64_t sid[2] = { 0x66, 0x24 };
-                    kr = IOConnectCallMethod(s_surf_conn, 7,
-                        sid, 2, NULL, 0, NULL, NULL, NULL, NULL);
-                    snprintf(b, sizeof(b), "rung76: SetIDMode 0x%x",
-                             kr);
-                    ep_log(b);
-                    struct { uint32_t n; int16_t bx, by, bw, bh;
-                             int16_t x, y, w, h; } rgn = {
-                        1, 100, 100, 800, 600, 100, 100, 800, 600 };
-                    uint64_t ss[2] = { 0x4 /*IdentityScale*/, 0 };
-                    kr = IOConnectCallMethod(s_surf_conn, 9,
-                        ss, 2, &rgn, sizeof(rgn),
-                        NULL, NULL, NULL, NULL);
-                    snprintf(b, sizeof(b), "rung76: SetShape 0x%x",
-                             kr);
-                    ep_log(b);
-                    uint8_t info[128];
-                    size_t infoLen = sizeof(info);
-                    kr = IOConnectCallMethod(s_surf_conn, 14,
-                        NULL, 0, NULL, 0, NULL, NULL,
-                        info, &infoLen);
-                    snprintf(b, sizeof(b), "rung76: WriteLock 0x%x "
-                             "infoLen=%lu", kr,
-                             (unsigned long)infoLen);
-                    ep_log(b);
-                    uint64_t un[1] = { 0 };
-                    IOConnectCallMethod(s_surf_conn, 15,
-                        un, 1, NULL, 0, NULL, NULL, NULL, NULL);
-                }
-                kr = IOServiceOpen(svc, mach_task_self(), 2,
-                                   &s_3d_conn);
-                if (kr == KERN_SUCCESS && s_surf_conn) {
-                    uint64_t bs[2] = { 0x66, 0x800 };
-                    uint8_t out44[44];
-                    size_t o44 = sizeof(out44);
-                    kr = IOConnectCallMethod(s_3d_conn, 0,
-                        bs, 2, NULL, 0, NULL, NULL,
-                        out44, &o44);
-                    snprintf(b, sizeof(b), "rung76: SetSurface(0x66,"
-                             "0x800) 0x%x — GA-BOUND if 0", kr);
-                    ep_log(b);
-                } else {
-                    char b2[96];
-                    snprintf(b2, sizeof(b2), "rung76: type2 open "
-                             "0x%x", kr);
-                    ep_log(b2);
-                }
-                IOObjectRelease(svc);
-            }
-        }
-        if (s_r76 && g_virgl_conn && dctx && s_surf_conn) {
-            unsigned char* drw = *(unsigned char**)
-                ((char*)dctx + 0x218);
-            if (drw && (uintptr_t)drw > 0x10000
-                    && (uintptr_t)drw < 0x800000000000ull) {
-                int w76 = *(int*)(drw + 0x8);
-                int h76 = *(int*)(drw + 0xc);
-                if (w76 > 16 && h76 > 16
-                        && osmesa_link_init(w76, h76) == 0
-                        && os_glClear && os_glFinish) {
-                    {
-                        static int (*s_mk)(void*, void*, unsigned,
-                                           int, int);
-                        if (!s_mk) s_mk = (int (*)(void*, void*,
-                            unsigned, int, int))dlsym(
-                                g_os_lib, "OSMesaMakeCurrent");
-                        if (s_mk) s_mk(g_os_ctx, g_os_buffer,
-                                       0x1401, w76, h76);
-                    }
-                    static float s_hue;
-                    static long s_n;
-                    int r78 = rung78_shader_prog();
-                    s_hue += 0.02f; if (s_hue > 1.0f) s_hue -= 1.0f;
-                    os_glClearColor(s_hue, 0.25f, 1.0f - s_hue, 1.0f);
-                    os_glClear(0x4000);
-                    if (os_glBegin && os_glEnd && os_glVertex2f
-                            && os_glColor3f) {
-                        os_glBegin(4);
-                        os_glColor3f(1, 1, 1);
-                        os_glVertex2f(-0.6f, -0.5f);
-                        os_glColor3f(1, 1, 0);
-                        os_glVertex2f(0.6f, -0.5f);
-                        os_glColor3f(0, 1, 1);
-                        os_glVertex2f(0.0f, 0.7f);
-                        os_glEnd();
-                    }
-                    /* RUNG 78/81: full-screen pass through the
-                     * compiled shader — the rung-81 passthrough when
-                     * live (predicted (128,128,128,255)), else the
-                     * rung-78 fixed (1,0,1,1). */
-                    /* RUNG 85: the engine's live uniform word
-                     * (block A word 10, jellyfish-localized) rendered
-                     * AS the frame — pixel must equal quantize(u). */
-                    if (g_r85_u_valid && os_glUniform1f
-                            && os_glCreateShader && os_glUseProgram) {
-                        static int s_built = 0;
-                        if (!s_built) {
-                            s_built = 1;
-                            static const char* fs85 =
-                                "uniform float u_engine;\n"
-                                "void main() { gl_FragColor = "
-                                "vec4(u_engine, u_engine, u_engine, "
-                                "1.0); }\n";
-                            const char* v85 = vsrc_r85();
-                            unsigned vs = os_glCreateShader(0x8B31);
-                            unsigned fs = os_glCreateShader(0x8B30);
-                            const char* fs85p = fs85;
-                            os_glShaderSource(vs, 1, &v85, NULL);
-                            os_glCompileShader(vs);
-                            os_glShaderSource(fs, 1, &fs85p, NULL);
-                            os_glCompileShader(fs);
-                            unsigned p = os_glCreateProgram();
-                            os_glAttachShader(p, vs);
-                            os_glAttachShader(p, fs);
-                            os_glLinkProgram(p);
-                            int cl = 0;
-                            os_glGetProgramiv(p, 0x8B82, &cl);
-                            g_r85_prog = cl ? p : 0;
-                            char b2[96];
-                            snprintf(b2, sizeof(b2),
-                                "rung85: validation prog=%u link=%d",
-                                p, cl);
-                            ep_log(b2);
-                        }
-                    }
-                    int drawprog = g_r81_prog ? (int)g_r81_prog : r78;
-                    if (g_r85_prog) drawprog = (int)g_r85_prog;
-                    /* RUNG 87b: real engine texcoord -> u_att1 */
-                    static int s_r87_bound = 0;
-                    if (g_r82_shape2_live && g_r81_prog
-                            && os_glGetUniformLocation && os_glUniform4fv
-                            && g_r87_u > 0.0f && !s_r87_bound) {
-                        /* RUNG 88b: upload the ENGINE texture once
-                         * (over the unit-0 object) and verify against
-                         * a host-side read of the same bytes */
-                        static int s_up88 = 0;
-                        if (!s_up88 && g_r88_tex_valid
-                                && os_glTexImage2D && os_glBindTexture
-                                && os_glGenTextures) {
-                            s_up88 = 1;
-                            unsigned tex88 = 1;
-                            os_glGenTextures(1, &tex88);
-                            os_glBindTexture(0x0DE1, tex88);
-                            if (os_glTexParameteri) {
-                                os_glTexParameteri(0x0DE1, 0x2801, 0x2600);
-                                os_glTexParameteri(0x0DE1, 0x2800, 0x2600);
-                            }
-                            os_glTexImage2D(0x0DE1, 0, 0x1907,
-                                (int)g_r88_tex_w, (int)g_r88_tex_h, 0,
-                                0x1907, 0x1401, g_r88_tex_data);
-                            char b3[128];
-                            snprintf(b3, sizeof(b3),
-                                "rung88: ENGINE TEX UPLOADED %ux%u "
-                                "obj=%u @%p", g_r88_tex_w, g_r88_tex_h,
-                                tex88, g_r88_tex_data);
-                            ep_log(b3);
-                        }
-                        if (g_r88_tex_valid) {
-                            /* expected = the engine's own bytes at
-                             * (u,v), NEAREST */
-                            int tx = (int)(g_r87_u * g_r88_tex_w);
-                            int ty = (int)(g_r87_v * g_r88_tex_h);
-                            if (tx >= 0 && ty >= 0
-                                    && tx < (int)g_r88_tex_w
-                                    && ty < (int)g_r88_tex_h) {
-                                const unsigned char* px =
-                                    (const unsigned char*)
-                                        g_r88_tex_data
-                                    + ((size_t)ty * g_r88_tex_w + tx) * 3;
-                                g_r82_exp[0] = px[0];
-                                g_r82_exp[1] = px[1];
-                                g_r82_exp[2] = px[2];
-                                g_r82_exp[3] = 255;
-                                g_r84_tol = 0;
-                            }
-                        }
-                        s_r87_bound = 1;
-                        /* bind AFTER UseProgram — the rung-84 lesson:
-                         * glUniform with no current program is a
-                         * silent no-op (the black-frame repeat) */
-                        os_glUseProgram(g_r81_prog);
-                        float att1v[4] = { g_r87_u, g_r87_v, 0.0f, 1.0f };
-                        float onev[4] = { 1, 1, 1, 1 };
-                        int l1 = os_glGetUniformLocation(g_r81_prog,
-                                                         "u_att1");
-                        int l0 = os_glGetUniformLocation(g_r81_prog,
-                                                         "u_att0");
-                        if (l1 >= 0) os_glUniform4fv(l1, 1, att1v);
-                        if (l0 >= 0) os_glUniform4fv(l0, 1, onev);
-                        /* expected: texel(u,v) of the 2x2 NEAREST */
-                        int ui = g_r87_u < 0.5f ? 0 : 1;
-                        int vi = g_r87_v < 0.5f ? 0 : 1;
-                        static const unsigned char TX[2][2][4] = {
-                            { { 64, 0, 0, 255 }, { 192, 64, 0, 255 } },
-                            { { 0, 128, 0, 255 }, { 0, 0, 255, 255 } } };
-                        g_r82_exp[0] = TX[vi][ui][0];
-                        g_r82_exp[1] = TX[vi][ui][1];
-                        g_r82_exp[2] = TX[vi][ui][2];
-                        g_r82_exp[3] = TX[vi][ui][3];
-                        g_r84_tol = 0;
-                        r81_verdict_reset();
-                        char b87[160];
-                        snprintf(b87, sizeof(b87),
-                            "rung87: REAL TEXCOORD REPLAY u=%.4g v=%.4g "
-                            "-> texel(%d,%d)=%u,%u,%u",
-                            g_r87_u, g_r87_v, ui, vi,
-                            TX[vi][ui][0], TX[vi][ui][1], TX[vi][ui][2]);
-                        ep_log(b87);
-                    }
-                    if (drawprog > 0 && os_glUseProgram) {
-                        os_glUseProgram((unsigned)drawprog);
-                        if (drawprog == (int)g_r85_prog
-                                && os_glGetUniformLocation) {
-                            int loc = os_glGetUniformLocation(
-                                g_r85_prog, "u_engine");
-                            if (loc >= 0 && os_glUniform1f)
-                                os_glUniform1f(loc, g_r85_u);
-                        }
-                        if (os_glBegin && os_glEnd && os_glVertex2f) {
-                            os_glBegin(0x0005 /*GL_TRIANGLE_STRIP*/);
-                            os_glVertex2f(-1.0f, -1.0f);
-                            os_glVertex2f(1.0f, -1.0f);
-                            os_glVertex2f(-1.0f, 1.0f);
-                            os_glVertex2f(1.0f, 1.0f);
-                            os_glEnd();
-                        }
-                        os_glUseProgram(0);
-                    }
-                    os_glFinish();
-                    if (os_glReadPixels)
-                        os_glReadPixels(0, 0, w76, h76,
-                                        0x1908, 0x1401,
-                                        g_os_buffer);
-                    unsigned long sum = 0;
-                    for (int i = 0; i < w76 * 2; i++)
-                        sum += g_os_buffer[i * 4];
-                    int r78mism = -1;
-                    int r81mism = -1;
-                    int r85mism = -1;
-                    if (g_r85_prog && g_r85_u_valid) {
-                        float uc = g_r85_u < 0 ? 0 :
-                                   g_r85_u > 1 ? 1 : g_r85_u;
-                        int ev = (int)(uc * 255.0f + 0.5f);
-                        r85mism = 0;
-                        for (int i = 0; i < w76 * 2; i++) {
-                            int d0 = g_os_buffer[i * 4] - ev;
-                            int d1 = g_os_buffer[i * 4 + 1] - ev;
-                            int d2 = g_os_buffer[i * 4 + 2] - ev;
-                            if (d0 < 0) d0 = -d0; if (d1 < 0) d1 = -d1;
-                            if (d2 < 0) d2 = -d2;
-                            if (d0 > 1 || d1 > 1 || d2 > 1
-                                    || g_os_buffer[i * 4 + 3] != 255)
-                                r85mism++;
-                        }
-                        /* periodic per-sample verdict: u varies with
-                         * the jellyfish sine — sample across its range */
-                        if ((s_n & 0x7) == 1 && s_n > 16
-                                && g_r85_u >= 0.0f) {
-                            char vb[160];
-                            if (r85mism == 0)
-                                snprintf(vb, sizeof(vb),
-                                    "rung85[%ld]: MATCH u=%.4g -> %d",
-                                    s_n, g_r85_u, ev);
-                            else
-                                snprintf(vb, sizeof(vb),
-                                    "rung85[%ld]: MISMATCH mism=%d "
-                                    "u=%.4g expected=%d "
-                                    "px0=%02x%02x%02x%02x",
-                                    s_n, r85mism, g_r85_u, ev,
-                                    g_os_buffer[0], g_os_buffer[1],
-                                    g_os_buffer[2], g_os_buffer[3]);
-                            ep_log(vb);
-                        }
-                    } else if (g_r81_prog) {
-                        /* RUNG 81: the translated passthrough must
-                         * render EXACTLY att0 = vec4(0.5,0.5,0.5,1) */
-                        r81mism = 0;
-                        for (int i = 0; i < w76 * 2; i++) {
-                            int d0 = g_os_buffer[i * 4] - g_r82_exp[0];
-                            int d1 = g_os_buffer[i * 4 + 1] - g_r82_exp[1];
-                            int d2 = g_os_buffer[i * 4 + 2] - g_r82_exp[2];
-                            int d3 = g_os_buffer[i * 4 + 3] - g_r82_exp[3];
-                            if (d0 < 0) d0 = -d0; if (d1 < 0) d1 = -d1;
-                            if (d2 < 0) d2 = -d2; if (d3 < 0) d3 = -d3;
-                            if (d0 > g_r84_tol || d1 > g_r84_tol
-                                    || d2 > g_r84_tol || d3 > g_r84_tol)
-                                r81mism++;
-                        }
-                        /* verdict on a LOGGED (steady) frame — the
-                         * very first live frame after link mismatched
-                         * once (19/19 steady frames exact; cause
-                         * unverified, first-use upload is an
-                         * INFERENCE). On mismatch, log the pixel. */
-                        static int s_r81_verdict = 0;
-                        if (g_r84_verdict_arm) {
-                            g_r84_verdict_arm = 0;
-                            s_r81_verdict = 0;
-                        }
-                        if (!s_r81_verdict && (s_n & 0xf) == 1
-                                && s_n > 16) {
-                            s_r81_verdict = 1;
-                            if (r81mism == 0)
-                                ep_log("rung81: SEMANTIC VERIFIED — "
-                                       "translated passthrough renders "
-                                       "(128,128,128,255) exactly");
-                            else {
-                                char vb[128];
-                                snprintf(vb, sizeof(vb),
-                                    "rung81: MISMATCH mism=%d "
-                                    "px0=%02x%02x%02x%02x", r81mism,
-                                    g_os_buffer[0], g_os_buffer[1],
-                                    g_os_buffer[2], g_os_buffer[3]);
-                                ep_log(vb);
-                            }
-                        }
-                    } else if (r78 > 0) {
-                        r78mism = 0;
-                        for (int i = 0; i < w76 * 2; i++)
-                            if (g_os_buffer[i * 4] != 255
-                                    || g_os_buffer[i * 4 + 1] != 0
-                                    || g_os_buffer[i * 4 + 2] != 255)
-                                r78mism++;
-                        static int s_r78_verdict = 0;
-                        if (!s_r78_verdict) {
-                            s_r78_verdict = 1;
-                            ep_log(r78mism == 0
-                                ? "rung78: VERIFIED — first shader frame "
-                                  "pixel-exact (255,0,255)"
-                                : "rung78: MISMATCH — shader pass ran, "
-                                  "pixels not (255,0,255)");
-                        }
-                    }
-                    kern_return_t pr = 0xe00002c2;
-                    uint64_t sc76[4] = {
-                        (uint64_t)(uintptr_t)g_os_buffer,
-                        (uint64_t)(w76 * 4), (uint64_t)w76,
-                        (uint64_t)h76 };
-                    if (g_virgl_conn)
-                        pr = IOConnectCallMethod(g_virgl_conn,
-                            0x600E, sc76, 4, NULL, 0,
-                            NULL, NULL, NULL, NULL);
-                    if ((++s_n & 0xf) == 1) {
-                        char b[192];
-                        snprintf(b, sizeof(b),
-                            "rung76/78/81: frame %ld %dx%d hue=%.2f "
-                            "sum=%lu 0x600E=0x%x r78=%s mism=%d "
-                            "r81=%s mism=%d",
-                            s_n, w76, h76, s_hue, sum, pr,
-                            r78 > 0 ? "on" : "FAIL", r78mism,
-                            g_r81_prog ? "LIVE" : "-",
-                            r81mism);
-                        ep_log(b);
-                    }
-                    /* RUNG 80: compile pending live translations on
-                     * this context (after the frame push; compile/link
-                     * leave GL state untouched). */
-                    rung80_compile_pending();
-                }
-            }
-        }
-    }
-    long r = g_site_fn[site]
-        ? (long)g_site_fn[site](dctx, a1, a2, a3, a4, a5) : 0;
-    /* 0x600D removed: without a GA binding it failed loudly per swap
-     * and FLOODED the kernel log (~3/s for hours — the flood that
-     * destroyed this boot's diagnostic history). The 0x600E path
-     * flushes and pushes on its own. */
-    pp_draw_state(dctx, "swap");
-    /* RUNG 69 — THE DISCRIMINATING EXPERIMENT: watch the drawbuffer
-     * (ctx+0x218 → drawable → backing) for GLVM writes. The float's
-     * swap ran above (r); if GLVM executed, the backing changed. */
-    {
-        static unsigned char s_prev[16];
-        static int s_have_prev = 0;
-        static int s_watch_left = 8;   /* first 8 swaps */
-        if (dctx && s_watch_left > 0) {
-            s_watch_left--;
-            unsigned char* drw = *(unsigned char**)
-                ((char*)dctx + 0x218);
-            if (drw && (uintptr_t)drw > 0x10000
-                    && (uintptr_t)drw < 0x800000000000ull) {
-                /* the drawable: +0x8 w, +0xc h, +0x14 ptr chain */
-                uint64_t w = *(uint32_t*)(drw + 0x8);
-                uint64_t h = *(uint32_t*)(drw + 0xc);
-                uint64_t chain = *(uint64_t*)(drw + 0x14);
-                /* dump the drawable's words for the ABI record */
-                char db[256]; int dO = 0;
-                dO += snprintf(db + dO, sizeof(db) - dO,
-                    "rung69: DRAWABLE %p w=%llu h=%llu chain=0x%llx:",
-                    (void*)drw, (unsigned long long)w,
-                    (unsigned long long)h,
-                    (unsigned long long)chain);
-                for (int i = 0; i < 8 && dO < 220; i++)
-                    dO += snprintf(db + dO, sizeof(db) - dO,
-                        " %llx",
-                        *(unsigned long*)(drw + i * 8));
-                ep_log(db);
-                /* sample ALL candidate pointers in the drawable */
-                for (int po = 0; po < 0x40; po += 8) {
-                    uint64_t bk = *(uint64_t*)(drw + po);
-                    if (bk <= 0x100000000ull || bk >= 0x110000000ull)
-                        continue;
-                    unsigned char* p = (unsigned char*)(uintptr_t)bk;
-                    size_t mid = (size_t)(w * h * 4) / 2 & ~(size_t)15;
-                    if (mid > 16) mid /= 2;
-                    unsigned char cur[16];
-                    memcpy(cur, p + mid, 16);
-                    char cb[160]; int co = 0;
-                    co += snprintf(cb + co, sizeof(cb) - co,
-                        "rung69: PTR(+0x%x)=0x%llx mid:",
-                        po, (unsigned long long)bk);
-                    for (int c = 0; c < 8 && co < 110; c++)
-                        co += snprintf(cb + co, sizeof(cb) - co,
-                            "%02x", cur[c]);
-                    /* nonzero check */
-                    int nz = 0;
-                    for (int c = 0; c < 16; c++) if (cur[c]) { nz = 1; break; }
-                    co += snprintf(cb + co, sizeof(cb) - co,
-                        " %s", nz ? "NONZERO" : "zero");
-                    ep_log(cb);
-                }
-            } else {
-                ep_log("rung69: ctx+0x218 ABSENT (no drawable)");
-            }
-        }
-    }
-    {
-        static long s_swaps = 0;
-        s_swaps++;
-        if (s_swaps <= 5 || (s_swaps % 500) == 0) {
-            census_report(s_swaps);
-            export_census_report(s_swaps);   /* RUNG 66e: draw door */
-        }
-    }
-    return r;
-}
-static void fw_poll(void* ctx)
-{
-    static int s_dumped = 0;
-    if (ctx && !s_dumped) {
-        s_dumped = 1;
-        char b[760]; int o = 0;
-        o += snprintf(b + o, sizeof(b) - o, "rung66: ctx%+[0x6580..]:",
-                      0);
-        for (size_t off = 0x6580; off < 0x6700 && o < 700; off += 8)
-            o += snprintf(b + o, sizeof(b) - o, " %llx",
-                (unsigned long long)*(unsigned long*)((char*)ctx + off));
-        ep_log(b);
-        if (g_engine_subblock) {
-            unsigned char* eng = (unsigned char*)g_engine_subblock
-                                - 0x79b8;
-            char e[520]; int eo = 0;
-            eo += snprintf(e + eo, sizeof(e) - eo,
-                           "rung66: eng %p[0x6680..]:", (void*)eng);
-            for (size_t off = 0x6680; off < 0x66e0 && eo < 470; off += 8)
-                eo += snprintf(e + eo, sizeof(e) - eo, " %llx",
-                    (unsigned long long)*(unsigned long*)(eng + off));
-            ep_log(e);
-        }
-    }
-    if (!ctx) return;
-    void** slots[2] = { (void**)((char*)ctx + 0x66b0), NULL };
-    if (g_engine_subblock)
-        slots[1] = (void**)((unsigned char*)g_engine_subblock
-                            - 0x79b8 + 0x66b0);
-    static void* const wraps[2] = { (void*)&gld_swap_wrapper_a,
-                                    (void*)&gld_swap_wrapper_b };
-    for (int s = 0; s < 2; s++) {
-        if (!slots[s] || g_site_done[s]) continue;
-        void* p = *slots[s];
-        if (p && p != wraps[s]) {
-            g_site_fn[s] =
-                (long(*)(void*,void*,void*,void*,void*,void*))p;
-            *slots[s] = wraps[s];
-            g_site_done[s] = 1;
-            char w[144];
-            snprintf(w, sizeof(w),
-                     "rung66: SITE%d WRAPPED: float swap %p at %p",
-                     s, p, (void*)slots[s]);
-            ep_log(w);
-        }
-    }
+
 }
 static void census_install(unsigned long* dispatch)
 {
@@ -3378,6 +2807,53 @@ long gldInitDispatch(void* ctx, unsigned long* dispatch,
  * always set (grf.t 0x15399/0x153d8); its dirty-block ORs
  * (0x80/0x100/0x10000380) mark real state changes. The stub has
  * no state to change: return the float's base, mark nothing. */
+static void fw_poll(void* ctx)
+{
+    static int s_dumped = 0;
+    if (ctx && !s_dumped) {
+        s_dumped = 1;
+        char b[760]; int o = 0;
+        o += snprintf(b + o, sizeof(b) - o, "rung66: ctx%+[0x6580..]:",
+                      0);
+        for (size_t off = 0x6580; off < 0x6700 && o < 700; off += 8)
+            o += snprintf(b + o, sizeof(b) - o, " %llx",
+                (unsigned long long)*(unsigned long*)((char*)ctx + off));
+        ep_log(b);
+        if (g_engine_subblock) {
+            unsigned char* eng = (unsigned char*)g_engine_subblock
+                                - 0x79b8;
+            char e[520]; int eo = 0;
+            eo += snprintf(e + eo, sizeof(e) - eo,
+                           "rung66: eng %p[0x6680..]:", (void*)eng);
+            for (size_t off = 0x6680; off < 0x66e0 && eo < 470; off += 8)
+                eo += snprintf(e + eo, sizeof(e) - eo, " %llx",
+                    (unsigned long long)*(unsigned long*)(eng + off));
+            ep_log(e);
+        }
+    }
+    if (!ctx) return;
+    void** slots[2] = { (void**)((char*)ctx + 0x66b0), NULL };
+    if (g_engine_subblock)
+        slots[1] = (void**)((unsigned char*)g_engine_subblock
+                            - 0x79b8 + 0x66b0);
+    static void* const wraps[2] = { (void*)&gld_swap_wrapper_a,
+                                    (void*)&gld_swap_wrapper_b };
+    for (int s = 0; s < 2; s++) {
+        if (!slots[s] || g_site_done[s]) continue;
+        void* p = *slots[s];
+        if (p && p != wraps[s]) {
+            g_site_fn[s] =
+                (long(*)(void*,void*,void*,void*,void*,void*))p;
+            *slots[s] = wraps[s];
+            g_site_done[s] = 1;
+            char w[144];
+            snprintf(w, sizeof(w),
+                     "rung66: SITE%d WRAPPED: float swap %p at %p",
+                     s, p, (void*)slots[s]);
+            ep_log(w);
+        }
+    }
+}
 long gldUpdateDispatch(void* ctx, void* template_, void* dirty,
                        void* a3, void* a4, void* a5)
 {
@@ -3765,7 +3241,49 @@ R83E(gldCreateTextureLevel)
 R83E(gldModifyTextureLevel)
 R83E(gldGetTextureLevel)
 R83E(gldCreateTexture)
-R83E(gldModifyTexture)
+/* RUNG 88c: hand-written — a1 IS the texture object (live-stable
+ * inside our own forward; the rung-88 swap-time census is retired) */
+static void r88_capture_tex(void* tobj)
+{
+    if (!pp_r73_sane(tobj)) return;
+    size_t tr = r83_region_size(tobj);
+    if (tr < 0x60) return;
+    void* geo = *(void**)((char*)tobj + 0x10);
+    if (!pp_r73_sane(geo)) return;
+    size_t gr = r83_region_size(geo);
+    if (gr < 0xe8) return;
+    char* lv = (char*)geo + 0xc8;
+    unsigned w = *(unsigned short*)(lv + 0x08);
+    unsigned h = *(unsigned short*)(lv + 0x0a);
+    unsigned fm = *(unsigned short*)(lv + 0x14);
+    unsigned ty = *(unsigned short*)(lv + 0x16);
+    void* datap = *(void**)(lv + 0x18);
+    if (ty != 0x1401 || fm != 0x1907) return;
+    if (w < 16 || h < 16 || w > 4096 || h > 4096) return;
+    if (!pp_r73_sane(datap)) return;
+    size_t dr = r83_region_size(datap);
+    if (dr < (size_t)w * h * 3) return;
+    g_r88_tex_data = datap;
+    g_r88_tex_w = w;
+    g_r88_tex_h = h;
+    g_r88_tex_valid = 1;
+    char b[128];
+    snprintf(b, sizeof(b),
+        "rung88: TEX CAPTURED @modify %ux%u RGB/UBYTE data=%p "
+        "(region %zu)", w, h, datap, dr);
+    ep_log(b);
+}
+static long g_ec_gldModifyTexture;
+long gldModifyTexture(void* a0, void* a1, void* a2, void* a3,
+                      void* a4, void* a5)
+{
+    g_ec_gldModifyTexture++;
+    r83_raw("gldModifyTexture", a0, a1, a2, a3);
+    if (!g_r88_tex_valid) r88_capture_tex(a1);
+    GLD_FWD("gldModifyTexture", a0,a1,a2,a3,a4,a5, -1);
+    if (a0) *(void**)a0 = (void*)0;
+    return -1;
+}
 R83E(gldLoadTexture)
 R83E(gldSyncTexture)
 
