@@ -17260,3 +17260,43 @@ across both regimes
   stack/block address → live uniform value →
   glUniform → translated program → GPU →
   verified pixel. Both engine regimes.
+
+---
+
+## RUNG 86e — THE JIT STORE BOUND INTO
+TRANSLATED PROGRAMS: 15 MATCH / 0 MISMATCH
+— the JIT regime's uniform chain is now
+validated at the same pixel-exact standard
+as the interpreter regime; the uniform map
+is COMPLETE AND DOUBLE-VALIDATED
+
+- **THE BINDING:** in the JIT decode path
+  (VMGLD_R86), the store word at base+8
+  (the normalized pair's LOW float) is
+  published as g_r85_u — the rung-85
+  validation chain (u_engine program,
+  per-swap bind, pixel check) consumes it
+  directly. Under JIT scenes r85_poll is
+  off; the JIT decode is the sole writer.
+- **THE RESULT (shading, VMGLD_GPUTEST+R86,
+  per-8-frame verdicts over 40s):**
+  `MATCH u=0.4945→126, 0.635→162, 0.9019→230,
+  0.8877→226, 0.7052→180, 0.4541→116,
+  0.7372→188(×6)` — **15 MATCH, 0 MISMATCH**,
+  dynamic range 116-230, every informative
+  sample exact.
+- **THE LADDER'S UNIFORM LEG, CLOSED:**
+  both engine regimes now run the full chain
+  — engine token → descriptor → block
+  address → live value → glUniform →
+  translated program → GPU → verified
+  pixel — with the location DERIVED, not
+  hand-found, in both.
+  | regime | derivation | validation |
+  |---|---|---|
+  | interpreter | ctx+0xe00 fixed offsets | rung 85: jellyfish sine, exact |
+  | JIT | descriptor + r8_a=(d>>48)-1 → base+8 | rung 86e: shading light, 15/0 exact |
+- **Remaining on the ladder:** the extra
+  descriptor classes (higher flag bits);
+  real varyings (the vertex/transform
+  stream); geometry; textures; the swap.

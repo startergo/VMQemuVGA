@@ -4484,6 +4484,18 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                             inBlk ? " inBLK" : "");
                 }
                 if (s_n86 <= 50) ep_log(b);
+                /* RUNG 86e: publish the JIT store's live value into
+                 * the rung-85 validation chain — k0-8 = base+8 holds
+                 * the normalized pair; the LOW float becomes u_engine.
+                 * (Under JIT scenes r85_poll is off; this is the sole
+                 * writer.) */
+                if (jit_mode && rdi_b > 0x100000000ull
+                        && rdi_b < 0x10000000000ull) {
+                    unsigned long long w =
+                        *(unsigned long long*)((char*)rdi_b + 8);
+                    memcpy(&g_r85_u, &w, 4);
+                    g_r85_u_valid = 1;
+                }
                 /* RUNG 86c: dump on the WALL-CLOCK trigger (the h-cap
                  * no longer gates this) */
                 if (jit_mode && time_dump) {
