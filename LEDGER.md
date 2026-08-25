@@ -16494,3 +16494,82 @@ above is WRONG; the rerun completed
   *.hang` files (10:05/10:14, other pids) are
   unrelated earlier runs; configd crashes are
   guest-era noise.
+
+---
+
+## RUNG 82b — THE FLOAT'S gldClearDrawBuffer
+DISASSEMBLED (static trace; GLRendererFloat
+x86_64 slice md5 36ed4a1cea43bd0e592d1a775bd9f
+79b, copied to /tmp/floatdis): the crash is a
+SIZE DISAGREEMENT between the ctx draw rect and
+the image allocation — NOT "never backed";
+
+mechanism refined; attribution: native float
+
+- **THE FUNCTION** (crash math: PC 0x1379c −
+  slide 0x1039c4000 = offset 0x1379c =
+  gldClearDrawBuffer + 3577 → entry 0x129a3):
+  - outer loop i = 0..7 (the color DRAW
+    BUFFERS); per i: if `ctx+0x360[i]` (image
+    pointer) is NULL it is fetched via an
+    INDIRECT CALL through `ctx+0xc58` and
+    cached there.
+  - the clear RECT comes from ctx draw state:
+    `+0x230` x, `+0x234` y, `+0x240` width,
+    `+0x244` height; pitch/flip from `+0x2e8`
+    /`+0x2ec`; clear color floats from
+    `+0x2ea0..0x2eac` (via the shared state
+    object).
+  - dst = `ctx+0x360[i] + ((y·W)+x)·4`; the
+    store loops honor the RGBA COLOR WRITEMASK
+    (edx bits 0-3 select per-component movss);
+    the ZERO-color fast path is a memset row
+    loop (dst=r12, stride=r15, size = rect
+    math) — the crash path.
+  - NOWHERE does the function consult the
+    image's allocated size.
+- **THE FAULT SEMANTICS:** crash PC = `__bzero
+  +144` — 144 bytes INTO the first row: the
+  destination page was MAPPED and the row ran
+  out of it. A never-backed/wild pointer faults
+  at byte 0. So the level storage EXISTS but
+  the rect/offset math walks past its end —
+  dst landed on the final mapped page of a
+  smaller-than-rect allocation (or a stale
+  size for that draw buffer's image).
+- **CORRECTION TO THE EARLIER HYPOTHESIS**
+  (recorded as correction): "texture-allocation
+  never backs the level" is wrong as stated —
+  the backing exists; the DISAGREEMENT between
+  the ctx draw rect (+0x230..0x244) and the
+  image's actual extent is the defect class.
+  Intermittency (1-in-~10) remains unexplained
+  and is consistent with heap-order-dependent
+  level fetch/binding, but that is not
+  verified.
+- **ATTRIBUTION:** the stub's 75 EPR entries
+  plus 9 GLD_FWD entries forward everything to
+  the float (the EPR forwards are frameless —
+  hence float frames directly under GLEngine in
+  the stack); the gldCreatePipelineProgram -1
+  refusal is by-design and not on this path.
+  The crash is NATIVE float behavior on the FBO
+  clear path; no stub-side contribution is
+  visible in the disassembled path.
+- **otool note:** the disassembly's many
+  `__mh_bundle_header` operands are RELOCATION
+  BASES for zero immediates (`lea (,%rax,4)`),
+  not header dereferences — the initial
+  confusion about the loop counter was this.
+- **NEXT (rung 83 candidate), pre-registered:**
+  a diagnostic interposition at the FBO/texture
+  bind entries (which of the stub's exports the
+  engine calls when desktop binds its blur
+  targets) logging `ctx+0x230..0x244` beside
+  the bound level's allocated extent at bind
+  time — the disagreement, if present at BIND
+  (not at clear), localizes whether the rect or
+  the allocation is the stale side, and is the
+  prerequisite for designing any interposition
+  fix (backing the level correctly vs clamping
+  the rect). Fix design AFTER that datum.
