@@ -4467,6 +4467,59 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
                             inBlk ? " inBLK" : "");
                 }
                 ep_log(b);
+                /* RUNG 86c: dump the k0 staging region (words around
+                 * the computed addr) — value-level correlation */
+                static int s_dumped = 0;
+                /* spread across the scene lifetime: early calls may
+                 * predate the region's fill (first-frame all-zero) */
+                static const unsigned long long at[] = {1, 500, 5000,
+                    20000, 100000, 500000, 2000000, 8000000};
+                int do_dump = 0;
+                if (jit_mode && s_dumped < 8) {
+                    for (int q = 0; q < 8; q++)
+                        if (g_r73_calls == at[q]) { do_dump = 1; break; }
+                    if (g_r73_calls > at[s_dumped < 8 ? s_dumped : 7]
+                            && g_r73_calls % 4000000ULL == 0)
+                        do_dump = 1;
+                }
+                if (jit_mode && do_dump) {
+                    s_dumped++;
+                    unsigned long long k0a = 0;
+                    if (flags & 0x4000ULL) {
+                        unsigned long long d0 = tw[n + 1];
+                        unsigned sel0 = ((unsigned)(d0 & 0xFF)) >> 3;
+                        unsigned cnt0 = (unsigned)((d0 >> 32) & 0xFFFF);
+                        unsigned typ0 = (unsigned)((d0 >> 16) & 0xF);
+                        long r8p0 = (d0 & 0x100000ULL)
+                            ? 0 : (long)((d0 >> 48) & 0xFFFF) - 1;
+                        long off0 = r8p0 * (long)cnt0 + (long)ecx_a;
+                        if (typ0 == 1 || typ0 == 2) off0 <<= 4;
+                        else if (typ0 == 3) off0 <<= 2;
+                        else if (typ0 == 4) off0 <<= 1;
+                        else off0 = 0;
+                        k0a = rdi_b
+                            + (unsigned long long)(sel0 - 10) * 8
+                            + (unsigned long long)off0;
+                    }
+                    if (k0a > 0x10000
+                            && k0a < 0x10000000000ull) {
+                        unsigned long long* W =
+                            (unsigned long long*)(k0a - 0x20);
+                        char d[420];
+                        int p = snprintf(d, sizeof(d),
+                            "rung86c[%d] k0addr=%llx:", s_dumped, k0a);
+                        for (int i = 0; i < 12 && p < 380; i++) {
+                            unsigned long long w = W[i];
+                            float lo, hi;
+                            memcpy(&lo, &w, 4);
+                            memcpy(&hi, (char*)&w + 4, 4);
+                            p += snprintf(d + p, sizeof(d) - p,
+                                " %+llxA%+d=%llx(%.4g,%.4g)", w,
+                                (i - 4) * 8, w, lo, hi);
+                        }
+                        ep_log(d);
+                    }
+                }
             }
         }
     }

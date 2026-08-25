@@ -17139,3 +17139,45 @@ source candidate
   uniform values (shading's light position/
   color vectors change per variant) — the
   value-level validation of the JIT regime.
+
+---
+
+## RUNG 86c — STAGING REGION DUMPED: ALL
+ZERO at the first transform call; the
+value-level validation of the JIT regime is
+UNRESOLVED — the address is stable and
+structured, but the region it names is not
+(yet) the live uniform store
+
+- **THE DUMP (shading, 12 words around the
+  k0 address, across 10 first-frame calls):**
+  k0addr stable (0x100fb8610/620, tiny
+  wobble) — every word zero, before and
+  after, all calls. Spread-lifetime sampling
+  (calls 500/5k/20k/...) never fired — the
+  wrap's call stream stops early in this
+  scene too (only dump[1] executed), so a
+  later-fill hypothesis is UNTESTED, not
+  refuted.
+- **THE TWO LIVE READINGS of this result:**
+  (a) the region fills only after warm-up —
+  sampling missed it; (b) the JIT-hyp base/
+  scale guess (rdi=a3, ecx=a5, r8=0) is
+  structurally close (stable, right family,
+  canonical base) but off in its final
+  offset — landing in zero scratch adjacent
+  to the real store. NOT decidable with the
+  data in hand.
+- **STANDING RESULT (unchanged):** the
+  INTERPRETER regime (ctx+0xe00, rung 85) is
+  the only value-validated uniform source.
+  The JIT regime has: stable token, correct
+  descriptor family, canonical base — and no
+  values yet.
+- **NEXT (pre-registered, when resumed):**
+  re-sample with a time-based trigger (every
+  2s of wall time, not call-count equality —
+  the equality samplers missed when the call
+  stream stutters), and dump a WIDER window
+  (+-0x100) to catch the store adjacent to
+  the k0 landing.
