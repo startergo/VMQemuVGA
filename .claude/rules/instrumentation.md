@@ -79,3 +79,8 @@ cleanly, nothing about throughput. Do not place it in a table next to the
 substitute's 27-40 FPS (GPU, readback present) or the Linux guest's
 ~1500 FPS (GPU, zero pixel traffic); those measure different things. Label
 CPU-path scores as stability results wherever they are recorded.
+
+## Disassembly trap: `__mh_bundle_header` operands
+
+In disassembly of Apple slices, operands printed as `__mh_bundle_header`
+are **relocation bases for zero immediates** — `lea __mh_bundle_header(,%rax,4), %r12` is `r12 = rax*4`, and `movq $__mh_bundle_header, -0xc0(%rbp)` stores **0**, not a header address. Reading them as header dereferences has twice produced false structure: the `a2=&_mh_bundle_header` misread that drove the stub's reject path for four rungs (LEDGER, corrected), and the loop-counter disguise in the rung-82b `gldClearDrawBuffer` trace. Recognise the pattern on sight: an instruction that seems to dereference or store the bundle header is almost certainly a relocated zero; confirm from the raw bytes before reasoning about pointer arithmetic built on it.
