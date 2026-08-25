@@ -16994,3 +16994,57 @@ engine state on the GPU path
   (the vertex/transform stream) and geometry;
   then textures (ctx+0x780 occupancy, rung 73);
   then the swap itself.
+
+---
+
+## RUNG 86 — THE DESCRIPTOR DECODE, FIRST
+HALF: the arithmetic disassembled from
+libGLVMPlugin (exact, both functions), the
+live token decoded, and the block selector
+VALIDATED (10 - bias 10 = base block = where
+the rung-85 animated float lives); the byte
+offset awaits transform-call stack-arg capture
+
+- **THE ARITHMETIC (libGLVMPlugin x86_64,
+  glvm_x64 copy at /tmp/floatdis, symbols
+  _glvmOperationStackPreloadBuffer @0x131b0,
+  _glvmPreloadFPTransformFour @0x1ab80):**
+  - Caller: flags = token[+0x08] (word 1);
+    n = u32@token+0x7c; per set bit
+    0x4000<<k (k=0..6), descriptor =
+    token_word[n+1+k]; block base rdi and
+    scale args ecx/r8d arrive via the
+    TRANSFORM CALL'S STACK ARGS (+0x18/0x30/
+    0x38) — per-draw, not static.
+  - Calculator: sel=(desc&0xFF)>>3;
+    counts=(desc>>32)&0xFFFF; type=
+    (desc>>16)&0xF; if \!(desc&0x100000):
+    r8'=(desc>>48)-r8-1 else r8'=r8;
+    off=(r8'*counts+ecx); type 1,2 → off<<=4,
+    type 3 → off<<=2, type 4 → off*=2, else 0;
+    **addr = rdi + (sel-10)*8 + off.**
+- **LIVE TOKEN (jellyfish, VMGLD_R86):
+  tok=0x100158340 flags=0x400010004000
+  n=43; k0 descriptor: sel=80 → sel>>3=10 →
+  BLOCK SELECTOR 10, bias 10 → BLOCK 0 = the
+  base block — where block A (and the rung-85
+  animated word 10) lives. type=1 (x16
+  scaling), counts=0x800.** The same sample's
+  A10 low = 0.000837 — a point on the
+  animation sine (near a zero crossing),
+  re-confirming word 10.
+- **OPEN for the second half:** the exact byte
+  offset needs the per-draw stack args
+  (rdi/ecx/r8d) — visible only at the
+  transform call itself; the rung-73 wrap at
+  ctx+0x188 already sits there. Pre-
+  registered: evaluating the k-descriptors
+  inside the wrap with the real stack args
+  lands at least one address on
+  ctx+0xe00+80 (word A10) during jellyfish —
+  closing the map from token to animated
+  value with zero hand-location.
+- **Also observed:** flags bits beyond the
+  0x4000<<7 range (0x100000000 seen) — more
+  param classes than the seven scanned; the
+  full class list is part of the second half.

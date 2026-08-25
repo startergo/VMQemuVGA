@@ -2588,6 +2588,8 @@ static unsigned g_r85_prog;       /* rung 85: validation program */
 static void r83_probe(const char* tag, void* a0, void* a1, void* a2,
                       void* a3);                    /* fwd: rung-83 */
 static void r85_poll(void* dctx);                   /* fwd: rung-85 */
+static size_t r83_region_size(void* p);             /* fwd: rung-83 */
+static void r86_poll(void* dctx);                   /* fwd: rung-86 */
 static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
                                * section holds the real definition) */
 static int g_r82_exp[4];       /* fwd: rung-82 expected live pixel */
@@ -2611,6 +2613,7 @@ static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
      * lives in the ctx (rung 66e generalized) — observe it per SWAP. */
     r83_probe(site == 0 ? "swap" : "present", dctx, a1, a2, a3);
     r85_poll(dctx);
+    r86_poll(dctx);
     /* RUNG 76 — THE STUB-DRIVEN GA BINDING. Diagnosis: the GA path
      * was never automatic — SetSurface(0x800) is an APP-SIDE call
      * nothing makes (the milestone-2 boot had it because the probe
@@ -3457,6 +3460,54 @@ static void r85_poll(void* dctx)
     if (!s_have) { s_have = 1; ep_log("rung85: baseline set"); return; }
     if (nchg) ep_log(buf);          /* log every swap WITH changes */
     else if ((s_n & 0x3f) == 0) ep_log("rung85: no-change swap");
+}
+/* RUNG 86 — the DESCRIPTOR DECODE (rung 74's disassembly, exact
+ * arithmetic from libGLVMPlugin x86_64):
+ *   glvmPreloadFPTransformFour(token, ..., stack-args):
+ *     flags = token[+0x08]; n = u32@token+0x7c;
+ *     per set bit 0x4000<<k: desc = token_word[n+1+k]
+ *       -> glvmOperationStackPreloadBuffer(rdi=stack+0x18, ..., desc):
+ *            sel  = (desc & 0xFF) >> 3; counts = desc>>32 & 0xFFFF;
+ *            type = desc>>16 & 0xF;
+ *            addr = rdi + (sel-10)*8 + scale(counts,type,args)
+ * VALIDATION: some descriptor resolves to block A word 10 — the
+ * rung-85 animated float. Gate VMGLD_R86; vm-guarded token deref. */
+static void r86_poll(void* dctx)
+{
+    static int s_gate = -1;
+    static long s_n = 0;
+    if (s_gate < 0) s_gate = getenv("VMGLD_R86") ? 1 : 0;
+    if (!s_gate || !dctx) return;
+    if ((++s_n & 0x3f) != 1) return;
+    void* tok = *(void**)((char*)dctx + 0x198);
+    if ((uintptr_t)tok < 0x10000) return;
+    if (r83_region_size(tok) < 0x400) return;
+    unsigned long long flags = ((unsigned long long*)tok)[1];
+    unsigned n = *(unsigned*)((char*)tok + 0x7c);
+    if (n > 0x100) { ep_log("rung86: n out of range"); return; }
+    char b[480];
+    int o = snprintf(b, sizeof(b),
+        "rung86: tok=%p flags=%llx n=%u", tok, flags, n);
+    unsigned long long* tw = (unsigned long long*)tok;
+    for (int k = 0; k < 7; k++) {
+        if (!(flags & (0x4000ULL << k))) continue;
+        unsigned long long d = tw[n + 1 + k];
+        unsigned sel = d & 0xFF;
+        unsigned cnt = (unsigned)((d >> 32) & 0xFFFF);
+        unsigned typ = (unsigned)((d >> 16) & 0xF);
+        if (o < (int)sizeof(b) - 90)
+            o += snprintf(b + o, sizeof(b) - o,
+                " | k%d sel=%u(s3=%u) type=%u cnt=%u",
+                k, sel, sel >> 3, typ, cnt);
+    }
+    {
+        unsigned long long* A =
+            (unsigned long long*)((char*)dctx + 0xe00);
+        if (o < (int)sizeof(b) - 90)
+            o += snprintf(b + o, sizeof(b) - o,
+                " || A10=%llx", A[10]);
+    }
+    ep_log(b);
 }
 void* g_float_base = 0;   /* RUNG 83: the float's runtime load address,
                            * published for gdb (single-session breakpoint
