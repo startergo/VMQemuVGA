@@ -16573,3 +16573,80 @@ mechanism refined; attribution: native float
   prerequisite for designing any interposition
   fix (backing the level correctly vs clamping
   the rect). Fix design AFTER that datum.
+
+---
+
+## RUNG 83 — FBO REPRO PROBE: six misuse
+patterns run CLEAN (100 cycles, single
+context); the probe's only crash is a LIVE
+re-confirmation of the CLOSED teardown class;
+the target crash is NOT yet reproduced
+
+- **The probe:** probe/probe_fbo_clear.c — one
+  CGL offscreen context (created once, NEVER
+  destroyed — the GLMARK2_106_FLOAT_STACK
+  discipline), six variations per cycle:
+  V1 control, V2 viewport 800x600 over a 512
+  texture, V3 control 512, V4 realloc-while-
+  attached (800x600 → 256), V5 two FBOs
+  alternated 8x per cycle, V6 mip-level-1
+  attach with level-0 viewport. Result:
+  `fbo_clear COMPLETED CLEAN` at 100 cycles.
+  The six simple rect/allocation disagreement
+  patterns do NOT reproduce the
+  gldClearDrawBuffer crash in an offscreen
+  context.
+- **THE PROBE'S OWN CRASH (caught by the
+  signature index, first try):** the initial
+  per-variation context create/destroy design
+  (~24 destroys in 4 cycles) crashed at
+  `gleDestroyEnableHashTable ←
+  gliDestroyContext ← CGLDestroyContext` —
+  VERBATIM the closed float destroy-path class
+  (instrumentation.md index). A live
+  confirmation of its dose-dependence (~2
+  dozen destroys suffice) and of the index's
+  worth. Fixed by the single-context rewrite;
+  not the target crash.
+- **Also recorded:** two probe bugs found by
+  their own failure (glGetString with no
+  current context → NULL dispatch SIGSEGV;
+  duplicate kCGLPFAOffScreen pair → err
+  10000) — fixed before any conclusion
+  depended on them.
+- **WHAT THE NEGATIVE RESULT NARROWS:** the
+  trigger needs more than these six patterns —
+  candidate axes for the next probe revision:
+  the WINDOW-surface path first (glmark
+  renders windowed THEN binds FBOs — the ctx
+  draw rect is set by window rendering before
+  any FBO bind), interleaved draw-then-clear
+  (desktop draws into its blur targets before
+  clearing), and real texture uploads (the
+  probe's levels are NULL-allocated).
+- **THE BIND-TIME INSTRUMENT (pre-registered,
+  unchanged, now with two additions):** at the
+  FBO/texture-bind entries, log `ctx+0x230..
+  0x244` (draw rect) beside the bound level's
+  allocated extent. ADDITION 1: log WHICH
+  draw-buffer index i (the ctx+0x360[i] slot)
+  is live at the disagreement — disagreement
+  clustering on particular indices (especially
+  non-zero) would narrow the binding path
+  before any source reading. ADDITION 2 (fix-
+  design constraint, standing): a RECT CLAMP
+  and CORRECT BACKING are not equivalent
+  fixes — clamping silences the crash while
+  leaving the stale side stale, silently
+  truncating clears that should have been
+  full; if the bind-time datum shows the rect
+  right and the allocation short, clamping is
+  actively wrong. Fix choice waits on the
+  datum.
+- **RULES UPDATE:** the `__mh_bundle_header`
+  disassembly trap (relocation base = zero
+  immediate, not a header dereference) is now
+  in .claude/rules/instrumentation.md as a
+  named trap — a verified two-time offender
+  (the a2=&hdr reject-path misread, LEDGER
+  line 1311/1341; the rung-82b loop counter).
