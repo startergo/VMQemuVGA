@@ -16650,3 +16650,75 @@ the target crash is NOT yet reproduced
   named trap — a verified two-time offender
   (the a2=&hdr reject-path misread, LEDGER
   line 1311/1341; the rung-82b loop counter).
+
+---
+
+## RUNG 83 (INSTRUMENT LEG) — THE BIND-TIME
+PROBE RAN AT THREE SITES: ZERO DISAGREE at
+observable density; the FBO lifecycle never
+crosses the gld service ABI; a THIRD context
+object joins the map; the disagreement — if
+real — is TRANSIENT between swaps
+
+- **The instrument (gated VMGLD_R83):**
+  r83_probe logs the draw rect (ctx+0x230..
+  0x244), all 8 draw-buffer image pointers
+  (ctx+0x360[i]), and each image's
+  mach_vm_region SIZE (the true allocated
+  extent — no object-graph chase), with a
+  per-slot verdict (need = w*h*4 vs region
+  size; DISAGREE names the index i). Sites:
+  12 texture/framebuffer service entries
+  (converted from EPR to explicit bodies,
+  identical forward+refuse semantics), the
+  swap/present site, and the modify site.
+- **FINDING 1 — the service entries are nearly
+  dormant:** gldCreateTexture x3 and
+  gldModifyTexture x1 per boot, all PRE-DRAW
+  with rect=0; gldCreateFramebuffer/
+  CreateTextureLevel/LoadTexture et al. NEVER
+  fire. The FBO/texture lifecycle never
+  crosses the gld service ABI — rung 66e's
+  "the draw door IS the export table"
+  GENERALIZED: FBOs are ctx-internal too.
+  Bind-time entry instrumentation is a dead
+  surface for this defect.
+- **FINDING 2 — a third context object:** the
+  create-site ctx (0x1001062a0, 1MB region),
+  the present/draw ctx (0x100858800 — THE one
+  carrying the rect layout: fields 600,800 =
+  the window; slot[0] image region 7.68MB =
+  4x the 1.92MB clear need), and the modify
+  ctx (different again; no rect fields — the
+  probe correctly declines). The rung-73
+  two-context split now has three members and
+  a layout owner.
+- **FINDING 3 — ZERO DISAGREE:** 37 swap
+  samples across a FULL suite (desktop
+  included, which passed): rect always the
+  window, slot regions always >= 4x need. NO
+  standing disagreement at swap density.
+- **INTERPRETATION (marked as interpretation):
+  the disagreement, if it is the crash
+  mechanism, is TRANSIENT — alive only between
+  swaps, during scene setup.** Swap-site
+  sampling cannot see it; the modify ctx is
+  the wrong object; the per-clear moment does
+  not cross the stub's ABI at all.
+- **Process notes:** two build/deploy hiccups
+  this leg, both caught by existing guards —
+  a function-order error (r83_raw before
+  r83_region_size), and a pipe-through-tail
+  masking a failed deploy (the unchanged-
+  binary refusal + guest md5 check caught the
+  stale ship before any conclusion rested on
+  it).
+- **NEXT (pre-registered):** the definitive
+  observation point is PER-CLEAR during
+  SceneDesktop::setup — gdb on the guest,
+  breakpoint at gldClearDrawBuffer (entry
+  0x129a3 + slide), dump rect +0x230..0x244
+  and the 8 slots' region sizes at every
+  clear. That sees the transient directly. No
+  fix is designed until that datum exists
+  (the rect-clamp-vs-backing constraint stands).

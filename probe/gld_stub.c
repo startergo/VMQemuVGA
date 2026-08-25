@@ -2574,6 +2574,8 @@ static long gld_swap_wrapper_b(void* d, void* a1, void* a2, void* a3,
 static void census_report(long swapno);   /* fwd */
 static void export_census_report(long swapno);   /* fwd: after EPRs */
 static void rung80_compile_pending(void);        /* fwd: rung-80 section */
+static void r83_probe(const char* tag, void* a0, void* a1, void* a2,
+                      void* a3);                    /* fwd: rung-83 */
 static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
                                * section holds the real definition) */
 static int g_r82_exp[4];       /* fwd: rung-82 expected live pixel */
@@ -2591,6 +2593,9 @@ static void pp_draw_state(void* ctx, const char* site);
 static long gld_swap_wrapper_impl(int site, void* dctx, void* a1,
                                   void* a2, void* a3, void* a4, void* a5)
 {
+    /* RUNG 83: the service entries fire only pre-draw; the FBO state
+     * lives in the ctx (rung 66e generalized) — observe it per SWAP. */
+    r83_probe(site == 0 ? "swap" : "present", dctx, a1, a2, a3);
     /* RUNG 76 — THE STUB-DRIVEN GA BINDING. Diagnosis: the GA path
      * was never automatic — SetSurface(0x800) is an APP-SIDE call
      * nothing makes (the milestone-2 boot had it because the probe
@@ -3239,17 +3244,12 @@ EPR(gldTestObject)
 EPR(gldFlushObject)
 EPR(gldFinishObject)
 EPR(gldWaitObject)
-EPR(gldCreateTexture)
 EPR(gldIsTextureResident)
-EPR(gldModifyTexture)
-EPR(gldLoadTexture)
 EPV(gldUnbindTexture)
 EPR(gldReclaimTexture)
 EPV(gldDestroyTexture)
-EPR(gldCreateTextureLevel)
 EPR(gldGetTextureLevelInfo)
 EPR(gldGetTextureLevelImage)
-EPR(gldModifyTextureLevel)
 EPR(gldDestroyTextureLevel)
 EPR(gldCreateBuffer)
 EPR(gldLoadBuffer)
@@ -3263,10 +3263,6 @@ EPR(gldSetMemoryPlugin)
 EPR(gldTestMemoryPlugin)
 EPR(gldFlushMemoryPlugin)
 EPR(gldDestroyMemoryPlugin)
-EPR(gldCreateFramebuffer)
-EPR(gldUnbindFramebuffer)
-EPR(gldReclaimFramebuffer)
-EPR(gldDestroyFramebuffer)
 /* RUNG 71 — THE PP DUMP INSTRUMENT (pre-registered in the ledger
  * 2026-08-24, before this code): at create/modify time, dump the
  * descriptor's raw fields and call the float's own disassembler on
@@ -3295,6 +3291,113 @@ EPR(gldDestroyFramebuffer)
  * 0x8804 (raster-op — the gldAddRasterOpsToPPStream merge). 0x8B31
  * never arrives (rung 71), but is accepted if it ever does. */
 static int g_ppdump_seq;
+
+/* RUNG 83 — THE BIND-TIME INSTRUMENT (gated VMGLD_R83). The
+ * gldClearDrawBuffer crash (rung 82b): the float clears ctx draw-rect
+ * over ctx+0x360[i] images with no bounds knowledge. Here, at the
+ * texture/framebuffer service entries, log the LIVE state: rect
+ * (ctx+0x230..0x244), the 8 image pointers, and each image's
+ * mach_vm_region SIZE (= the true allocated extent; no object-graph
+ * chase). Verdict per slot: need = w*h*4 vs region size — DISAGREE
+ * names the index i (the rung-83 addition). Reads are flat fields of
+ * the arg object, vm-guarded first; precedent: rung-73 pp_draw_state. */
+#include <mach/mach_vm.h>
+static int g_r83_gate = -1;
+static long g_r83_logged;
+static size_t r83_region_size(void* p)
+{
+    mach_vm_address_t addr = (mach_vm_address_t)p;
+    mach_vm_size_t sz = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t obj = MACH_PORT_NULL;
+    if (mach_vm_region(mach_task_self(), &addr, &sz,
+                       VM_REGION_BASIC_INFO_64,
+                       (vm_region_info_t)&info, &cnt,
+                       &obj) != KERN_SUCCESS)
+        return 0;
+    /* object port intentionally leaked-once (deallocation not in the
+       10.6 SDK headers reachable from here); one port per probe call */
+    return (size_t)sz;
+}
+
+/* first-calls-per-tag raw logging: settles WHETHER the entry fires and
+ * WHICH arg is the renderer ctx, before any filter can hide it */
+static void r83_raw(const char* tag, void* a0, void* a1, void* a2, void* a3)
+{
+    static char seen[16][40];
+    static int nseen;
+    for (int i = 0; i < nseen; i++)
+        if (strncmp(seen[i], tag, 39) == 0) return;
+    if (nseen < 16) { strncpy(seen[nseen], tag, 39); nseen++; }
+    char b[320];
+    snprintf(b, sizeof(b),
+        "rung83 RAW[%s]: a0=%p(r%zu) a1=%p(r%zu) a2=%p(r%zu) a3=%p(r%zu)",
+        tag, a0, r83_region_size(a0), a1, r83_region_size(a1),
+        a2, r83_region_size(a2), a3, r83_region_size(a3));
+    ep_log(b);
+}
+static void r83_probe(const char* tag, void* a0, void* a1, void* a2,
+                      void* a3)
+{
+    if (g_r83_gate < 0) g_r83_gate = getenv("VMGLD_R83") ? 1 : 0;
+    if (!g_r83_gate || !a0) return;
+    if ((uintptr_t)a0 < 0x1000) return;
+    if (r83_region_size(a0) == 0) return;          /* unmapped: skip */
+    unsigned rect[4];
+    memcpy(rect, (char*)a0 + 0x230, sizeof(rect)); /* x,y,w,h */
+    if (rect[2] > 16384 || rect[3] > 16384)
+        return;                                    /* not a ctx-shaped obj */
+    int have_rect = rect[2] != 0 && rect[3] != 0;
+    unsigned long long need = (unsigned long long)rect[2] * rect[3] * 4;
+    char b[512];
+    int o = snprintf(b, sizeof(b),
+        "rung83[%s]: a0=%p a1=%p a2=%p a3=%p rect=%u,%u %ux%u need=%llu",
+        tag, a0, a1, a2, a3, rect[0], rect[1], rect[2], rect[3], need);
+    int disagree[8];
+    for (int i = 0; i < 8; i++) {
+        void* img = *(void**)((char*)a0 + 0x360 + i * 8);
+        disagree[i] = 0;
+        if (img && (uintptr_t)img > 0x1000) {
+            size_t rsz = r83_region_size(img);
+            int bad = (rsz > 0 && rsz < need);
+            disagree[i] = bad;
+            if (o < (int)sizeof(b) - 80)
+                o += snprintf(b + o, sizeof(b) - o,
+                    " [%d]=%p/%zu%s", i, img, rsz, bad ? " DISAGREE" : "");
+        }
+    }
+    int any = 0;
+    for (int i = 0; i < 8; i++) any |= disagree[i];
+    if (any || (have_rect && g_r83_logged < 40) || (!have_rect && g_r83_logged < 3)) {
+        g_r83_logged++;
+        ep_log(b);
+    }
+}
+/* explicit bodies for the twelve instrumented entries — semantics
+ * identical to EPR (forward, refuse, zero out) with the probe before */
+#define R83E(n) static long g_ec_##n; \
+long n(void* a0, void* a1, void* a2, void* a3, void* a4, void* a5) { \
+    g_ec_##n++; \
+    r83_raw(#n, a0, a1, a2, a3); \
+    r83_probe(#n, a0, a1, a2, a3); \
+    GLD_FWD(#n, a0,a1,a2,a3,a4,a5, -1); \
+    if (a0) *(void**)a0 = (void*)0; \
+    return -1; }
+
+R83E(gldCreateFramebuffer)
+R83E(gldUnbindFramebuffer)
+R83E(gldReclaimFramebuffer)
+R83E(gldDestroyFramebuffer)
+R83E(gldDiscardFramebuffer)
+R83E(gldCreateTextureLevel)
+R83E(gldModifyTextureLevel)
+R83E(gldGetTextureLevel)
+R83E(gldCreateTexture)
+R83E(gldModifyTexture)
+R83E(gldLoadTexture)
+R83E(gldSyncTexture)
+
 static void rung80_translate(const unsigned long long* ws, unsigned words);
 static void pp_dump_desc(void* desc, const char* site)
 {
@@ -4013,6 +4116,8 @@ long gldModifyPipelineProgram(void* a0, void* a1, void* a2, void* a3,
                               void* a4, void* a5)
 {
     g_ec_gldModifyPipelineProgram++;
+    r83_probe("modify", a0, a1, a2, a3);  /* rung 83: ctx state at draw
+                                           * density — the setup window */
     pp_draw_state(a0, "modify");          /* per-poll draw-state + wrap */
     if (a1 && a1 != (void*)0x123) {      /* rsi = GLD program obj */
         void* desc = *(void**)a1;        /* prog->+0x00 */
@@ -4042,14 +4147,11 @@ EPR(gldCreateComputeContext)
 EPR(gldDestroyComputeContext)
 EPR(gldLoadHostBuffer)
 EPR(gldSyncBufferObject)
-EPR(gldSyncTexture)
 EPR(gldGenerateTexMipmaps)
 EPR(gldCopyTexSubImage)
 EPR(gldModifyTexSubImage)
 EPR(gldBufferSubData)
 EPR(gldModifyQuery)
-EPR(gldDiscardFramebuffer)
-EPR(gldGetTextureLevel)
 EPR(gldDeleteTextureLevel)
 EPR(gldDeleteTexture)
 EPR(gldAllocVertexBuffer)
