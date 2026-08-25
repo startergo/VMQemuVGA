@@ -17693,3 +17693,35 @@ crash)
   prevents the crash under accumulated
   load (which a fresh boot alone cannot
   answer).
+
+---
+
+## RUNG 89 CORRECTION — no cache rebuild
+needed; the real issue: the swap wrapper
+never fires on this boot (display routing
+changed after cache clear)
+
+- **THE MISDIAGNOSIS (corrected):** "rebuild
+  kext caches" was pattern-matched to the
+  stale-cache failure mode. The kext IS
+  loaded, the framebuffer works, cacheless
+  is the documented dev config. The real
+  issue: the swap wrapper is INSTALLED
+  (rung64i + rung66 both wrapped) but
+  NEVER CALLED — 0 swap/present/modify
+  probe lines. The engine is routing its
+  frame presentation through a different
+  path on this boot, bypassing both
+  wrapped slots entirely.
+- **THE CONSEQUENCE:** without the swap
+  wrapper firing, the GPU-test path can't
+  arm, the GA binding can't happen, the
+  transform hook can't install, and the
+  healer can't reach the raster ctx.
+  Everything downstream is dead, but the
+  CPU path (the float) still renders
+  (glmark completes with a Score).
+- **THE FIX:** a full reboot (not a cache
+  rebuild) — the display routing should
+  return to the normal path where the
+  engine calls through the wrapped slots.
