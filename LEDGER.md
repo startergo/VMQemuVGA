@@ -15881,3 +15881,39 @@ ONE WORD
 - Gate 2/22 unmet; all model/handler/solver
   legs now verified — this word is the last
   unknown.
+
+---
+
+## RUNG 77 (FINAL THIRD, PART 8) — THE
+MASK BREAKTHROUGH: opcode = (w0 & 0x3FFF)
+>> 6; uniform 3-word trailer; 9/22 COMPLETE
+
+- **THE TWO DECODES THAT UNLOCKED THE WALK:**
+  1. **Bit 14 is a MODIFIER, not opcode:**
+     opcode = (w0 & 0x3FFF) >> 6. The first
+     MOV's 0x4001 decodes to opcode 0 once
+     bit 14 is masked (0x0001>>6=0); the
+     second (0x0009) already did.
+  2. **ANNOTATION-AWARE LENGTH:** annotated
+     instructions (:4F etc. — the
+     glpWriteSizeType word) take L = n+1;
+     plain take L = n. Fragment MOV=3,
+     raster-op MOV=2 — both correct.
+- **THE TRAILER INVARIANT:** all 9 complete
+  walks end at exactly total-3 — every
+  stream carries 3 trailing words (zeros).
+  The earlier raster-op "EXACT" was a FALSE
+  exact (the walk ate trailer words by
+  luck); the acceptance rule is now
+  end == total-3 exactly.
+- **STATE: 9/22 sequence-complete** (the
+  three w30s, three w42s, both w36s... the
+  small/medium set). The 13 failures are
+  the TEX/NRM/SUB/MAD files — per-opcode
+  annotated-length overrides (TEX likely +2:
+  sampler descriptor + size word) are the
+  last table entries. One more pass.
+- Gate: 9/22 complete; UNMET but the format
+  is now 90% solved — mask, annotation word,
+  trailer, and MOV/RET walk lengths all
+  verified end-to-end.
