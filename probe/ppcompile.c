@@ -19,11 +19,23 @@ typedef unsigned char GLboolean; typedef float GLfloat;
 int main(int argc, char** argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: %s FILE.glsl [--draw]\n", argv[0]); return 2; }
-    int draw = 0;
-    { int ai; for (ai = 1; ai < argc; ai++)
-        if (strcmp(argv[ai], "--draw") == 0) draw = 1; }
+    int draw = 0, retry = 0, dbl = 0, dly = 0;
+    { int ai; for (ai = 1; ai < argc; ai++) {
+        if (strcmp(argv[ai], "--draw") == 0) draw = 1;
+        if (strcmp(argv[ai], "--retry") == 0) retry = 1;
+        if (strcmp(argv[ai], "--double") == 0) dbl = 1;
+        if (strcmp(argv[ai], "--delay") == 0) dly = 1;
+    } }
 
-    void* lib = dlopen("/Users/sl/osmesa/libOSMesa.8.dylib", RTLD_LAZY | RTLD_LOCAL);
+    /* RUNG 84b: load the STUB'S bundle-local Mesa pair (the GLD
+     * path's own bytes; libglapi resolves via @loader_path — NO
+     * DYLD_LIBRARY_PATH, which is the mechanism this project
+     * eliminated at rung 75). Verified same build as /Users/sl/osmesa
+     * (identical size; only the libglapi load command differs). */
+    const char* def = "/System/Library/Extensions/VMVirtIOGLEngine.bundle/"
+                      "Contents/MacOS/libOSMesa.8.dylib";
+    const char* mp = getenv("PPCOMPILE_MESA");
+    void* lib = dlopen(mp ? mp : def, RTLD_LAZY | RTLD_LOCAL);
     if (!lib) { printf("PPCOMPILE dlopen FAIL: %s\n", dlerror()); return 1; }
     void* (*create)(unsigned, int, int, int, void*) =
         (void* (*)(unsigned, int, int, int, void*))dlsym(lib, "OSMesaCreateContextExt");
@@ -176,13 +188,36 @@ int main(int argc, char** argv)
         glVertex2f(-1, -1); glVertex2f(1, -1); glVertex2f(-1, 1); glVertex2f(1, 1);
         glEnd();
         glFinish();
+        if (dbl) {   /* rung 84b: resubmit the same frame */
+            glClear(0x4000);
+            glBegin(0x0005);
+            glVertex2f(-1, -1); glVertex2f(1, -1); glVertex2f(-1, 1); glVertex2f(1, 1);
+            glEnd();
+            glFinish();
+        }
         unsigned char px[W * 4];
+        unsigned char px2[W * 4];
+        if (dly) {   /* rung 84b: delay width sweep (ms from env) */
+            const char* ms = getenv("PP_DELAY_MS");
+            usleep((ms ? atoi(ms) : 200) * 1000);
+        }
         glReadPixels(0, 0, W, 1, 0x1908, 0x1401, px);
         int nz = 0;
         int i;
         for (i = 0; i < W * 4; i++) if (px[i]) nz++;
         printf("PPCOMPILE draw row0 nonzero-bytes=%d/%d first=%02x%02x%02x%02x\n",
                nz, W * 4, px[0], px[1], px[2], px[3]);
+        if (retry) {
+            /* rung 84b: is the FRAME black, or did the READBACK race?
+             * re-read after a wall delay and compare. */
+            usleep(200000);
+            glReadPixels(0, 0, W, 1, 0x1908, 0x1401, px2);
+            int same = memcmp(px, px2, W * 4) == 0;
+            int nz2 = 0;
+            for (i = 0; i < W * 4; i++) if (px2[i]) nz2++;
+            printf("PPCOMPILE reread same=%d nonzero2=%d first2=%02x%02x%02x%02x\n",
+                   same, nz2, px2[0], px2[1], px2[2], px2[3]);
+        }
     }
     printf("PPCOMPILE PASS %s\n", argv[1]);
     return 0;

@@ -16874,3 +16874,66 @@ black-render
   logging this rung: n=7/7, 9/9 complete
   binds; heuristic offsets 0 and 1 both
   exercised.
+
+---
+
+## RUNG 84b — THE BLACK-RENDER REPRODUCER
+INVESTIGATED AND CHARACTERIZED: a
+SUB-MILLISECOND readback window on the
+virgl path; the frame is genuinely black
+past it; softpipe immune; protocol
+identical; same build on both Mesa paths
+
+- **PATH HYGIENE CORRECTED FIRST:** the
+  reproducer (ppcompile) now dlopens the
+  STUB'S bundle-local Mesa pair (GLD path's
+  own bytes; libglapi via @loader_path; NO
+  DYLD_LIBRARY_PATH — the mechanism this
+  project eliminated at rung 75). The two
+  guest Mesa copies verified the SAME BUILD:
+  libglapi identical (0f7f19e7…), libOSMesa
+  same size 20275304 differing only in the
+  libglapi load command (@rpath vs
+  @loader_path) — so all prior measurements
+  used the same code. Bundle-local path
+  reproduces the flake (7/3 in one window).
+- **THE LAW, measured:**
+  1. Frame is GENUINELY black: double-read
+     agrees (same=1) — not a readback race.
+  2. virgl-path ONLY: interleaved in the same
+     window, virgl 4/6 black while softpipe
+     10/0 clean (interleaving beats the
+     episode drift — the rate wanders 0% to
+     60% across minutes).
+  3. The protocol log is BYTE-IDENTICAL
+     (IDs normalized) between black and
+     correct runs — the failure is invisible
+     guest-side.
+  4. THE WINDOW: readback immediately after
+     the draw+finish ≈ 40-60% correct; ANY
+     delay ≥ 1ms → 0%; an extra submit
+     (--double: redraw then read) → 0%.
+     The color resource's readable snapshot
+     exists for UNDER A MILLISECOND after
+     execution.
+- **MECHANISM (inference, marked):** the
+  host-side resource backing is invalidated/
+  reused within <1ms of command execution,
+  and the transfer-to-host path does not
+  fence against the resource's lifetime —
+  the host (stock UTM virglrenderer) is off
+  limits, so the guest-side rule is the
+  result: READ BACK IMMEDIATELY. The stub's
+  per-swap immediate read (rungs 75-84) is
+  why the GLD path works; rung-81's
+  first-frame MISMATCH was a window miss.
+- **H1 NOT ESTABLISHED:** today's leaked
+  contexts accumulate (ctx=435+, res=1599+
+  observed in the logs) but the window law
+  holds independent of accumulation; the
+  fresh-boot rate comparison remains the
+  open test if the flake matters again.
+- **Artifacts:** ppcompile.c gains --retry/
+  --double/--delay modes + PP_DELAY_MS and
+  PPCOMPILE_MESA env knobs; the reproducer
+  is three shell lines.
