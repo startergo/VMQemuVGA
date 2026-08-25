@@ -2598,6 +2598,7 @@ static unsigned g_r88_tex_w, g_r88_tex_h;
 static int g_r88_tex_valid;
 static size_t r83_region_size(void* p);             /* fwd: rung-83 */
 static void r86_poll(void* dctx);                   /* fwd: rung-86 */
+static void r89_heal_texture_levels(void* ctx);     /* fwd: rung-89 */
 static unsigned g_r81_prog;   /* fwd: rung-81 live passthrough (rung-80
                                * section holds the real definition) */
 static int g_r82_exp[4];       /* fwd: rung-82 expected live pixel */
@@ -3240,7 +3241,17 @@ R83E(gldDiscardFramebuffer)
 R83E(gldCreateTextureLevel)
 R83E(gldModifyTextureLevel)
 R83E(gldGetTextureLevel)
-R83E(gldCreateTexture)
+static long g_ec_gldCreateTexture;
+long gldCreateTexture(void* a0, void* a1, void* a2, void* a3,
+                      void* a4, void* a5)
+{
+    g_ec_gldCreateTexture++;
+    r83_raw("gldCreateTexture", a0, a1, a2, a3);
+    GLD_FWD("gldCreateTexture", a0,a1,a2,a3,a4,a5, -1);
+    if (a0) *(void**)a0 = (void*)0;
+    r89_heal_texture_levels(a0);   /* RUNG 89: heal after forward */
+    return -1;
+}
 /* RUNG 88c: hand-written — a1 IS the texture object (live-stable
  * inside our own forward; the rung-88 swap-time census is retired) */
 static void r88_capture_tex(void* tobj)
@@ -3273,7 +3284,62 @@ static void r88_capture_tex(void* tobj)
         "(region %zu)", w, h, datap, dr);
     ep_log(b);
 }
-static long g_ec_gldModifyTexture;
+
+/* RUNG 89 — TEXTURE LEVEL BACKING FIX: the float never allocates
+ * storage for texture level data (rung 88's unified crash model).
+ * This healer scans the raster ctx's texture array, reads each
+ * level-0 entry, and if the data pointer is unbacked (or the region
+ * is smaller than w*h*bpp), allocates real memory and patches the
+ * pointer. Called from every safe site: gldCreateTexture (after
+ * forward), gldModifyTexture (after forward), and the transform
+ * hook. Idempotent (skips already-valid pointers). */
+#include <mach/mach_vm.h>
+static void r89_heal_texture_levels(void* raster_ctx)
+{
+    if (!pp_r73_sane(raster_ctx)) return;
+    void** ta = (void**)((char*)raster_ctx + 0x780);
+    for (int i = 0; i < 32; i++) {
+        void* tobj = ta[i];
+        if (!pp_r73_sane(tobj)) continue;
+        size_t tr = r83_region_size(tobj);
+        if (tr < 0x60) continue;
+        void* geo = *(void**)((char*)tobj + 0x10);
+        if (!pp_r73_sane(geo)) continue;
+        size_t gr = r83_region_size(geo);
+        if (gr < 0xe8) continue;
+        char* lv = (char*)geo + 0xc8;
+        /* scan up to 4 levels (level entries at 32-byte stride but
+         * the stride is (15*level+face)*32 per the disasm; level 0
+         * face 0 is the first — the one that matters for 2D) */
+        for (int le = 0; le < 1; le++) {
+            char* e = lv + le * 32;
+            unsigned w = *(unsigned short*)(e + 0x08);
+            unsigned h = *(unsigned short*)(e + 0x0a);
+            unsigned fm = *(unsigned short*)(e + 0x14);
+            unsigned ty = *(unsigned short*)(e + 0x16);
+            void** dpp = (void**)(e + 0x18);
+            void* dp = *dpp;
+            if (w == 0 || h == 0 || w > 8192 || h > 8192) continue;
+            if (ty != 0x1401 || fm != 0x1907) continue; /* UBYTE/RGB */
+            size_t need = (size_t)w * h * 3;
+            /* check if the pointer already has sufficient backing */
+            if (pp_r73_sane(dp)) {
+                size_t dr = r83_region_size(dp);
+                if (dr >= need) continue;    /* already valid */
+            }
+            /* allocate real backing and patch */
+            void* mem = malloc(need);
+            if (!mem) continue;
+            memset(mem, 0, need);
+            *dpp = mem;
+            char b[160];
+            snprintf(b, sizeof(b),
+                "rung89: HEALED tex[%d] level%d %ux%u need=%zu: "
+                "%p -> %p (malloc)", i, le, w, h, need, dp, mem);
+            ep_log(b);
+        }
+    }
+}static long g_ec_gldModifyTexture;
 long gldModifyTexture(void* a0, void* a1, void* a2, void* a3,
                       void* a4, void* a5)
 {
@@ -3282,6 +3348,7 @@ long gldModifyTexture(void* a0, void* a1, void* a2, void* a3,
     if (!g_r88_tex_valid) r88_capture_tex(a1);
     GLD_FWD("gldModifyTexture", a0,a1,a2,a3,a4,a5, -1);
     if (a0) *(void**)a0 = (void*)0;
+    r89_heal_texture_levels(a0);   /* RUNG 89: heal after forward */
     return -1;
 }
 R83E(gldLoadTexture)
@@ -4217,6 +4284,45 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
     }
     }
     skip86:;
+    /* RUNG 89: heal texture levels from the hook (the safest
+     * raster-ctx access point) */
+    r89_heal_texture_levels(c0);
+    /* RUNG 88d: read the raster ctx's texture array ONCE from here —
+     * the ctx is stable mid-draw (the census's swap-time walk crashed
+     * twice; this is the pre-registered safe site). */
+    if (!g_r88_tex_valid && pp_r73_sane(c0)) {
+        void** ta = (void**)((char*)c0 + 0x780);
+        for (int i = 0; i < 8 && !g_r88_tex_valid; i++) {
+            void* tobj = ta[i];
+            if (!pp_r73_sane(tobj)) continue;
+            size_t tr = r83_region_size(tobj);
+            if (tr < 0x60) continue;
+            void* geo = *(void**)((char*)tobj + 0x10);
+            if (!pp_r73_sane(geo)) continue;
+            size_t gr = r83_region_size(geo);
+            if (gr < 0xe8) continue;
+            char* lv = (char*)geo + 0xc8;
+            unsigned w = *(unsigned short*)(lv + 0x08);
+            unsigned h = *(unsigned short*)(lv + 0x0a);
+            unsigned fm = *(unsigned short*)(lv + 0x14);
+            unsigned ty = *(unsigned short*)(lv + 0x16);
+            void* datap = *(void**)(lv + 0x18);
+            if (ty != 0x1401 || fm != 0x1907) continue;
+            if (w < 16 || h < 16 || w > 4096 || h > 4096) continue;
+            if (!pp_r73_sane(datap)) continue;
+            size_t dr = r83_region_size(datap);
+            if (dr < (size_t)w * h * 3) continue;
+            g_r88_tex_data = datap;
+            g_r88_tex_w = w;
+            g_r88_tex_h = h;
+            g_r88_tex_valid = 1;
+            char b[128];
+            snprintf(b, sizeof(b),
+                "rung88: TEX CAPTURED @hook[%d] %ux%u RGB/UBYTE "
+                "data=%p (region %zu)", i, w, h, datap, dr);
+            ep_log(b);
+        }
+    }
     /* RUNG 87 — the VARYING sweep finder: sample both op-stack
      * blocks PER CALL, windowed min/max per word; words whose value
      * sweeps widely WITHIN a frame window (positions ~0-800, UVs

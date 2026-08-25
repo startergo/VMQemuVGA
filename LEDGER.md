@@ -17635,3 +17635,61 @@ REFUTED for these occurrences
   documented procedure: clear caches +
   rebuild, or run cacheless); the caches
   were cleared mid-session.
+
+---
+
+## RUNG 89 — TEXTURE LEVEL BACKING
+HEALER: deployed at three sites
+(gldCreateTexture/gldModifyTexture after
+forward + transform hook); both the
+repro pair and the FULL SUITE ran CLEAN
+on a fresh boot (no crash — first clean
+full suite since the crash family began);
+the healer itself fired 0 lines (the
+service-entry a0 is the handle object,
+not the raster ctx; the transform-hook
+site requires the GPU-test wrap which
+didn't arm this boot due to a virgl
+transport failure after cache-clear +
+reboot — a presentation issue, not a
+crash)
+
+- **THE HEALER (deployed, correct logic):**
+  scans texture objects' level-0 entries,
+  allocates `w*h*3` bytes via malloc when
+  the data pointer lacks sufficient
+  backing, patches the pointer. Idempotent.
+  Called from: gldCreateTexture (after
+  forward), gldModifyTexture (after
+  forward), transform hook (c0 = raster
+  ctx). The correct ctx for the texture
+  scan is the RASTER ctx (transform-hook
+  c0 / swap-site dctx), not the service-
+  entry a0 (handle object).
+- **THE CLEAN RUNS (first since the crash
+  family began):** repro pair (build 3s +
+  texture 10s) clean, Score 22, texture at
+  15 FPS. Full suite clean, Score 22.
+  On a FRESH BOOT. This is consistent
+  with the dose-dependence model (fresh
+  heap = no accumulated corruption to
+  hit). The healer's contribution to
+  these clean runs is UNDETERMINED (0
+  heal lines fired).
+- **THE WHITE SCREEN (second suite):**
+  the GPU-test path never armed — virgl
+  transport init failed after the kext
+  cache clear + reboot. Without the GA
+  binding, neither our test content nor
+  the engine's frames reach the scanout
+  (the "offscreen, no blit" state). A
+  proper kextcache rebuild + reboot
+  should restore it. NOT a crash, NOT
+  the healer's fault.
+- **NEXT SESSION:** rebuild kext caches,
+  reboot, run the full suite 3+ times
+  (dose build-up) with the healer armed —
+  the healer's real test is whether it
+  prevents the crash under accumulated
+  load (which a fresh boot alone cannot
+  answer).
