@@ -4551,6 +4551,69 @@ long pp_transform_hook(void* c0, void* a1, void* a2, void* a3,
     }
     }
     skip86:;
+    /* RUNG 87 — the VARYING sweep finder: sample both op-stack
+     * blocks PER CALL, windowed min/max per word; words whose value
+     * sweeps widely WITHIN a frame window (positions ~0-800, UVs
+     * 0-1) are the per-quad attribute streams, unlike the per-frame
+     * uniform constants. Gate VMGLD_R87. */
+    {
+        static int s_gate87 = -1;
+        static long s_n87 = 0;
+        if (s_gate87 < 0) s_gate87 = getenv("VMGLD_R87") ? 1 : 0;
+        if (s_gate87) {
+            s_n87++;
+            void* BA = (void*)a3;            /* JIT block A (rcx) */
+            void* BB = (void*)a4;            /* block B (r8) */
+            if (pp_r73_sane(BA) && pp_r73_sane(BB)) {
+                unsigned long long* A = (unsigned long long*)BA;
+                unsigned long long* B = (unsigned long long*)BB;
+                static float s_min[2][24], s_max[2][24];
+                static long s_cnt;
+                static int s_have;
+                if (!s_have) {
+                    s_have = 1;
+                    for (int i = 0; i < 24; i++) {
+                        memcpy(&s_min[0][i], &A[i], 4);
+                        memcpy(&s_max[0][i], &A[i], 4);
+                        memcpy(&s_min[1][i], &B[i], 4);
+                        memcpy(&s_max[1][i], &B[i], 4);
+                    }
+                }
+                for (int i = 0; i < 24; i++) {
+                    float a, b;
+                    memcpy(&a, &A[i], 4);
+                    memcpy(&b, &B[i], 4);
+                    if (a < s_min[0][i]) s_min[0][i] = a;
+                    if (a > s_max[0][i]) s_max[0][i] = a;
+                    if (b < s_min[1][i]) s_min[1][i] = b;
+                    if (b > s_max[1][i]) s_max[1][i] = b;
+                }
+                s_cnt++;
+                if ((s_cnt & 0x3ff) == 0 && s_cnt <= 0x10000) {
+                    char b2[480];
+                    int p = snprintf(b2, sizeof(b2),
+                        "rung87[w%ld]:", s_cnt);
+                    for (int blk = 0; blk < 2; blk++)
+                        for (int i = 0; i < 24 && p < 440; i++) {
+                            float lo = s_min[blk][i], hi = s_max[blk][i];
+                            /* report only SWEPT words (the signature) */
+                            if (hi - lo < 0.01f) continue;
+                            p += snprintf(b2 + p, sizeof(b2) - p,
+                                " %c%d:[%.4g,%.4g]",
+                                blk ? 'B' : 'A', i, lo, hi);
+                        }
+                    ep_log(b2);
+                    /* reset window */
+                    for (int i = 0; i < 24; i++) {
+                        memcpy(&s_min[0][i], &A[i], 4);
+                        memcpy(&s_max[0][i], &A[i], 4);
+                        memcpy(&s_min[1][i], &B[i], 4);
+                        memcpy(&s_max[1][i], &B[i], 4);
+                    }
+                }
+            }
+        }
+    }
     if (g_r73_prev) return g_r73_prev(c0, a1, a2, a3, a4, a5);
     return 0;
 }

@@ -17300,3 +17300,55 @@ is COMPLETE AND DOUBLE-VALIDATED
   descriptor classes (higher flag bits);
   real varyings (the vertex/transform
   stream); geometry; textures; the swap.
+
+---
+
+## RUNG 87 — THE VARYING STREAMS LOCATED
+(per-call sweep finder): A0 = interpolated
+POSITION (half-pixel centers, window-
+bounded), A1 = TEXCOORD ([0,1] sweep) —
+the per-quad attribute data is in the op-
+stack block, cleanly separable from the
+per-frame uniform constants
+
+- **THE FINDER (rung 87, VMGLD_R87):** at
+  the transform hook, per-call sampling of
+  both blocks (a3/a4 = the JIT block pair),
+  windowed min/max per word over 1024 calls;
+  only SWEPT words reported. Texture scene,
+  64 windows.
+- **THE SIGNATURES (i CONFIRMED):**
+  - A0: [~125-300, ~570-650] with HALF-PIXEL
+    .5 values — the interpolated fragment
+    POSITION sweeping with the raster,
+    bounded by the 800x600 window.
+  - A1: [~0.39-0.47, ~0.64-0.96] — a
+    normalized [0,1] per-call sweep: the
+    TEXCOORD stream (fragment.texcoord).
+  - A10/A11: IDENTICAL mirrored ranges
+    (small values, e.g. [1.7e-8, 0.36]) —
+    derivative/LOD-family; A12 similar.
+  - B1/B12: sparser B-block per-quad values.
+  Uniform words are ABSENT from the sweep
+  report (per-frame constants — zero intra-
+  window variance) — the separation works.
+- **THE MAP SO FAR (block A words):** 0-1 =
+  position + texcoord streams (per-quad);
+  8/0x10 = the uniform store (rung 86d);
+  10 = the interpreter animated uniform
+  (rung 85); 10-18 = derivative family.
+- **PRE-REGISTERED (ii): QUAD-CORNER
+  REPLAY:** the preload disassembly (rung
+  86) writes 4 corner values at 16-byte
+  stride (rsi, +0x10, +0x20, +0x30 — words
+  k, k+2, k+4, k+6). Capture one quad's four
+  TEXCOORD corners from the block at a
+  single transform call; render the full-
+  screen quad with those as PER-CORNER
+  varyings (glVertexAttrib4f inside
+  glBegin/glEnd — GLSL-110 compatible);
+  sample the 2x2 NEAREST test texture; the
+  pixel predictions (which texel each corner
+  region selects) are computable — REAL
+  engine texcoords driving texture sampling,
+  pixel-verified.
